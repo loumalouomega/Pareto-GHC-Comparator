@@ -4,6 +4,7 @@
   "description": "Compare available GitHub Copilot models by benchmark quality and estimated usage cost.",
   "version": "0.2.0",
   "publisher": "pareto-ghc",
+  "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
