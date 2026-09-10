@@ -66,6 +66,9 @@ jobs:
       group: github-release-publish
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: pareto-ghc-comparator-${{ github.sha }}
@@ -76,16 +79,18 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+          REPO="${GITHUB_REPOSITORY}"
           VERSION="${TAG#v}"
           SRC="release/pareto-ghc-comparator.vsix"
           ASSET="pareto-ghc-comparator-${VERSION}.vsix"
           ls -lh "$SRC"
           cp "$SRC" "$ASSET"
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Release $TAG exists; uploading $ASSET."
-            gh release upload "$TAG" "$ASSET" --clobber
+            gh release upload "$TAG" "$ASSET" --clobber --repo "$REPO"
           else
             gh release create "$TAG" "$ASSET" \
+              --repo "$REPO" \
               --title "$TAG" \
               --target "$GITHUB_SHA" \
               --notes "## $TAG
