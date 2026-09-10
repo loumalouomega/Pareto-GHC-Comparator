@@ -90,11 +90,18 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           echo "Publisher: $PUBLISHER, version: $VERSION"
           ls -lh "$VSIX"
-          if [ -z "${VSCE_PAT:-}" ]; then
-            echo "::error::VSCE_PAT is empty. Set it as an environment secret on the 'marketplace' environment (environment secrets override repository secrets). See https://code.visualstudio.com/api/working-with-extensions/publishing-extension#personal-access-token"
-            exit 1
+          AUTH_ARGS=()
+          if [ -n "${VSCE_PAT:-}" ]; then
+            # Don't leak the token; only show its length to distinguish empty/whitespace vs invalid.
+            echo "VSCE_PAT present (length ${#VSCE_PAT}). Verifying publish rights for '$PUBLISHER'..."
+            # NOTE: the publisher is a positional argument. Passing it with -p/--pat
+            # sends the publisher ID as the token and always fails with
+            # TF400813 (user 'aaaaaaaa-...'). The PAT is read from VSCE_PAT env.
+            npx --no-install vsce verify-pat "$PUBLISHER"
+          else
+            echo "VSCE_PAT is empty; trying Microsoft Entra ID (--azure-credential)."
+            echo "::notice::To use PAT auth, set VSCE_PAT as an environment secret on the 'marketplace' environment (environment secrets override repository secrets). See https://code.visualstudio.com/api/working-with-extensions/publishing-extension#personal-access-token"
+            AUTH_ARGS=(--azure-credential)
+            npx --no-install vsce verify-pat --azure-credential "$PUBLISHER"
           fi
-          # Don't leak the token; only show its length to distinguish empty/whitespace vs invalid.
-          echo "VSCE_PAT present (length ${#VSCE_PAT}). Verifying publish rights for '$PUBLISHER'..."
-          npx --no-install vsce verify-pat -p "$PUBLISHER"
-          npx --no-install vsce publish --packagePath "$VSIX"
+          npx --no-install vsce publish --packagePath "$VSIX" "${AUTH_ARGS[@]}" --skip-duplicate
