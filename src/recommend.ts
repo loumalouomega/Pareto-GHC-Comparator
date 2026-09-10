@@ -16,7 +16,11 @@ export function recommend(rows: Row[], options: Options): RecommendationResult {
         "No comparable models in the current filter. Resolve missing benchmarks or prices to get a recommendation.",
     };
   const unit =
-    options.billing === "credits" ? "AI credits" : "premium requests";
+    options.billing === "credits"
+      ? "AI credits"
+      : options.billing === "legacy"
+        ? "premium requests"
+        : "USD";
   const settings = options.recommendation;
   const threshold =
     settings.mode === "budget"

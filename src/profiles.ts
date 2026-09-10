@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { parseOptions } from "./compare";
+import { migrateOptions, parseOptions } from "./compare";
 import type { Options, ProfileAction, ProfileStore, Workload } from "./types";
 export function workload(options: Options): Workload {
   const { filter: _, ...values } = parseOptions(options);
@@ -50,7 +50,11 @@ export function loadProfiles(value: unknown): ProfileStore {
       result.items.push({
         id: p.id,
         name,
-        workload: workload(parseOptions({ ...p.workload, filter: "" })),
+        // migrateOptions maps pre-source records to Copilot defaults while
+        // parseOptions still rejects invalid records individually.
+        workload: workload(
+          parseOptions(migrateOptions({ ...p.workload, filter: "" })),
+        ),
       });
     } catch {
       /* Ignore invalid records without discarding valid saved profiles. */

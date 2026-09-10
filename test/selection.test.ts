@@ -64,7 +64,7 @@ test("zero budgets, zero scores, missing data, and independent billing budgets",
     ...defaults,
     recommendation: {
       ...defaults.recommendation,
-      budgets: { credits: 0, legacy: 2 },
+      budgets: { credits: 0, legacy: 2, usd: 0 },
     },
   };
   assert.deepEqual(

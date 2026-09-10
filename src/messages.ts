@@ -7,6 +7,11 @@ export function parseMessage(raw: unknown): HostMessage {
     typeof v === "string" && v.length <= 1000;
   if (m.type === "ready" || m.type === "refresh" || m.type === "key")
     return { type: m.type };
+  if (
+    m.type === "source" &&
+    (m.source === "copilot" || m.source === "opencode")
+  )
+    return { type: "source", source: m.source };
   if (m.type === "options")
     return { type: "options", options: parseOptions(m.options) };
   if ((m.type === "select" || m.type === "copy") && string(m.id))

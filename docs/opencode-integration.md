@@ -2,6 +2,8 @@
 
 Status: **Accepted** — boundary for Tier 1 implementation (roadmap: `docs/roadmap.md`).
 
+**Implementation verification (2026-09-10, Linux, OpenCode 1.18.30, providers connected: `opencode`, `opencode-go`, `openai`):** `opencode models --verbose` (exit 0, 49 base models) parses to 163 namespaced rows after variant expansion — 82 priced, 17 free-tier at cost 0, 81 provider-billed unpriced — with no credential strings in raw output or parsed models. USD comparison prices `opencode:opencode-go/kimi-k2.7-code` at 0.00495 with `Default context`; `gpt-5.6-luna` yields 6 priced variant rows. Copilot regression smoke test not performed here (no Copilot sign-in in this environment) — outstanding validation, not a passing check.
+
 Date checked: 2026-09-10. OpenCode version tested: **1.18.30** (`opencode --version`).
 Extension version at time of writing: 0.6.0 (Copilot-only discovery via
 `vscode.lm.selectChatModels({ vendor: "copilot" })` in `src/extension.ts`).
@@ -248,6 +250,4 @@ boundary).
 - **B4 — Platform coverage:** verification was Linux-only; macOS/Windows
   binary resolution and at least one smoke run per platform (or an explicit
   unsupported statement) are outstanding.
-- **B5 — Catalog freshness:** Zen prices change (e.g. dated discounts such as
-  "50% off through September 18, 2026"); the OpenCode price catalog needs a
-  `catalogDate` and update cadence mirroring `src/catalog.ts` maintenance.
+- **B5 — Catalog freshness (superseded):** live CLI rates on every discovery replaced the proposed static OpenCode price catalog, so there is no `catalogDate` to maintain for OpenCode pricing. Only `opencodeBenchmarkFamilies` aliases are static. If a future provider's rates cannot be discovered live, scope a static addition explicitly rather than reviving a full catalog.

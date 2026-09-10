@@ -10,7 +10,7 @@
 
 <img src="media/icon.png" alt="Pareto GHC Comparator logo" width="128" />
 
-A desktop VS Code extension for comparing the GitHub Copilot models exposed to your extension host. Pick a task and compare benchmark quality against estimated Copilot usage on a Pareto chart.
+A desktop VS Code extension for comparing GitHub Copilot and OpenCode models. Pick a task and compare benchmark quality against estimated usage cost on a Pareto chart.
 
 ## Preview
 
@@ -24,14 +24,14 @@ Requires VS Code 1.100 or newer with GitHub Copilot Chat. See [Getting started](
 
 1. Install `pareto-ghc-comparator.vsix` via **Extensions: Install from VSIX…**.
 2. Run **Pareto GHC: Open Model Comparison** and set your [Artificial Analysis Free API key](https://artificialanalysis.ai/data-api).
-3. Pick a task, billing mode, and token workload, then select a chart point or table row to inspect the tradeoff.
+3. Pick a source (Copilot or OpenCode), task, billing mode, and token workload, then select a chart point or table row to inspect the tradeoff.
 
 ## Guides
 
 - [Website](https://loumalouomega.github.io/Pareto-GHC-Comparator/) — project landing page.
 - [Getting started](docs/getting-started.md) — install, API key, model mapping.
 - [User guide](docs/user-guide.md) — recommendations, saved workload profiles, reading the chart.
-- [Billing estimates](docs/billing.md) — AI-credit formula and legacy premium requests.
+- [Billing estimates](docs/billing.md) — AI-credit, legacy, and OpenCode USD formulas.
 - [Data, refresh, and privacy](docs/data-privacy.md) — benchmark source, caching, failure handling.
 - [Development](docs/development.md) — local build, tests, and VS Code tasks.
 - [Testing](docs/testing.md) — focused runs, coverage, and validation sequences.

@@ -1,6 +1,6 @@
 # Billing estimates
 
-How AI-credit and legacy premium-request costs are estimated for an illustrative token workload.
+How AI-credit, legacy premium-request, and OpenCode USD costs are estimated for an illustrative token workload. Cost units never mix: Copilot models compare in AI credits or legacy billing, OpenCode models in USD. There is no cross-unit frontier.
 
 **AI credits** estimates usage from GitHub's per-million-token USD rates, with 1 credit equal to $0.01. The default example has 1,000 uncached input and 1,000 output tokens, with no caching. Input buckets are disjoint: count each input token once as uncached, cache-read, or cache-write. Output includes reasoning tokens.
 
@@ -12,5 +12,14 @@ credits = (uncached × input_rate + cache_read × cached_rate
 Where no separate cache-write rate is listed, cache-write tokens use the normal input rate. Long-context thresholds apply to the sum of all three input buckets. Exactly reaching a threshold keeps the default tier; exceeding it uses the long-context rates for the complete workload. Workloads exceeding a model's reported input capacity are excluded. Expired promotional prices are excluded until the catalog is updated.
 
 **Legacy premium requests** uses the published multiplier per manually selected model interaction for eligible annual Copilot Pro or Pro+ plans. The catalog currently has the same documented multipliers for both. Models without documented legacy multipliers remain unavailable in that mode. Auto-selection discounts, subscription charges, remaining allowances, code-review charges, and GitHub Actions costs are not included.
+
+**OpenCode USD** uses the per-million-token rates reported live by `opencode models --verbose` on every discovery, so prices cannot go stale between extension releases:
+
+```
+usd = (uncached × input_rate + cache_read × cached_rate
+       + cache_write × write_rate + output × output_rate) / 1,000,000
+```
+
+The same disjoint-bucket, cache-write fallback, and whole-workload long-context rules apply. Zen-gateway free-tier models (`opencode`, `opencode-go` providers with all-zero rates) compare at cost 0 with a **Free tier** label. Models billed directly by their provider (e.g. `openai/*`) report zero rates that mean *unpriced*, not free: they stay unresolved with a "Billed by provider; no verified rate" reason. Unrecognized pricing tiers fall back to base rates with a visible note.
 
 These figures describe estimated usage, not your account bill or measured task cost. No inference request is sent by this extension.

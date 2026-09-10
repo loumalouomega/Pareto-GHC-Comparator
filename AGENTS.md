@@ -1,6 +1,6 @@
 # Contributor guidance
 
-This repository builds a desktop VS Code extension that compares discovered GitHub Copilot models using Artificial Analysis benchmarks and estimated Copilot usage. OpenCode support is planned in [the roadmap](docs/roadmap.md), not implemented.
+This repository builds a desktop VS Code extension that compares GitHub Copilot and OpenCode models using Artificial Analysis benchmarks and estimated usage costs.
 
 ## Repository map
 
@@ -9,12 +9,15 @@ This repository builds a desktop VS Code extension that compares discovered GitH
 | `src/extension.ts` | VS Code commands, discovery, secrets, persistence, refresh, and webview lifecycle. |
 | `src/api.ts` | Benchmark response validation, pagination, cache policy, and API failures. |
 | `src/catalog.ts` | Explicit Copilot IDs, benchmark family aliases, dated pricing catalog. |
+| `src/opencode.ts` | OpenCode CLI discovery boundary, verbose-output parsing, live USD pricing, namespaced identity. |
 | `src/compare.ts` | Option validation/migration, benchmark resolution, cost estimates, filtering, and Pareto frontier. |
 | `src/recommend.ts` | Budget and near-best recommendations. |
 | `src/profiles.ts` | Saved workload validation and profile operations. |
 | `src/types.ts`, `src/messages.ts` | Shared data contracts and validation of incoming webview messages. |
 | `src/html.ts`, `webview/main.ts`, `webview/style.css` | Webview markup/CSP, Chart.js rendering, interaction, and themes. |
 | `test/*.test.ts` | Unit tests and mocked extension-host tests (Vitest). |
+| `test/opencode.test.ts` | CLI parsing, USD pricing, migration, and message validation for OpenCode. |
+| `test/source.test.ts` | Mocked host test for source switching and stale-discovery guard. |
 | `test/webview.spec.ts`, `playwright.config.ts` | Chromium UI tests with synthetic data and a mocked host. |
 | `scripts/build.mjs` | Bundles host/webview code and copies styles into `dist/`. |
 | `scripts/verify-release.mjs` | Checks a supplied tag name against manifest and lockfile versions. |
@@ -48,7 +51,7 @@ Before a release, run the complete CI sequence: type checks, unit/host tests, bu
 
 ### Discovery and host/webview boundary
 
-`src/extension.ts` uses `vscode.lm.selectChatModels({ vendor: "copilot" })`, refreshes discovery when models change, and reports discovery failures or empty availability. Catalog membership alone does not imply account access. Copying a model writes its display name to the clipboard; the extension does not switch models or send inference requests.
+`src/extension.ts` uses `vscode.lm.selectChatModels({ vendor: "copilot" })`, refreshes discovery when models change, and reports discovery failures or empty availability. OpenCode discovery spawns `opencode models --verbose` (see `src/opencode.ts`) and maps binary-missing, command, parse, and empty failures to actionable states while retaining the previous listing. A generation counter invalidates in-flight discovery on source switches; handler-driven discoveries are otherwise serialized by the message queue. Catalog membership alone does not imply account access. Copying a model writes its display name to the clipboard; the extension does not switch models or send inference requests.
 
 Incoming messages pass through `parseMessage` in `src/messages.ts` and are processed in a promise queue. Keep validation in the host and verify requested model/benchmark IDs against current data. Preserve the nonce-based CSP in `src/html.ts` and locally bundled webview assets. Coverage: `test/extension.test.ts`, `test/selection.test.ts`, and `test/webview.spec.ts`.
 
@@ -56,11 +59,11 @@ Incoming messages pass through `parseMessage` in `src/messages.ts` and are proce
 
 `resolveBenchmark` in `src/compare.ts` uses explicit `benchmarkFamilies` aliases from `src/catalog.ts`, allowing recognized reasoning qualifiers. One candidate resolves automatically; multiple candidates require user selection. An override identifies a benchmark by ID. If it disappears, the mapping stays unresolved until the user replaces or resets it; never silently substitute another variant.
 
-Pricing lookup requires exactly one catalog entry containing the discovered Copilot ID. Do not infer IDs, prices, or reasoning configuration from similar display names. User benchmark selection does not establish a pricing mapping. Coverage: `test/compare.test.ts` and `test/webview.spec.ts`.
+Pricing lookup requires exactly one catalog entry containing the discovered Copilot ID. OpenCode pricing rides on the discovered model (live CLI rates); only the benchmark-family aliases in `opencodeBenchmarkFamilies` are static. Do not infer IDs, prices, or reasoning configuration from similar display names. User benchmark selection does not establish a pricing mapping. Coverage: `test/compare.test.ts` and `test/webview.spec.ts`.
 
 ### Pricing and Pareto comparison
 
-`estimate` in `src/compare.ts` computes AI credits from USD-per-million-token catalog rates using the weighted token sum divided by 10,000. Input, cache-read, and cache-write buckets are disjoint; a null write rate falls back to the input rate. Long-context rates apply to the entire workload only when total input exceeds the threshold. Expired promotional credit rates remain unresolved. Legacy billing uses documented plan multipliers. Workloads beyond reported input capacity are excluded from credit comparisons.
+`estimate` in `src/compare.ts` computes AI credits from USD-per-million-token catalog rates using the weighted token sum divided by 10,000. OpenCode USD estimates use live CLI rates divided by 1,000,000; Zen free-tier models cost 0, provider-billed models stay unresolved. Cost units never mix: OpenCode rows are unpriced unless billing is USD, Copilot rows unless billing is credits or legacy. Input, cache-read, and cache-write buckets are disjoint; a null write rate falls back to the input rate. Long-context rates apply to the entire workload only when total input exceeds the threshold. Expired promotional credit rates remain unresolved. Legacy billing uses documented plan multipliers. Workloads beyond reported input capacity are excluded from credit comparisons.
 
 Keep unknown prices/scores null with visible reasons. Filtering occurs before frontier calculation. Dominance requires equal-or-better cost and score with at least one strict improvement, so exact ties remain on the frontier. The webview uses a logarithmic cost axis for positive costs and switches to linear when a comparable cost is zero. Coverage: `test/compare.test.ts` and `test/webview.spec.ts`.
 
@@ -72,9 +75,9 @@ When updating `src/catalog.ts`, verify the sources linked in the README/catalog,
 
 ### Profiles and saved-state migration
 
-`src/profiles.ts` stores version-1 profiles containing workload settings, excluding the text filter. Names are trimmed, 1–60 characters, and unique without regard to case. Apply preserves the current filter; update explicitly saves edits; Custom detaches; deletion retains the current workload. Invalid saved profile records are ignored individually.
+`src/profiles.ts` stores version-1 profiles containing workload settings, excluding the text filter. Workloads include the source, so applying a profile can switch sources (rediscovery follows). Names are trimmed, 1–60 characters, and unique without regard to case. Apply preserves the current filter; update explicitly saves edits; Custom detaches; deletion retains the current workload. Invalid saved profile records are ignored individually.
 
-`src/compare.ts` migrates v0.1 options lacking recommendation settings by adding defaults. `src/extension.ts` persists `options`, `profiles`, `mappings`, and `retryAt` in extension global state. Preserve existing keys and user choices when changing storage; add explicit migrations and tests when schemas change. `optionsRevision` allows profile application to update webview controls. Coverage: `test/selection.test.ts`, `test/extension.test.ts`, and `test/webview.spec.ts`.
+`src/compare.ts` migrates v0.1 options lacking recommendation settings by adding defaults. Pre-source options, profiles, and overrides migrate to Copilot defaults (plus a 1 USD budget) without losing user choices. `src/extension.ts` persists `options`, `profiles`, `mappings`, and `retryAt` in extension global state. Preserve existing keys and user choices when changing storage; add explicit migrations and tests when schemas change. `optionsRevision` allows profile application to update webview controls. Coverage: `test/selection.test.ts`, `test/extension.test.ts`, and `test/webview.spec.ts`.
 
 ### Credentials, cache, and failures
 

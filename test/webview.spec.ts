@@ -35,6 +35,13 @@ const benchmarks: Benchmark[] = [
     provider: "Google",
     scores: { general: 42, coding: 48, agentic: 33 },
   },
+  {
+    id: "kimi",
+    slug: "kimi-k2-7-code",
+    name: "Kimi K2.7 Code",
+    provider: "Moonshot AI",
+    scores: { general: 45, coding: 52, agentic: 30 },
+  },
 ];
 const available = [
   ["gpt-5-mini", "GPT-5 mini"],
@@ -43,6 +50,23 @@ const available = [
   ["gemini-3.8-flash", "Gemini 3.8 Flash"],
   ["unknown-model", "Unmapped model"],
 ].map(([id, name]) => ({ id, name, family: id, maxInputTokens: 1000000 }));
+const opencodeAvailable = [
+  {
+    id: "opencode:opencode-go/kimi-k2.7-code",
+    name: "Kimi K2.7 Code",
+    family: "kimi-k2",
+    maxInputTokens: 262144,
+    source: "opencode" as const,
+    rates: { input: 0.95, read: 0.19, write: null, output: 4 },
+  },
+  {
+    id: "opencode:openai/gpt-5.4#low",
+    name: "GPT-5.4 (low)",
+    family: "gpt",
+    maxInputTokens: 922000,
+    source: "opencode" as const,
+  },
+];
 for (const theme of ["light", "dark", "high-contrast"])
   test(`chart, selection, filtering, and keyboard in ${theme}`, async ({
     page,
@@ -50,6 +74,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     let state: ViewState = {
+      source: "copilot",
       options: structuredClone(defaults),
       rows: [],
       models: structuredClone(benchmarks),
@@ -70,6 +95,15 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.exposeBinding("hostMessage", async (_, m) => {
       messages.push(m);
       if (m.type === "options") state.options = m.options;
+      if (m.type === "source") {
+        state.source = m.source;
+        state.options = {
+          ...state.options,
+          source: m.source,
+          billing: m.source === "opencode" ? "usd" : "credits",
+        };
+        state.optionsRevision++;
+      }
       if (m.type === "profile") {
         try {
           const result = changeProfile(profiles, state.options, m.change);
@@ -83,7 +117,8 @@ for (const theme of ["light", "dark", "high-contrast"])
       }
       if (m.type === "select") state.selected = m.id;
       if (m.type === "mapping") mappings[m.id] = m.benchmarkId;
-      state.rows = compare(available, state.models, state.options, mappings);
+      const listed = state.source === "opencode" ? opencodeAvailable : available;
+      state.rows = compare(listed, state.models, state.options, mappings);
       state.recommendation = recommend(state.rows, state.options);
       state.profiles = profiles.items.map(({ id, name }) => ({ id, name }));
       state.activeProfileId = profiles.activeId;
@@ -255,6 +290,30 @@ for (const theme of ["light", "dark", "high-contrast"])
       path: testInfo.outputPath(`${theme}.png`),
       fullPage: true,
     });
+    // Source switching resets billing and relabels every cost surface.
+    await page.locator("#source").selectOption("opencode");
+    await expect(page.locator("#billing")).toHaveValue("usd");
+    await expect(page.locator("#eyebrow")).toHaveText("PARETO / OPENCODE");
+    await expect(page.locator("#cost-heading")).toHaveText("USD");
+    await expect(page.locator("#count")).toHaveText("1 plotted / 2 models");
+    await expect(page.locator("#recommendation-result")).toContainText(
+      "Kimi K2.7 Code",
+    );
+    await expect(page.locator("#recommendation-result")).toContainText("USD");
+    await expect(page.locator("#rows tr")).toHaveCount(2);
+    await expect(
+      page.locator('#billing option[value="legacy"]'),
+    ).toBeHidden();
+    await expect(page.locator("canvas")).toHaveAttribute(
+      "aria-label",
+      /USD/,
+    );
+    await page.locator("#source").selectOption("copilot");
+    await expect(page.locator("#billing")).toHaveValue("credits");
+    await expect(page.locator("#eyebrow")).toHaveText(
+      "PARETO / GITHUB COPILOT",
+    );
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await page.getByLabel("Filter models").fill("unmapped");
     await expect(page.locator("#count")).toHaveText("0 plotted / 1 models");
     await expect(page.locator("#empty")).toBeVisible();

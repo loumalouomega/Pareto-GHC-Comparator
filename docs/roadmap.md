@@ -14,68 +14,7 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 ## Open items
 
-### Tier 1 — Support OpenCode alongside GitHub Copilot
-
-**Admission criterion:** Extend model comparison to another client while retaining trustworthy availability, benchmark matching, and cost estimates.
-
-**Outcome:** Users can compare models configured for OpenCode using the existing benchmark and Pareto workflow. The initial scope is an OpenCode source within the desktop VS Code extension; a standalone terminal UI or OpenCode-native UI requires a separate proposal.
-
-**Current gap:** Discovery calls `vscode.lm.selectChatModels({ vendor: "copilot" })` in `src/extension.ts`. Model identity, catalog pricing, billing modes, saved options, and UI wording currently assume Copilot. OpenCode integration and its pricing sources have not yet been verified.
-
-#### Verify and specify the OpenCode integration
-
-**Effort:** S. **Dependencies:** None; the contributor guidance and changelog baseline are in place.
-
-**Deliverables:**
-
-- Inspect current official OpenCode documentation and validate a supported discovery mechanism with a small local experiment. Record supported versions, prerequisites, and whether a local service, command, or configuration read is required.
-- Specify how to distinguish configured/usable models from a public catalog, preserve provider/model identifiers and reasoning variants, and report unavailable discovery without implying that catalog presence proves access.
-- Identify authoritative pricing sources and units for the providers supported initially. Record unsupported billing arrangements, missing rates, caching semantics, and context limits.
-- Write an integration decision document under `docs/` covering the chosen boundary, minimal data contract, credential handling, failure states, and a bounded initial provider scope. Link it here before implementation.
-
-**Acceptance criteria:**
-
-- A reproducible discovery example identifies models without an inference request or disclosure of credentials.
-- The decision document cites the documentation/version checked and states which availability and pricing facts can actually be established.
-- Initial supported providers and the cost formula are explicit. Any missing capability is recorded as a blocker or a visible unsupported state, rather than filled in by assumption.
-
-**Decision:** See [`opencode-integration.md`](opencode-integration.md) (accepted 2026-09-10 against OpenCode 1.18.30: CLI `opencode models --verbose` boundary, Zen-gateway USD pricing scope, namespaced identity, credential-safe failure states).
-
-#### Introduce source-aware discovery and comparison
-
-**Effort:** M. **Dependencies:** Accepted integration decision and reproducible discovery example.
-
-**Deliverables:**
-
-- Extract the existing Copilot discovery behind a source interface and implement the verified OpenCode adapter. Add an explicit source selector and actionable setup, empty, and error states.
-- Namespace model identities and manual benchmark overrides by source/provider/model so identical model names cannot collide. Preserve explicit benchmark-family matching and user selection for ambiguous variants.
-- Add the verified OpenCode pricing representation and clearly labeled cost units. Keep Copilot credits and legacy multipliers specific to Copilot; leave unsupported prices unresolved and excluded from cost-based comparisons.
-- Scope charts, recommendations, budgets, and workload profiles to a compatible source and billing unit. Migrate existing options, profiles, and overrides to Copilot defaults without losing user choices.
-- Ensure switching sources cannot display late discovery results, mappings, or budgets from the previously selected source.
-
-**Acceptance criteria:**
-
-- Fixture-based tests cover discovery success/failure, provider identity collisions, ambiguous mappings, unknown pricing, supported cost formulas, source switching, and migration of existing saved state.
-- Existing Copilot comparisons, recommendations, and saved workloads retain their behavior after migration.
-- OpenCode rows use verified provider pricing and explicit units; unavailable models and missing benchmarks/prices have visible explanations.
-- Credentials and full provider configurations never enter webview state, logs, fixtures, or exported documentation. The adapter performs no inference or automatic model switching.
-
-#### Validate and document the OpenCode workflow
-
-**Effort:** M. **Dependencies:** Source-aware implementation.
-
-**Deliverables:**
-
-- Add browser coverage for source selection, OpenCode setup/error states, mapping selection, pricing labels, and source-specific saved workloads.
-- Document prerequisites, supported versions/providers, discovery limitations, pricing assumptions, refresh behavior, and any new local access or network activity in the README.
-- Run the existing type checks, unit/host tests, build, browser tests, and packaging checks. Perform a real OpenCode smoke test using the documented setup and a Copilot regression smoke test; record environment and results without credentials.
-- Update contributor guidance and the changelog with the verified integration boundary and support limitations.
-
-**Acceptance criteria:**
-
-- A user following the README can discover configured OpenCode models, resolve a benchmark variant, compare a priced model, and save/reapply a workload.
-- Automated checks pass and the packaged extension contains the required assets. Real-environment smoke-test results are recorded; unavailable credentials are reported as outstanding validation, not a passing test.
-- Documentation accurately distinguishes configured availability, benchmark quality, estimated workload cost, and actual account billing.
+No open items. Tier 1 (OpenCode comparison) and Tier 2 (Vitest verification) are implemented; behavior is recorded in `AGENTS.md` and the changelog.
 
 ## Non-goals / known constraints
 
@@ -93,4 +32,4 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 ### Integration constraints to verify
 
-- **OpenCode discovery and provider coverage:** No supported integration mechanism or provider scope is assumed yet. The Tier 1 investigation must establish these before implementation; unsupported providers remain visibly unsupported until discovery and pricing can be verified.
+- **OpenCode provider coverage and platforms:** discovery via `opencode models --verbose` and Zen-gateway USD pricing are implemented. Direct (BYOK) providers remain visibly unpriced until their rates are verified; macOS/Windows binary resolution is untested.

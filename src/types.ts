@@ -1,5 +1,6 @@
 export type Preset = "general" | "coding" | "agentic";
-export type Billing = "credits" | "legacy";
+export type Billing = "credits" | "legacy" | "usd";
+export type Source = "copilot" | "opencode";
 export interface Tokens {
   input: number;
   read: number;
@@ -13,6 +14,7 @@ export interface RecommendationSettings {
   scoreGap: number;
 }
 export interface Options {
+  source: Source;
   preset: Preset;
   billing: Billing;
   plan: "pro" | "proPlus";
@@ -21,6 +23,7 @@ export interface Options {
   recommendation: RecommendationSettings;
 }
 export const defaults: Options = {
+  source: "copilot",
   preset: "coding",
   billing: "credits",
   plan: "pro",
@@ -28,7 +31,7 @@ export const defaults: Options = {
   filter: "",
   recommendation: {
     mode: "budget",
-    budgets: { credits: 1, legacy: 1 },
+    budgets: { credits: 1, legacy: 1, usd: 1 },
     scoreGap: 3,
   },
 };
@@ -49,6 +52,15 @@ export interface AvailableModel {
   name: string;
   family: string;
   maxInputTokens: number;
+  /** Absent means Copilot (pre-source data). */
+  source?: Source;
+  /** USD-per-million-token rates from OpenCode CLI discovery. Absent for Copilot models and unpriced providers. */
+  rates?: Rates;
+  long?: { threshold: number; rates: Rates };
+  /** Zero-cost Zen free-tier model. */
+  freeTier?: boolean;
+  /** Visible pricing notes from discovery (e.g. unrecognized tier shape). */
+  pricingNotes?: string[];
 }
 export interface Rates {
   input: number;
@@ -65,6 +77,8 @@ export interface CatalogEntry {
   long?: { threshold: number; rates: Rates };
   legacy?: { pro: number; proPlus: number };
   expires?: string;
+  /** Zero-cost model (Zen free tier). Priced at 0 with a visible label. */
+  freeTier?: boolean;
 }
 export type MappingStatus = "exact" | "user" | "selection" | "missing";
 export interface MappingResult {
@@ -115,11 +129,13 @@ export type ProfileAction =
   | { action: "apply" | "update" | "delete"; id: string };
 export type HostMessage =
   | { type: "ready" | "refresh" | "key" }
+  | { type: "source"; source: Source }
   | { type: "options"; options: Options }
   | { type: "select" | "copy"; id: string }
   | { type: "mapping"; id: string; benchmarkId: string }
   | { type: "profile"; change: ProfileAction };
 export interface ViewState {
+  source: Source;
   options: Options;
   rows: Row[];
   models: Benchmark[];

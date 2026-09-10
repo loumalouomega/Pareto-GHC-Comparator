@@ -3,11 +3,12 @@ import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl } from "./api";
 import { catalogDate } from "./catalog";
 import { compare, parseOptions, savedOptions } from "./compare";
+import { discoverOpenCode, OpenCodeError } from "./opencode";
 import { html } from "./html";
 import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
 import { parseMessage } from "./messages";
-import type { AvailableModel, Snapshot, ViewState } from "./types";
+import type { AvailableModel, Snapshot, Source, ViewState } from "./types";
 const secretName = "artificialAnalysis.apiKey";
 export function activate(context: vscode.ExtensionContext) {
   const cacheUri = vscode.Uri.joinPath(
@@ -37,8 +38,14 @@ export function activate(context: vscode.ExtensionContext) {
   service.retryAt = context.globalState.get<number>("retryAt", 0);
   let panel: vscode.WebviewPanel | undefined,
     snapshot: Snapshot | undefined,
-    available: AvailableModel[] = [],
     options = savedOptions(context.globalState.get("options"));
+  const availableBySource: Record<Source, AvailableModel[]> = {
+    copilot: [],
+    opencode: [],
+  };
+  // Generation counter: switching sources invalidates in-flight discovery so
+  // late results from the previous source can never render.
+  let discoveryGen = 0;
   let overrides = context.globalState.get<Record<string, string>>(
       "mappings",
       {},
@@ -51,8 +58,10 @@ export function activate(context: vscode.ExtensionContext) {
   let profileStore = loadProfiles(context.globalState.get("profiles"));
   let optionsRevision = 0;
   const render = () => {
+    const available = availableBySource[options.source];
     const rows = compare(available, snapshot?.models ?? [], options, overrides);
     const state: ViewState = {
+      source: options.source,
       options,
       rows,
       recommendation: recommend(rows, options),
@@ -71,24 +80,55 @@ export function activate(context: vscode.ExtensionContext) {
     };
     void panel?.webview.postMessage({ type: "state", state });
   };
-  const discover = async () => {
+  const discoverCopilot = async (gen: number) => {
     try {
       const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
-      available = models.map(({ id, name, family, maxInputTokens }) => ({
-        id,
-        name,
-        family,
-        maxInputTokens,
-      }));
-      discoveryError = available.length
+      if (gen !== discoveryGen) return;
+      availableBySource.copilot = models.map(
+        ({ id, name, family, maxInputTokens }) => ({
+          id,
+          name,
+          family,
+          maxInputTokens,
+          source: "copilot" as const,
+        }),
+      );
+      discoveryError = availableBySource.copilot.length
         ? ""
         : "No Copilot models are exposed. Sign in to GitHub Copilot, enable Copilot Chat, and refresh.";
     } catch {
-      available = [];
+      if (gen !== discoveryGen) return;
+      availableBySource.copilot = [];
       discoveryError =
         "Could not discover Copilot models. Check Copilot sign-in and refresh.";
     }
     render();
+  };
+  const discoverOpencode = async (gen: number) => {
+    try {
+      const models = await discoverOpenCode();
+      if (gen !== discoveryGen) return;
+      availableBySource.opencode = models;
+      discoveryError = "";
+    } catch (error) {
+      if (gen !== discoveryGen) return;
+      if (error instanceof OpenCodeError) {
+        // Retain the previous listing on command/parse failures; clear only
+        // when the error reports a genuinely empty or missing setup.
+        if (error.kind === "missing" || error.kind === "empty")
+          availableBySource.opencode = [];
+        discoveryError = error.message;
+      } else {
+        discoveryError =
+          "OpenCode discovery failed. Retry; the previous listing is retained.";
+      }
+    }
+    render();
+  };
+  const discover = async () => {
+    const gen = ++discoveryGen;
+    if (options.source === "opencode") await discoverOpencode(gen);
+    else await discoverCopilot(gen);
   };
   const refresh = async (force = false) => {
     if (loading) return;
@@ -181,36 +221,66 @@ export function activate(context: vscode.ExtensionContext) {
               await refresh();
             } else if (m.type === "refresh") await refresh(true);
             else if (m.type === "key") await setKey();
-            else if (m.type === "options") {
+            else if (m.type === "source") {
+              if (m.source !== options.source) {
+                // Invalidate in-flight discovery before switching (B2).
+                discoveryGen++;
+                options = {
+                  ...options,
+                  source: m.source,
+                  billing: m.source === "opencode" ? "usd" : "credits",
+                };
+                selected = undefined;
+                await context.globalState.update("options", options);
+                optionsRevision++;
+                render();
+                await discover();
+              }
+            } else if (m.type === "options") {
               options = parseOptions(m.options);
               await context.globalState.update("options", options);
               render();
             } else if (m.type === "profile") {
+              const previousSource = options.source;
               const next = changeProfile(profileStore, options, m.change);
               await context.globalState.update("profiles", next.store);
               await context.globalState.update("options", next.options);
               profileStore = next.store;
               options = next.options;
               if (m.change.action === "apply") optionsRevision++;
+              if (options.source !== previousSource) {
+                discoveryGen++;
+                selected = undefined;
+              } else if (
+                selected &&
+                !availableBySource[options.source].some(
+                  (a) => a.id === selected,
+                )
+              ) {
+                selected = undefined;
+              }
               message =
                 m.change.action === "delete"
                   ? "Profile deleted. Current workload retained."
                   : "Profile settings saved locally.";
               render();
+              if (options.source !== previousSource) await discover();
             } else if (
               m.type === "select" &&
               typeof m.id === "string" &&
-              available.some((a) => a.id === m.id)
+              availableBySource[options.source].some((a) => a.id === m.id)
             ) {
               selected = m.id;
               render();
             } else if (m.type === "copy" && typeof m.id === "string") {
-              const model = available.find((a) => a.id === m.id);
+              const model = availableBySource[options.source].find(
+                (a) => a.id === m.id,
+              );
               if (model) await vscode.env.clipboard.writeText(model.name);
             } else if (
               m.type === "mapping" &&
               typeof m.id === "string" &&
-              available.some((a) => a.id === m.id) &&
+              availableBySource[options.source].some((a) => a.id === m.id) &&
               typeof m.benchmarkId === "string" &&
               (m.benchmarkId === "" ||
                 snapshot?.models.some((b) => b.id === m.benchmarkId))
@@ -247,7 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
       );
     }),
     vscode.lm.onDidChangeChatModels(() => {
-      if (panel) void discover();
+      if (panel && options.source === "copilot") void discover();
     }),
   );
 }

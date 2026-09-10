@@ -1,4 +1,5 @@
 import { catalog } from "./catalog";
+import { opencodeBenchmarkFamilies } from "./opencode";
 import {
   defaults,
   type AvailableModel,
@@ -12,8 +13,9 @@ export function parseOptions(value: unknown): Options {
   const v = value as Options;
   if (
     !v ||
+    !["copilot", "opencode"].includes(v.source) ||
     !["general", "coding", "agentic"].includes(v.preset) ||
-    !["credits", "legacy"].includes(v.billing) ||
+    !["credits", "legacy", "usd"].includes(v.billing) ||
     !["pro", "proPlus"].includes(v.plan) ||
     typeof v.filter !== "string" ||
     v.filter.length > 200 ||
@@ -36,6 +38,7 @@ export function parseOptions(value: unknown): Options {
     ![
       recommendation.budgets.credits,
       recommendation.budgets.legacy,
+      recommendation.budgets.usd,
       recommendation.scoreGap,
     ].every(
       (n) =>
@@ -47,6 +50,7 @@ export function parseOptions(value: unknown): Options {
     );
   }
   return {
+    source: v.source,
     preset: v.preset,
     billing: v.billing,
     plan: v.plan,
@@ -56,6 +60,7 @@ export function parseOptions(value: unknown): Options {
       budgets: {
         credits: recommendation.budgets.credits,
         legacy: recommendation.budgets.legacy,
+        usd: recommendation.budgets.usd,
       },
       scoreGap: recommendation.scoreGap,
     },
@@ -67,32 +72,72 @@ export function parseOptions(value: unknown): Options {
     },
   };
 }
+/** Tolerant merge for pre-source settings; still validated by parseOptions. */
+export function migrateOptions(value: unknown): unknown {
+  if (value && typeof value === "object") {
+    const v = value as Record<string, unknown>;
+    const stored = object(v.recommendation)
+      ? (v.recommendation as Record<string, unknown>)
+      : {};
+    const budgets = object(stored.budgets)
+      ? (stored.budgets as Record<string, unknown>)
+      : {};
+    return {
+      source: "copilot",
+      ...(value as Record<string, unknown>),
+      recommendation: {
+        ...structuredClone(defaults.recommendation),
+        ...stored,
+        budgets: {
+          ...structuredClone(defaults.recommendation.budgets),
+          ...budgets,
+        },
+      },
+    };
+  }
+  return value;
+}
 export function savedOptions(value: unknown): Options {
   try {
-    // v0.1 settings did not contain recommendation controls.
-    if (value && typeof value === "object" && !("recommendation" in value)) {
-      return parseOptions({
-        ...value,
-        recommendation: structuredClone(defaults.recommendation),
-      });
-    }
-    return parseOptions(value);
+    // v0.1 settings lacked recommendation controls; pre-source settings lack
+    // source and USD budgets. Migrate to Copilot defaults, then validate.
+    return parseOptions(migrateOptions(value));
   } catch {
     return structuredClone(defaults);
   }
 }
+const object = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
 export function estimate(
   entry: CatalogEntry | undefined,
   options: Options,
   now = Date.now(),
 ): { cost: number | null; tier?: string; reason?: string } {
   if (!entry)
-    return { cost: null, reason: "No verified Copilot pricing mapping." };
+    return { cost: null, reason: "No verified pricing mapping." };
   if (options.billing === "legacy") {
     const m = entry.legacy?.[options.plan];
     return m === undefined
       ? { cost: null, reason: "No documented multiplier for this legacy plan." }
       : { cost: m, tier: "Manual model selection" };
+  }
+  if (options.billing === "usd") {
+    if (entry.freeTier)
+      return { cost: 0, tier: "Free tier" };
+    const t = options.tokens;
+    const long =
+      entry.long && t.input + t.read + t.write > entry.long.threshold;
+    const r = long ? entry.long!.rates : entry.rates;
+    if (!r)
+      return { cost: null, reason: "Billed by provider; no verified rate." };
+    // Same disjoint-bucket rule as credits; units are USD per workload.
+    const cost =
+      (t.input * r.input +
+        t.read * r.read +
+        t.write * (r.write ?? r.input) +
+        t.output * r.output) /
+      1000000;
+    return { cost, tier: long ? "Long context" : "Default context" };
   }
   if (entry.expires && now >= Date.parse(`${entry.expires}T23:59:59.999Z`))
     return {
@@ -191,13 +236,44 @@ export function compare(
       `${m.name} ${m.id}`.toLowerCase().includes(options.filter.toLowerCase()),
     )
     .map((m) => {
-      const matches = entries.filter((e) => e.ids.includes(m.id));
-      const entry = matches.length === 1 ? matches[0] : undefined;
+      const source = m.source ?? "copilot";
+      let entry: CatalogEntry | undefined;
+      let crossUnit: string | undefined;
+      if (source === "opencode") {
+        // Dynamic pricing: rates ride on the discovered model; only the
+        // benchmark-family aliases are static.
+        const baseRef = m.id.replace(/^opencode:/, "").split("#")[0];
+        const baseName = m.name.replace(/\s*\([^()]*\)\s*$/, "");
+        const provider = baseRef.split("/")[0] || "OpenCode";
+        entry = {
+          ids: [m.id],
+          name: baseName,
+          provider,
+          benchmarkFamilies: opencodeBenchmarkFamilies[baseRef] ?? [baseName],
+          ...(m.rates ? { rates: m.rates } : {}),
+          ...(m.long ? { long: m.long } : {}),
+          ...(m.freeTier
+            ? {
+                freeTier: true,
+                rates: m.rates ?? { input: 0, read: 0, write: null, output: 0 },
+              }
+            : {}),
+        };
+        if (options.billing !== "usd")
+          crossUnit = "OpenCode models compare in USD billing.";
+      } else {
+        const matches = entries.filter((e) => e.ids.includes(m.id));
+        entry = matches.length === 1 ? matches[0] : undefined;
+        if (options.billing === "usd")
+          crossUnit = "Copilot models compare in AI credits or legacy billing.";
+      }
       const matched = resolveBenchmark(entry, benchmarks, overrides[m.id]);
-      const price = estimate(entry, options);
+      const price = crossUnit
+        ? { cost: null as number | null, reason: crossUnit }
+        : estimate(entry, options);
       const score = matched.benchmark?.scores[options.preset] ?? null;
       const tooLong =
-        options.billing === "credits" &&
+        (options.billing === "credits" || options.billing === "usd") &&
         m.maxInputTokens > 0 &&
         options.tokens.input + options.tokens.read + options.tokens.write >
           m.maxInputTokens;
@@ -220,6 +296,7 @@ export function compare(
             ? "Selected benchmark has no score for this preset."
             : undefined,
           price.reason,
+          ...(m.pricingNotes ?? []),
           tooLong ? "Input exceeds the model context limit." : undefined,
         ].filter((r): r is string => !!r),
       };

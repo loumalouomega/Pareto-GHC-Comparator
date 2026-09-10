@@ -1,6 +1,6 @@
 import Chart from "chart.js/auto";
 import type { Plugin, ScatterDataPoint } from "chart.js";
-import type { Options, Row, ViewState, HostMessage } from "../src/types";
+import type { Billing, Options, Row, ViewState, HostMessage } from "../src/types";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -24,14 +24,29 @@ const colors: Record<string, string> = {
   Microsoft: "#b496f6",
   xAI: "#e5b957",
   "Moonshot AI": "#e081c6",
+  opencode: "#7dd3fc",
+  "opencode-go": "#f0abfc",
+  openai: "#679fff",
   Unknown: "#9ba3b4",
 };
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
   initialized = false;
 let appliedRevision = -1;
-let budgetDraft = { credits: 1, legacy: 1 };
-let displayedBilling: Options["billing"] = "credits";
+let budgetDraft: Record<Billing, number> = { credits: 1, legacy: 1, usd: 1 };
+let displayedBilling: Billing = "credits";
+const unitNoun = (billing: Billing) =>
+  billing === "credits"
+    ? "AI credits"
+    : billing === "legacy"
+      ? "premium requests"
+      : "USD";
+const unitCost = (billing: Billing) =>
+  billing === "credits"
+    ? "estimated AI credits"
+    : billing === "legacy"
+      ? "premium requests per interaction"
+      : "USD";
 let variantSearch = "",
   showOtherVariants = false,
   detailsModelId: string | undefined;
@@ -48,6 +63,9 @@ const lightColors: Record<string, string> = {
   Microsoft: "#7652b5",
   xAI: "#926c12",
   "Moonshot AI": "#a23782",
+  opencode: "#0369a1",
+  "opencode-go": "#a21caf",
+  openai: "#2468cb",
   Unknown: "#637084",
 };
 const color = (provider: string) =>
@@ -104,7 +122,7 @@ function drawChart() {
   const scale = rows.some((r) => r.cost === 0) ? "linear" : "logarithmic";
   el("chart").setAttribute(
     "aria-label",
-    `${rows.length} models: ${state.options.preset} quality versus ${state.options.billing === "credits" ? "estimated AI credits" : "premium requests"}, ${scale} cost scale. The table below provides all values and model selection.`,
+    `${rows.length} models: ${state.options.preset} quality versus ${unitCost(state.options.billing)}, ${scale} cost scale. The table below provides all values and model selection.`,
   );
   const data: ScatterDataPoint[] = rows.map((r) => ({
     x: r.cost!,
@@ -160,7 +178,7 @@ function drawChart() {
           callbacks: {
             label: (item) => {
               const r = rows[item.dataIndex];
-              return `${r.name}: ${format(r.score)} score · ${format(r.cost)} ${state!.options.billing === "credits" ? "AI credits" : "premium requests"}${r.frontier ? " · Pareto frontier" : ""}`;
+              return `${r.name}: ${format(r.score)} score · ${format(r.cost)} ${unitNoun(state!.options.billing)}${r.frontier ? " · Pareto frontier" : ""}`;
             },
           },
         },
@@ -170,7 +188,7 @@ function drawChart() {
           type: scale,
           title: {
             display: true,
-            text: `${state.options.billing === "credits" ? "Estimated AI credits" : "Premium requests per interaction"} (${scale === "linear" ? "linear" : "log"} scale)`,
+            text: `${state.options.billing === "credits" ? "Estimated AI credits" : state.options.billing === "legacy" ? "Premium requests per interaction" : "Estimated USD"} (${scale === "linear" ? "linear" : "log"} scale)`,
             color: foreground,
           },
           ticks: { color: foreground },
@@ -221,7 +239,7 @@ function renderDetails() {
   target.append(
     text(
       "p",
-      `${format(row.cost)} ${state.options.billing === "credits" ? "estimated AI credits" : "premium requests per interaction"}${row.tier ? ` · ${row.tier}` : ""}`,
+      `${format(row.cost)} ${unitCost(state.options.billing)}${row.tier ? ` · ${row.tier}` : ""}`,
     ),
   );
   for (const reason of row.reasons) target.append(text("p", reason, "notice"));
@@ -320,7 +338,9 @@ function renderDetails() {
     label,
     text(
       "p",
-      "Matching uses explicit model-family aliases. Multiple reasoning variants require your choice. Manual selections may differ from Copilot’s reasoning settings.",
+      state.options.source === "opencode"
+        ? "Matching uses explicit model-family aliases. Reasoning variants are separate OpenCode rows. Manual selections may differ from OpenCode's runtime configuration."
+        : "Matching uses explicit model-family aliases. Multiple reasoning variants require your choice. Manual selections may differ from Copilot’s reasoning settings.",
       "hint",
     ),
   );
@@ -354,7 +374,7 @@ function render(next: ViewState) {
     el<HTMLInputElement>("score-gap").value = String(
       state.options.recommendation.scoreGap,
     );
-    for (const key of ["preset", "billing", "plan", "filter"] as const)
+    for (const key of ["preset", "billing", "plan", "filter", "source"] as const)
       el<HTMLInputElement>(key).value = state.options[key];
     for (const key of ["input", "read", "write", "output"] as const)
       el<HTMLInputElement>(key).value = String(state.options.tokens[key]);
@@ -363,12 +383,30 @@ function render(next: ViewState) {
   el("tokens").hidden = state.options.billing === "legacy";
   el("legacy-note").hidden = state.options.billing !== "legacy";
   el("plan-label").hidden = state.options.billing !== "legacy";
+  // Billing modes are source-specific: credits/legacy for Copilot, USD for OpenCode.
+  for (const option of Array.from(
+    el<HTMLSelectElement>("billing").options,
+  )) {
+    if (option.value === "usd")
+      option.hidden = state.options.source !== "opencode";
+    else option.hidden = state.options.source !== "copilot";
+  }
+  el("eyebrow").textContent =
+    state.options.source === "opencode"
+      ? "PARETO / OPENCODE"
+      : "PARETO / GITHUB COPILOT";
+  el("subtitle").textContent =
+    state.options.source === "opencode"
+      ? "Compare benchmark quality with estimated OpenCode USD cost. Better value is toward the upper left."
+      : "Compare benchmark quality with estimated Copilot usage. Better value is toward the upper left.";
   el("budget-label").hidden = state.options.recommendation.mode !== "budget";
   el("gap-label").hidden = state.options.recommendation.mode !== "nearBest";
   el("budget-unit").textContent =
     state.options.billing === "credits"
       ? "Maximum AI credits"
-      : "Maximum premium requests";
+      : state.options.billing === "legacy"
+        ? "Maximum premium requests"
+        : "Maximum USD";
   el("recommendation-result").textContent = state.recommendation.explanation;
   renderProfiles(previousActive);
   el("status").textContent = state.message;
@@ -376,6 +414,33 @@ function render(next: ViewState) {
   el<HTMLButtonElement>("key").disabled = state.loading;
   el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
   el("catalog").textContent = `Catalog dated ${state.catalogDate}`;
+  if (state.options.source === "opencode") {
+    el("pricing-line").replaceChildren(
+      text("span", "OpenCode pricing: "),
+      (() => {
+        const a = document.createElement("a");
+        a.href = "https://opencode.ai/docs/zen";
+        a.textContent = "Zen pricing";
+        return a;
+      })(),
+      text("span", " · live CLI rates"),
+    );
+    el("pricing-note").textContent =
+      "Benchmark results describe the tested variant, not guaranteed performance with OpenCode's configuration. USD rates come from OpenCode CLI discovery.";
+  } else {
+    el("pricing-line").replaceChildren(
+      text("span", "Copilot pricing: "),
+      (() => {
+        const a = document.createElement("a");
+        a.href =
+          "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing";
+        a.textContent = "GitHub Docs";
+        return a;
+      })(),
+    );
+    el("pricing-note").textContent =
+      "Benchmark results describe the tested variant, not guaranteed performance in Copilot. Pricing updates ship with extension releases.";
+  }
   el("provenance").textContent = state.fetchedAt
     ? `Index v${state.version} · retrieved ${new Date(state.fetchedAt).toLocaleString()}${Date.now() - state.fetchedAt > 86400000 ? " · older than 24 hours" : ""}`
     : "No benchmark snapshot loaded";
@@ -386,7 +451,9 @@ function render(next: ViewState) {
   el("chart-wrap").hidden = rows.length === 0;
   el("empty").textContent = state.rows.length
     ? "No comparable models. Set an API key to load benchmarks, then select a model below to resolve any missing benchmark mapping."
-    : "No models match. Clear the filter or check GitHub Copilot sign-in and refresh.";
+    : state.options.source === "opencode"
+      ? "No models match. Clear the filter or check OpenCode setup and refresh."
+      : "No models match. Clear the filter or check GitHub Copilot sign-in and refresh.";
   const legend = el("legend");
   legend.replaceChildren();
   for (const provider of new Set(rows.map((r) => r.provider))) {
@@ -395,7 +462,11 @@ function render(next: ViewState) {
     legend.append(item);
   }
   el("cost-heading").textContent =
-    state.options.billing === "credits" ? "AI credits" : "Requests";
+    state.options.billing === "credits"
+      ? "AI credits"
+      : state.options.billing === "legacy"
+        ? "Requests"
+        : "USD";
   const body = el("rows");
   body.replaceChildren();
   for (const row of state.rows) {
@@ -472,7 +543,13 @@ function updateProfileButtons() {
 let timer: ReturnType<typeof setTimeout>;
 function sendOptions(): boolean {
   clearTimeout(timer);
-  const billing = el<HTMLSelectElement>("billing").value as Options["billing"];
+  // A source switch hides the previous billing mode before the synced value
+  // arrives; a stale debounced edit must not overwrite the host reset.
+  const billingSelect = el<HTMLSelectElement>("billing");
+  const picked = billingSelect.selectedOptions[0];
+  const billing = (
+    picked && picked.hidden && state ? state.options.billing : billingSelect.value
+  ) as Options["billing"];
   const mode = el<HTMLSelectElement>("recommendation-mode")
     .value as Options["recommendation"]["mode"];
   const readNumber = (
@@ -512,6 +589,7 @@ function sendOptions(): boolean {
   if (budget === undefined || scoreGap === undefined) return false;
   budgetDraft[displayedBilling] = budget;
   const options: Options = {
+    source: state?.options.source ?? "copilot",
     preset: el<HTMLSelectElement>("preset").value as Options["preset"],
     billing,
     plan: el<HTMLSelectElement>("plan").value as Options["plan"],
@@ -526,6 +604,13 @@ function sendOptions(): boolean {
   send("options", { options });
   return true;
 }
+el("source").addEventListener("change", () => {
+  // Source switches reset billing host-side; send immediately, not debounced.
+  clearTimeout(timer);
+  send("source", {
+    source: el<HTMLSelectElement>("source").value,
+  });
+});
 for (const id of [
   "preset",
   "billing",
