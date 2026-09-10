@@ -110,7 +110,9 @@ The VSIX filename stays constant as versions change; the version inside it comes
 
 `.github/workflows/extension.yml` runs on branch pushes, pull requests, version-tag pushes, and manual dispatch. It installs locked dependencies with Node.js 22, type-checks, runs the unit and host tests, builds, runs Chromium UI tests, and packages the VSIX. Successful runs upload a **pareto-ghc-comparator-<commit SHA>** artifact, retained for 30 days. Failed runs upload any browser diagnostics for 7 days.
 
-Only a **push of a stable version tag** publishes to the VS Code Marketplace. The tag must exactly match `v` plus the manifest version, and the lockfile version must match too. Publication waits for all checks to pass, downloads the VSIX from that same run, and publishes those exact packaged bytes. Branch pushes, pull requests, and manual dispatch only build artifacts.
+Only a **push of a stable version tag** creates a GitHub Release and publishes to the VS Code Marketplace. The tag must exactly match `v` plus the manifest version, and the lockfile version must match too. The release job uploads the tested `pareto-ghc-comparator-<version>.vsix` to the tag's GitHub Release; the Marketplace job downloads the VSIX from that same run and publishes those exact packaged bytes. Branch pushes, pull requests, and manual dispatch only build artifacts.
+
+As a first approach, install from the GitHub Release (`Extensions: Install from VSIX…`) while Marketplace auto-publish is being fixed.
 
 One-time setup:
 
