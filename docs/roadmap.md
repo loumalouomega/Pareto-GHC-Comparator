@@ -39,6 +39,8 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - The decision document cites the documentation/version checked and states which availability and pricing facts can actually be established.
 - Initial supported providers and the cost formula are explicit. Any missing capability is recorded as a blocker or a visible unsupported state, rather than filled in by assumption.
 
+**Decision:** See [`opencode-integration.md`](opencode-integration.md) (accepted 2026-09-10 against OpenCode 1.18.30: CLI `opencode models --verbose` boundary, Zen-gateway USD pricing scope, namespaced identity, credential-safe failure states).
+
 #### Introduce source-aware discovery and comparison
 
 **Effort:** M. **Dependencies:** Accepted integration decision and reproducible discovery example.
