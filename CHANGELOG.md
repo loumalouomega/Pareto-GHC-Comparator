@@ -4,9 +4,14 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 0.7.3
+
 ### Added
 
 - Project landing page at <https://loumalouomega.github.io/Pareto-GHC-Comparator/>, deployed from version tags. No behavior change.
+- Added repo-version, installs, downloads, and rating badges to the README; all badges use the flat style. No behavior change.
+
+History: [v0.7.2...v0.7.3](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.7.2...v0.7.3).
 
 ## 0.7.2
 
