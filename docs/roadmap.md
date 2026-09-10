@@ -8,54 +8,11 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 - Tiers are ordered by recommended execution order. Each tier states its admission criterion; tasks within a tier follow dependency order.
 - Each task defines the current gap, deliverables, dependencies, and acceptance criteria. Reference tasks by name rather than their position in the list.
-- Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Those files will be created in Tier 0; they are not currently available. Remove empty tiers.
+- Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Remove empty tiers.
 - Link a corresponding GitHub issue when one exists. The issue holds the request and discussion; this file defines the proposed scope. Verify claims against the code before treating them as implemented behavior.
 - Constraints below state what would justify reconsideration. Revisit them when their underlying assumptions change.
 
 ## Open items
-
-### Tier 0 — Establish contributor guidance and release history
-
-**Admission criterion:** Repository documentation needed to make subsequent changes and releases consistently reviewable.
-
-#### Add verified contributor guidance in AGENTS.md
-
-**Effort:** S. **Dependencies:** None.
-
-**Current gap:** The repository has user and development instructions in `README.md`, but no root `AGENTS.md` describing implementation boundaries and maintenance expectations.
-
-**Deliverables:**
-
-- Create a root `AGENTS.md` with a concise repository map covering the extension host, webview, benchmark API/cache, catalog, comparison logic, recommendations, workload profiles, tests, and release scripts.
-- Document the supported toolchain and existing commands for dependency installation, type checking, unit/host tests, build, browser tests, packaging, and release verification. Explain which checks apply to which changes and which smoke tests require a signed-in account.
-- Add per-feature implementation notes with source/test references for discovery, matching and overrides, pricing, Pareto comparison, recommendations, profile migration, credential storage, and cache/error handling.
-- Record maintenance rules: explicit model IDs and benchmark aliases, no silent reasoning-variant substitution, unknown prices remaining unresolved, secrets staying in the host, and preservation of existing saved state.
-- Explain how contributors update the README, changelog, and roadmap when behavior ships. Link the guidance from the README development section.
-
-**Acceptance criteria:**
-
-- Every command and implementation claim has been checked against the current manifest, scripts, source, or tests; planned features are clearly excluded from descriptions of shipped behavior.
-- Referenced files exist, and guidance distinguishes mocked browser tests from real-account validation.
-- A contributor can locate the relevant implementation, identify required checks, and document a completed task without reconstructing the repository structure.
-
-#### Add an evidence-based CHANGELOG.md
-
-**Effort:** S. **Dependencies:** Contributor guidance, so the maintenance convention is defined.
-
-**Current gap:** There is no changelog, and the README's release preparation text refers to version 0.2.0 while the manifest is at 0.4.0.
-
-**Deliverables:**
-
-- Create a root `CHANGELOG.md` with an `Unreleased` section and version sections supported by git history and tags. Group entries by user-visible additions, changes, and fixes where useful.
-- Reconstruct release changes from commits and available release evidence. Distinguish version bumps/prepared versions from confirmed publication; do not invent release dates or Marketplace status.
-- Reconcile stale release instructions in the README with the current manifest and release workflow, and link the changelog from the README.
-- Decide explicitly whether the changelog should ship in the VSIX; if included, update the allowlist in `.vscodeignore` and verify package contents.
-
-**Acceptance criteria:**
-
-- Historical entries are traceable to repository evidence, with uncertainty stated where publication cannot be established.
-- README, changelog, manifest, and lockfile agree on the current repository version; illustrative release examples are labeled as examples.
-- Contributor guidance explains when to add an unreleased entry and how to promote it during a release. If packaging changes, a generated VSIX contains the intended documentation.
 
 ### Tier 1 — Support OpenCode alongside GitHub Copilot
 
@@ -67,7 +24,7 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 #### Verify and specify the OpenCode integration
 
-**Effort:** S. **Dependencies:** Tier 0 documentation baseline.
+**Effort:** S. **Dependencies:** None; the contributor guidance and changelog baseline are in place.
 
 **Deliverables:**
 

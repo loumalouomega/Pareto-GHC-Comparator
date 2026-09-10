@@ -73,7 +73,7 @@ These figures describe estimated usage, not your account bill or measured task c
 
 ## Development
 
-Use Node.js 22 or newer and npm. No API key is needed for automated tests.
+Use Node.js 22 or newer and npm. No API key is needed for automated tests. See [contributor guidance](AGENTS.md) for implementation details and validation requirements, [the changelog](CHANGELOG.md) for version history, and [the roadmap](docs/roadmap.md) for planned work.
 
 ```sh
 npm ci
@@ -120,16 +120,16 @@ One-time setup:
 2. Create the GitHub Actions environment **marketplace**. Add `VSCE_PAT` as an environment secret (a repository secret also works): an Azure DevOps PAT with **Marketplace → Manage** permission and access to that publisher. Do not put the token in source files. See the [official publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for token creation and publisher membership.
 3. Push this workflow to GitHub. No Artificial Analysis API key is needed in CI; automated tests use fixtures.
 
-To release, start with a clean checkout, run `npm version patch` (or `minor` / `major`) to update both manifests and create a version commit and tag, then push the commit and **that specific tag**. For example, if the new version is `0.2.0`:
+To release, start with a clean checkout, run `npm version patch` (or `minor` / `major`) to update both manifests and create a version commit and tag, then push the commit and **that specific tag**. For example, if the next version is `0.5.1`:
 
 ```sh
 git push origin HEAD
-git push origin v0.2.0
+git push origin v0.5.1
 ```
 
-Version 0.2.0 is prepared locally; tagging and publication are separate actions. After committing the release, `npm run release:check -- v0.2.0` validates its tag locally. Use a new version for subsequent Marketplace releases; the workflow does not overwrite an existing version. A failed publication can be rerun after fixing authentication, provided that version has not already been published.
+The repository manifest and lockfile are at version 0.5.0, with a corresponding git tag; Marketplace publication has not been verified here. `npm run release:check -- v0.5.0` validates that tag string against both manifests; it does not verify git tag existence or publication. Use a new version for subsequent Marketplace releases. The workflow uses `--skip-duplicate` and does not overwrite an existing version; a failed publication can be rerun after fixing authentication.
 
-Authentication maintenance: Microsoft's publishing guide states that global Azure DevOps PATs retire on December 1, 2026. This workflow uses `VSCE_PAT`; migrate the publish job to Microsoft Entra workload identity and `vsce publish --azure-credential` before that retirement. The build and artifact jobs do not depend on publishing credentials.
+Authentication maintenance: Microsoft's publishing guide states that global Azure DevOps PATs retire on December 1, 2026. This workflow verifies publisher access using `VSCE_PAT` when present and otherwise attempts `--azure-credential`. The fallback alone does not provision an Entra identity; configure and validate Microsoft Entra authentication before retiring PAT-based publication. The build and artifact jobs do not depend on publishing credentials.
 
 ## Maintaining the catalog
 
