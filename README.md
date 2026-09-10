@@ -2,11 +2,11 @@
 
 [![Build](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml/badge.svg)](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml)
 [![Version](https://img.shields.io/github/v/tag/loumalouomega/Pareto-GHC-Comparator?style=flat&label=version)](https://github.com/loumalouomega/Pareto-GHC-Comparator/releases)
-[![Marketplace version](https://img.shields.io/visual-studio-marketplace/v/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator)
+[![License: MIT](https://img.shields.io/github/license/loumalouomega/Pareto-GHC-Comparator?style=flat)](LICENSE)
+<!-- [![Marketplace version](https://img.shields.io/visual-studio-marketplace/v/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator#review-details)
-[![License: MIT](https://img.shields.io/github/license/loumalouomega/Pareto-GHC-Comparator?style=flat)](LICENSE)
+[![Rating](https://img.shields.io/visual-studio-marketplace/r/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator#review-details) -->
 
 <img src="media/icon.png" alt="Pareto GHC Comparator logo" width="128" />
 
