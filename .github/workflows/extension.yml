@@ -61,6 +61,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: marketplace-publish
       cancel-in-progress: false
@@ -71,7 +74,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-          package-manager-cache: false
+          cache: npm
       - run: npm ci --ignore-scripts
       - uses: actions/download-artifact@v8
         with:
@@ -81,8 +84,17 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          if [ -z "$VSCE_PAT" ]; then
-            echo "::error::Configure the VSCE_PAT secret for the marketplace environment or repository."
+          set -euo pipefail
+          VSIX="release/pareto-ghc-comparator.vsix"
+          PUBLISHER="$(node -p "require('./package.json').publisher")"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "Publisher: $PUBLISHER, version: $VERSION"
+          ls -lh "$VSIX"
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::VSCE_PAT is empty. Set it as an environment secret on the 'marketplace' environment (environment secrets override repository secrets). See https://code.visualstudio.com/api/working-with-extensions/publishing-extension#personal-access-token"
             exit 1
           fi
-          npx --no-install vsce publish --packagePath release/pareto-ghc-comparator.vsix
+          # Don't leak the token; only show its length to distinguish empty/whitespace vs invalid.
+          echo "VSCE_PAT present (length ${#VSCE_PAT}). Verifying publish rights for '$PUBLISHER'..."
+          npx --no-install vsce verify-pat -p "$PUBLISHER"
+          npx --no-install vsce publish --packagePath "$VSIX"
