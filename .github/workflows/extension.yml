@@ -32,7 +32,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: npm run release:check
       - run: npm run check
-      - run: npm test
+      - run: npm run test:coverage
       - run: npm run build
       - name: Install browser
         run: npx playwright install --with-deps chromium
@@ -43,6 +43,13 @@ jobs:
         with:
           name: pareto-ghc-comparator-${{ github.sha }}
           path: pareto-ghc-comparator.vsix
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage/
           if-no-files-found: error
           retention-days: 30
       - name: Upload browser diagnostics

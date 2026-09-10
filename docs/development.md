@@ -6,12 +6,15 @@ Build, test, and install the extension locally. No API key is needed for automat
 npm ci
 npm run check
 npm test
+npm run test:coverage
 npm run build
 npx playwright install chromium
 npm run test:ui
 npm run package
 npm run install:extension
 ```
+
+See [Testing](testing.md) for focused runs, coverage thresholds, and the full validation sequence per change type.
 
 Press **F5** to open an Extension Development Host after the build task runs. To use an existing Chromium installation for UI tests, set `PARETO_CHROMIUM_PATH` to its executable. To refresh the preview from an already validated benchmark snapshot, run `node --import tsx scripts/capture-screenshot.mjs /path/to/snapshot.json`. The helper uses explicit illustrative variant selections and never accepts or stores an API key.
 

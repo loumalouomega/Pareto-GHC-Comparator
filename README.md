@@ -29,6 +29,7 @@ Requires VS Code 1.100 or newer with GitHub Copilot Chat. See [Getting started](
 - [Billing estimates](docs/billing.md) — AI-credit formula and legacy premium requests.
 - [Data, refresh, and privacy](docs/data-privacy.md) — benchmark source, caching, failure handling.
 - [Development](docs/development.md) — local build, tests, and VS Code tasks.
+- [Testing](docs/testing.md) — focused runs, coverage, and validation sequences.
 - [CI and Marketplace releases](docs/releases.md) — workflow and publishing.
 - [Maintaining the catalog](docs/catalog.md) — pricing and benchmark-alias updates.
 - [Roadmap](docs/roadmap.md) — planned work.

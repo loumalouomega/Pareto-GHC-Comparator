@@ -40,7 +40,9 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:ui": "playwright test",
     "vscode:prepublish": "npm run check && npm run build",
     "package": "vsce package --no-dependencies --out pareto-ghc-comparator.vsix",
@@ -54,10 +56,12 @@
     "@playwright/test": "^1.51.0",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.100.0",
+    "@vitest/coverage-v8": "^5.0.0",
     "@vscode/vsce": "^3.3.0",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "prettier": "^3.9.6",
     "tsx": "^4.19.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^5.0.0"
   }
 }

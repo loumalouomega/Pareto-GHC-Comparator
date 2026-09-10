@@ -14,7 +14,7 @@ This repository builds a desktop VS Code extension that compares discovered GitH
 | `src/profiles.ts` | Saved workload validation and profile operations. |
 | `src/types.ts`, `src/messages.ts` | Shared data contracts and validation of incoming webview messages. |
 | `src/html.ts`, `webview/main.ts`, `webview/style.css` | Webview markup/CSP, Chart.js rendering, interaction, and themes. |
-| `test/*.test.ts` | Unit tests and mocked extension-host tests. |
+| `test/*.test.ts` | Unit tests and mocked extension-host tests (Vitest). |
 | `test/webview.spec.ts`, `playwright.config.ts` | Chromium UI tests with synthetic data and a mocked host. |
 | `scripts/build.mjs` | Bundles host/webview code and copies styles into `dist/`. |
 | `scripts/verify-release.mjs` | Checks a supplied tag name against manifest and lockfile versions. |
@@ -29,7 +29,9 @@ Use Node.js 22 or newer and npm; install locked dependencies with `npm ci`. Desk
 | Command | Purpose |
 | --- | --- |
 | `npm run check` | Type-check without emitting files. |
-| `npm test` | Run unit and mocked host tests with Node's test runner and tsx. |
+| `npm test` | Run unit and mocked host tests once with Vitest. |
+| `npm run test:watch` | Re-run affected Vitest tests on file changes. |
+| `npm run test:coverage` | Run Vitest with v8 coverage and enforce the ratchet thresholds in `vitest.config.mts`. |
 | `npm run build` | Build host and webview assets. |
 | `npx playwright install chromium` | Install the browser needed by UI tests. |
 | `npm run test:ui` | Run Chromium UI tests; build first. Set `PARETO_CHROMIUM_PATH` to use an existing browser. |
@@ -37,7 +39,7 @@ Use Node.js 22 or newer and npm; install locked dependencies with `npm ci`. Desk
 | `npm run install:extension` | Package and install locally through `code --install-extension ... --force`. |
 | `npm run release:check -- v0.5.0` | Validate the tag string against the current 0.5.0 manifests; substitute the next version after a bump. This does not check whether a git tag exists or whether publication succeeded. |
 
-For logic, host, or shared-contract changes, run type checks, relevant tests, and a build. For UI or host/webview interaction changes, also run browser tests. Add regression coverage for meaningful new behavior and failure cases. For release/workflow changes, run release tests and version verification where applicable. For package allowlist or asset changes, package and inspect the VSIX contents. Documentation-only changes need link/path and diff checks, plus package validation if packaged contents change.
+For logic, host, or shared-contract changes, run type checks, relevant tests, and a build. For UI or host/webview interaction changes, also run browser tests. Add regression coverage for meaningful new behavior and failure cases. See `docs/testing.md` for focused runs, the coverage ratchet policy, and per-change-type validation sequences. For release/workflow changes, run release tests and version verification where applicable. For package allowlist or asset changes, package and inspect the VSIX contents. Documentation-only changes need link/path and diff checks, plus package validation if packaged contents change.
 
 Before a release, run the complete CI sequence: type checks, unit/host tests, build, browser tests, and packaging. Automated tests need no API key. They do not prove real-account model discovery or API access: a real smoke test requires Copilot sign-in and a user-provided Artificial Analysis key. Record missing prerequisites as unperformed validation, never as passing checks. F5 starts the Extension Development Host using the configured build task.
 

@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Vitest unit/mocked-host suite with enforced v8 coverage thresholds, `test:watch`/`test:coverage` scripts, and a `docs/testing.md` verification guide. No behavior change.
+
 ## 0.7.1
 
 ### Changed
