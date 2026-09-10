@@ -6,6 +6,7 @@ import {
   type CatalogEntry,
   type Options,
   type Row,
+  type MappingResult,
 } from "./types";
 export function parseOptions(value: unknown): Options {
   const v = value as Options;
@@ -27,11 +28,37 @@ export function parseOptions(value: unknown): Options {
     throw new Error(
       "Enter nonnegative whole token counts (up to 100 million).",
     );
+  const recommendation = v.recommendation;
+  if (
+    !recommendation ||
+    !["budget", "nearBest"].includes(recommendation.mode) ||
+    !recommendation.budgets ||
+    ![
+      recommendation.budgets.credits,
+      recommendation.budgets.legacy,
+      recommendation.scoreGap,
+    ].every(
+      (n) =>
+        typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100000000,
+    )
+  ) {
+    throw new Error(
+      "Budgets and score gap must be nonnegative finite numbers up to 100 million.",
+    );
+  }
   return {
     preset: v.preset,
     billing: v.billing,
     plan: v.plan,
     filter: v.filter,
+    recommendation: {
+      mode: recommendation.mode,
+      budgets: {
+        credits: recommendation.budgets.credits,
+        legacy: recommendation.budgets.legacy,
+      },
+      scoreGap: recommendation.scoreGap,
+    },
     tokens: {
       input: v.tokens.input,
       read: v.tokens.read,
@@ -42,6 +69,13 @@ export function parseOptions(value: unknown): Options {
 }
 export function savedOptions(value: unknown): Options {
   try {
+    // v0.1 settings did not contain recommendation controls.
+    if (value && typeof value === "object" && !("recommendation" in value)) {
+      return parseOptions({
+        ...value,
+        recommendation: structuredClone(defaults.recommendation),
+      });
+    }
     return parseOptions(value);
   } catch {
     return structuredClone(defaults);
@@ -82,28 +116,46 @@ export function resolveBenchmark(
   entry: CatalogEntry | undefined,
   models: Benchmark[],
   override?: string,
-): { benchmark?: Benchmark; reason?: string } {
+): MappingResult {
+  const normalize = (name: string) =>
+    name.trim().replace(/\s+/g, " ").toLowerCase();
+  const hits = entry
+    ? models.filter((model) =>
+        entry.benchmarkFamilies.some((alias) => {
+          const family = normalize(alias),
+            name = normalize(model.name);
+          const suffix = name.slice(family.length).trim();
+          return (
+            name === family ||
+            (name.startsWith(`${family} (`) &&
+              /^\((?:non[- ]reasoning|reasoning|adaptive reasoning|low|medium|high|xhigh|max)(?:[ ,].*)?\)$/.test(
+                suffix,
+              ))
+          );
+        }),
+      )
+    : [];
+  const candidateIds = hits.map((m) => m.id);
   if (override) {
     const found = models.filter((m) => m.id === override);
     return found.length === 1
-      ? { benchmark: found[0] }
-      : { reason: "Selected benchmark is no longer available." };
+      ? { status: "user", candidateIds, benchmark: found[0] }
+      : {
+          status: "missing",
+          candidateIds,
+          reason:
+            "Selected benchmark is no longer available. Choose a variant or reset the mapping.",
+        };
   }
-  const hits = entry
-    ? models.filter((m) =>
-        entry.benchmarkNames.some(
-          (n) => n.toLowerCase() === m.name.toLowerCase(),
-        ),
-      )
-    : [];
-  return hits.length === 1
-    ? { benchmark: hits[0] }
-    : {
-        reason:
-          hits.length > 1
-            ? "Ambiguous benchmark variants; select one in model details."
-            : "No exact benchmark mapping; select one in model details.",
-      };
+  if (hits.length === 1)
+    return { status: "exact", candidateIds, benchmark: hits[0] };
+  return {
+    status: hits.length ? "selection" : "missing",
+    candidateIds,
+    reason: hits.length
+      ? "Ambiguous benchmark variants; select one in model details."
+      : "No exact benchmark mapping; select one in model details.",
+  };
 }
 export function markFrontier(rows: Row[]): Row[] {
   return rows.map((a) => {
@@ -158,6 +210,9 @@ export function compare(
         frontier: false,
         dominatedBy: [],
         benchmark: matched.benchmark,
+        mappingStatus: matched.status,
+        candidateIds: matched.candidateIds,
+        selectedBenchmarkId: overrides[m.id],
         tier: price.tier,
         reasons: [
           matched.reason,

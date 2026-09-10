@@ -156,6 +156,36 @@ test("extension discovers Copilot models, serves cached data, validates messages
   assert.match(last().message, /Could not apply/);
   await receiver({ type: "mapping", id: "gpt-5-mini", benchmarkId: "aa" });
   assert.deepEqual(state.get("mappings"), { "gpt-5-mini": "aa" });
+  await receiver({
+    type: "profile",
+    change: { action: "saveAs", name: "Debugging" },
+  });
+  const profileId = last().activeProfileId;
+  assert.equal(last().profiles[0].name, "Debugging");
+  assert.ok(!("filter" in (state.get("profiles") as any).items[0].workload));
+  await receiver({
+    type: "options",
+    options: {
+      ...last().options,
+      tokens: { input: 4000, read: 0, write: 0, output: 1000 },
+      filter: "mini",
+    },
+  });
+  assert.equal(last().profileModified, true);
+  await receiver({
+    type: "profile",
+    change: { action: "apply", id: profileId },
+  });
+  assert.equal(last().options.tokens.input, 1000);
+  assert.equal(last().options.filter, "mini");
+  assert.equal(last().optionsRevision, 1);
+  assert.equal(last().rows[0].mappingStatus, "user");
+  assert.deepEqual(last().recommendation.modelIds, ["gpt-5-mini"]);
+  await receiver({
+    type: "profile",
+    change: { action: "saveAs", name: " debugging " },
+  });
+  assert.match(last().message, /already exists/);
   discoveryChanged();
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(!JSON.stringify(messages).includes(secret));

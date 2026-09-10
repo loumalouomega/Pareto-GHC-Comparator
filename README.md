@@ -17,7 +17,26 @@ Webview preview captured with live Artificial Analysis data. The ten catalog mod
 5. Choose **Coding**, **General**, or **Agentic**, select a billing mode, and edit the illustrative token workload if needed.
 6. Select a chart point or a model button in the table to inspect the tested variant and cost tradeoff. **Copy model name** lets you select that model in Copilot yourself.
 
-An unmatched or ambiguous model stays in the table with an explanation. Select its benchmark variant explicitly in model details if you know the correct match. Explicit mappings persist locally; selecting **Automatic exact matching** removes the override. Model identifiers with no verified pricing remain unpriced. The extension does not assume every Copilot model is exposed through VS Code's language model API.
+An unmatched or ambiguous model stays in the table with an explanation. Model details show **Exact match**, **User selected**, **Needs selection**, or **Missing benchmark**. The searchable variant picker lists candidates from explicitly mapped model families, including alternate names used by Artificial Analysis. A single candidate resolves automatically; multiple reasoning variants require your choice.
+
+Enable **Show other benchmarks for manual mapping** only when you need a benchmark outside the suggested family. Manual selections persist locally. **Use automatic matching** removes the override. If a selected variant disappears from the API, it stays unresolved until you choose a replacement or reset it; another variant is never substituted silently. A matching family does not verify Copilot's reasoning configuration. Models without verified pricing remain unpriced.
+
+## Recommendations
+
+The **Find a model** panel offers two modes using the currently filtered, available, comparable models:
+
+- **Best under budget:** highest score at or below your maximum cost; lower cost breaks score ties. Each billing mode remembers its own budget, initially 1 AI credit or 1 premium request.
+- **Cheapest near best:** lowest cost within an allowed score gap from the highest displayed score; higher score breaks cost ties. The default gap is 3 index points, not a percentage.
+
+Exact ties remain recommended together. Star-shaped chart points and **★ Recommended** table labels identify recommendations separately from the Pareto frontier. The panel explains the winning score, cost, and threshold. Over-budget models stay visible for context. Missing data is excluded, and an explicit empty state explains when no model qualifies. Changes to filters, mappings, pricing inputs, or benchmark data recompute the recommendation.
+
+## Saved workload profiles
+
+Save named configurations across projects using the **Saved workload** controls. **Save as** creates and applies a profile from the current settings. Select an existing profile and click **Apply** to restore its task, billing mode, annual plan, token counts, recommendation mode, both budgets, and score gap.
+
+Selecting **Custom** detaches the current workload from a saved profile without deleting it. Changing an applied profile marks it **Modified (not saved)**. **Update** explicitly overwrites that profile with the current workload. **Rename** uses the text in **Profile name**; **Delete** removes the selected profile while retaining the current workload. Names must be 1–60 characters after trimming and unique without regard to case.
+
+Profiles live in VS Code extension global storage and are reusable across workspaces on that installation. They do not contain API keys, model mappings, model selections, or text filters. Applying a profile preserves the current filter. Existing v0.1 settings migrate to a **Custom** workload with recommendation defaults; caches and manual mappings are retained.
 
 ## Reading the chart
 
@@ -67,9 +86,11 @@ npm run package
 npm run install:extension
 ```
 
-Press **F5** to open an Extension Development Host after the build task runs. To use an existing Chromium installation for UI tests, set `PARETO_CHROMIUM_PATH` to its executable. The packaged VSIX contains the compiled extension, webview assets, documentation, and dependency license notices. It does not include test fixtures or credentials.
+Press **F5** to open an Extension Development Host after the build task runs. To use an existing Chromium installation for UI tests, set `PARETO_CHROMIUM_PATH` to its executable. To refresh the README preview from an already validated benchmark snapshot, run `node --import tsx scripts/capture-screenshot.mjs /path/to/snapshot.json`. The helper uses explicit illustrative variant selections and never accepts or stores an API key.
 
-Tests cover Pareto ties and dominance, filtering, missing data, pricing formulas and thresholds, expired promotions, exact and ambiguous mappings, API pagination and failures, cache retention, host/webview messages, secret isolation, keyboard selection, and themed browser rendering. Browser tests use synthetic model data and a mocked host; a real-account smoke test still requires Copilot sign-in and an Artificial Analysis key.
+The packaged VSIX contains the compiled extension, webview assets, documentation, and dependency license notices. It does not include test fixtures or credentials.
+
+Tests cover Pareto ties and dominance, filtering, missing data, pricing formulas and thresholds, expired promotions, exact and ambiguous mappings, API pagination and failures, cache retention, host/webview messages, secret isolation, recommendations and ties, profile persistence and migration, keyboard selection, and themed browser rendering. Browser tests use synthetic model data and a mocked host; a real-account smoke test still requires Copilot sign-in and an Artificial Analysis key.
 
 ## VS Code tasks and installation
 
@@ -97,14 +118,14 @@ One-time setup:
 2. Create the GitHub Actions environment **marketplace**. Add `VSCE_PAT` as an environment secret (a repository secret also works): an Azure DevOps PAT with **Marketplace → Manage** permission and access to that publisher. Do not put the token in source files. See the [official publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for token creation and publisher membership.
 3. Push this workflow to GitHub. No Artificial Analysis API key is needed in CI; automated tests use fixtures.
 
-To release, start with a clean checkout, run `npm version patch` (or `minor` / `major`) to update both manifests and create a version commit and tag, then push the commit and **that specific tag**. For example, if the new version is `0.1.1`:
+To release, start with a clean checkout, run `npm version patch` (or `minor` / `major`) to update both manifests and create a version commit and tag, then push the commit and **that specific tag**. For example, if the new version is `0.2.0`:
 
 ```sh
 git push origin HEAD
-git push origin v0.1.1
+git push origin v0.2.0
 ```
 
-For the initial `0.1.0` release, tag the committed source as `v0.1.0` instead of incrementing it. `npm run release:check -- v0.1.0` checks the initial tag locally. Use a new version for subsequent Marketplace releases; the workflow does not overwrite an existing version. A failed publication can be rerun after fixing authentication, provided that version has not already been published.
+Version 0.2.0 is prepared locally; tagging and publication are separate actions. After committing the release, `npm run release:check -- v0.2.0` validates its tag locally. Use a new version for subsequent Marketplace releases; the workflow does not overwrite an existing version. A failed publication can be rerun after fixing authentication, provided that version has not already been published.
 
 Authentication maintenance: Microsoft's publishing guide states that global Azure DevOps PATs retire on December 1, 2026. This workflow uses `VSCE_PAT`; migrate the publish job to Microsoft Entra workload identity and `vsce publish --azure-credential` before that retirement. The build and artifact jobs do not depend on publishing credentials.
 
@@ -112,7 +133,7 @@ Authentication maintenance: Microsoft's publishing guide states that global Azur
 
 Update `src/catalog.ts` against the two GitHub sources, change `catalogDate`, and verify rates, thresholds, promotional expiry dates, and legacy plan availability. Rates are USD per million tokens; `null` cache-write rates mean normal input billing. Add only explicit Copilot IDs. Do not infer a pricing mapping from a similar family or display name.
 
-`benchmarkNames` contains exact candidate names. A single candidate may resolve automatically; multiple candidates require an explicit user selection. Preserve reasoning qualifiers and avoid fuzzy matching. API response validation and the three index mappings live in `src/api.ts`; comparison and cost rules live in `src/compare.ts`. Keep new cases covered by tests, then build and package a new release. Benchmark scores are fetched using each user's key and are not redistributed inside the VSIX.
+`benchmarkFamilies` contains explicit model-family aliases. Matching allows a known family name followed by a reasoning qualifier; it does not fuzzy-match sibling model names. A single candidate may resolve automatically; multiple candidates require an explicit user selection. Preserve reasoning and fallback qualifiers. API response validation and the three index mappings live in `src/api.ts`; comparison and cost rules live in `src/compare.ts`. Keep new cases covered by tests, then build and package a new release. Full benchmark datasets are fetched using each user's key and are not bundled in the VSIX; the illustrated preview contains only its displayed scores.
 
 ## License
 

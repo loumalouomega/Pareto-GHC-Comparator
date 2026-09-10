@@ -4,6 +4,9 @@ import { BenchmarkService, ApiError, cacheTtl } from "./api";
 import { catalogDate } from "./catalog";
 import { compare, parseOptions, savedOptions } from "./compare";
 import { html } from "./html";
+import { recommend } from "./recommend";
+import { loadProfiles, changeProfile, profileModified } from "./profiles";
+import { parseMessage } from "./messages";
 import type { AvailableModel, Snapshot, ViewState } from "./types";
 const secretName = "artificialAnalysis.apiKey";
 export function activate(context: vscode.ExtensionContext) {
@@ -45,10 +48,18 @@ export function activate(context: vscode.ExtensionContext) {
     message = "",
     discoveryError = "",
     hasKey = false;
+  let profileStore = loadProfiles(context.globalState.get("profiles"));
+  let optionsRevision = 0;
   const render = () => {
+    const rows = compare(available, snapshot?.models ?? [], options, overrides);
     const state: ViewState = {
       options,
-      rows: compare(available, snapshot?.models ?? [], options, overrides),
+      rows,
+      recommendation: recommend(rows, options),
+      profiles: profileStore.items.map(({ id, name }) => ({ id, name })),
+      activeProfileId: profileStore.activeId,
+      profileModified: profileModified(profileStore, options),
+      optionsRevision,
       models: snapshot?.models ?? [],
       selected,
       version: snapshot?.version,
@@ -160,48 +171,71 @@ export function activate(context: vscode.ExtensionContext) {
         webview.cspSource,
         randomBytes(18).toString("base64"),
       );
-      const receiver = webview.onDidReceiveMessage(async (raw: unknown) => {
-        if (!raw || typeof raw !== "object") return;
-        const m = raw as Record<string, unknown>;
-        try {
-          if (m.type === "ready") {
-            render();
-            await refresh();
-          } else if (m.type === "refresh") await refresh(true);
-          else if (m.type === "key") await setKey();
-          else if (m.type === "options") {
-            options = parseOptions(m.options);
-            await context.globalState.update("options", options);
-            render();
-          } else if (
-            m.type === "select" &&
-            typeof m.id === "string" &&
-            available.some((a) => a.id === m.id)
-          ) {
-            selected = m.id;
-            render();
-          } else if (m.type === "copy" && typeof m.id === "string") {
-            const model = available.find((a) => a.id === m.id);
-            if (model) await vscode.env.clipboard.writeText(model.name);
-          } else if (
-            m.type === "mapping" &&
-            typeof m.id === "string" &&
-            available.some((a) => a.id === m.id) &&
-            typeof m.benchmarkId === "string" &&
-            (m.benchmarkId === "" ||
-              snapshot?.models.some((b) => b.id === m.benchmarkId))
-          ) {
-            overrides = { ...overrides };
-            if (m.benchmarkId) overrides[m.id] = m.benchmarkId;
-            else delete overrides[m.id];
-            await context.globalState.update("mappings", overrides);
+      let messageQueue = Promise.resolve();
+      const receiver = webview.onDidReceiveMessage((raw: unknown) => {
+        messageQueue = messageQueue.then(async () => {
+          try {
+            const m = parseMessage(raw);
+            if (m.type === "ready") {
+              render();
+              await refresh();
+            } else if (m.type === "refresh") await refresh(true);
+            else if (m.type === "key") await setKey();
+            else if (m.type === "options") {
+              options = parseOptions(m.options);
+              await context.globalState.update("options", options);
+              render();
+            } else if (m.type === "profile") {
+              const next = changeProfile(profileStore, options, m.change);
+              await context.globalState.update("profiles", next.store);
+              await context.globalState.update("options", next.options);
+              profileStore = next.store;
+              options = next.options;
+              if (m.change.action === "apply") optionsRevision++;
+              message =
+                m.change.action === "delete"
+                  ? "Profile deleted. Current workload retained."
+                  : "Profile settings saved locally.";
+              render();
+            } else if (
+              m.type === "select" &&
+              typeof m.id === "string" &&
+              available.some((a) => a.id === m.id)
+            ) {
+              selected = m.id;
+              render();
+            } else if (m.type === "copy" && typeof m.id === "string") {
+              const model = available.find((a) => a.id === m.id);
+              if (model) await vscode.env.clipboard.writeText(model.name);
+            } else if (
+              m.type === "mapping" &&
+              typeof m.id === "string" &&
+              available.some((a) => a.id === m.id) &&
+              typeof m.benchmarkId === "string" &&
+              (m.benchmarkId === "" ||
+                snapshot?.models.some((b) => b.id === m.benchmarkId))
+            ) {
+              overrides = { ...overrides };
+              if (m.benchmarkId) overrides[m.id] = m.benchmarkId;
+              else delete overrides[m.id];
+              await context.globalState.update("mappings", overrides);
+              render();
+            }
+          } catch (error) {
+            const type =
+              raw && typeof raw === "object"
+                ? (raw as { type?: unknown }).type
+                : undefined;
+            message =
+              "Could not apply that change. " +
+              ((type === "profile" || type === "options") &&
+              error instanceof Error
+                ? error.message
+                : "Check input values and try again.");
             render();
           }
-        } catch {
-          message =
-            "Could not apply that change. Check input values and try again.";
-          render();
-        }
+        });
+        return messageQueue;
       });
       panel.onDidDispose(
         () => {

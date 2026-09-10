@@ -1,6 +1,6 @@
 import Chart from "chart.js/auto";
 import type { Plugin, ScatterDataPoint } from "chart.js";
-import type { Options, Row, ViewState } from "../src/types";
+import type { Options, Row, ViewState, HostMessage } from "../src/types";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -11,7 +11,7 @@ const text = (tag: string, value: string, className?: string) => {
   if (className) node.className = className;
   return node;
 };
-const send = (type: string, extra: Record<string, unknown> = {}) =>
+const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
   vscode.postMessage({ type, ...extra });
 const format = (v: number | null) =>
   v === null
@@ -29,6 +29,18 @@ const colors: Record<string, string> = {
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
   initialized = false;
+let appliedRevision = -1;
+let budgetDraft = { credits: 1, legacy: 1 };
+let displayedBilling: Options["billing"] = "credits";
+let variantSearch = "",
+  showOtherVariants = false,
+  detailsModelId: string | undefined;
+const mappingLabels = {
+  exact: "Exact match",
+  user: "User selected",
+  selection: "Needs selection",
+  missing: "Missing benchmark",
+};
 const lightColors: Record<string, string> = {
   OpenAI: "#2468cb",
   Anthropic: "#a64923",
@@ -111,8 +123,17 @@ function drawChart() {
             r.id === state!.selected ? foreground : color(r.provider),
           ),
           borderWidth: rows.map((r) => (r.id === state!.selected ? 3 : 1)),
-          pointRadius: rows.map((r) => (r.frontier ? 7 : 5)),
-          pointHoverRadius: 9,
+          pointRadius: rows.map((r) =>
+            state!.recommendation.modelIds.includes(r.id)
+              ? 11
+              : r.frontier
+                ? 7
+                : 5,
+          ),
+          pointHoverRadius: 11,
+          pointStyle: rows.map((r) =>
+            state!.recommendation.modelIds.includes(r.id) ? "star" : "circle",
+          ),
         },
         {
           label: "Pareto frontier",
@@ -214,24 +235,92 @@ function renderDetails() {
       ),
     );
   }
-  const label = text("label", "Benchmark variant (explicit mapping)");
+  target.append(text("p", mappingLabels[row.mappingStatus], "mapping-status"));
+  if (state.recommendation.modelIds.includes(row.id))
+    target.append(
+      text("p", state.recommendation.explanation, "recommendation-detail"),
+    );
+  if (detailsModelId !== row.id) {
+    detailsModelId = row.id;
+    variantSearch = "";
+    showOtherVariants = false;
+  }
+  const searchLabel = text("label", "Search benchmark variants");
+  const search = document.createElement("input");
+  search.id = "variant-search";
+  search.type = "search";
+  search.value = variantSearch;
+  searchLabel.append(search);
+  target.append(searchLabel);
+  const manualLabel = text("label", "Show other benchmarks for manual mapping");
+  manualLabel.className = "checkbox-label";
+  const manual = document.createElement("input");
+  manual.id = "variant-manual";
+  manual.type = "checkbox";
+  manual.checked = showOtherVariants;
+  manualLabel.prepend(manual);
+  target.append(manualLabel);
+  const label = text("label", "Benchmark variant");
   const select = document.createElement("select");
   select.id = "benchmark";
-  select.append(new Option("Automatic exact matching", ""));
-  for (const b of [...state.models].sort((a, b) =>
-    a.name.localeCompare(b.name),
-  ))
-    select.append(new Option(`${b.name} · ${b.slug}`, b.id));
-  // Display the resolved variant. Choosing Automatic removes a previous override.
-  select.value = row.benchmark?.id ?? "";
+  const populate = () => {
+    select.replaceChildren(new Option("Use automatic matching", ""));
+    const candidates = new Set(row.candidateIds);
+    const matches = state!.models
+      .filter((b) =>
+        `${b.name} ${b.slug}`
+          .toLowerCase()
+          .includes(variantSearch.toLowerCase()),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const [title, list] of [
+      ["Matching variants", matches.filter((b) => candidates.has(b.id))],
+      [
+        "Other benchmarks — manual mapping",
+        showOtherVariants ? matches.filter((b) => !candidates.has(b.id)) : [],
+      ],
+    ] as const) {
+      if (!list.length) continue;
+      const group = document.createElement("optgroup");
+      group.label = title;
+      for (const b of list)
+        group.append(new Option(`${b.name} · ${b.slug}`, b.id));
+      select.append(group);
+    }
+    if (
+      row.selectedBenchmarkId &&
+      !Array.from(select.options).some(
+        (o) => o.value === row.selectedBenchmarkId,
+      )
+    ) {
+      const current = new Option(
+        row.benchmark
+          ? `Current selection: ${row.benchmark.name}`
+          : "Unavailable benchmark — choose a replacement",
+        row.selectedBenchmarkId,
+      );
+      current.disabled = !row.benchmark;
+      select.append(current);
+    }
+    select.value = row.selectedBenchmarkId ?? "";
+  };
+  search.oninput = () => {
+    variantSearch = search.value;
+    populate();
+  };
+  manual.onchange = () => {
+    showOtherVariants = manual.checked;
+    populate();
+  };
   select.onchange = () =>
     send("mapping", { id: row.id, benchmarkId: select.value });
+  populate();
   label.append(select);
   target.append(
     label,
     text(
       "p",
-      "Only select a benchmark that represents this model. Copilot may use different reasoning settings from the tested variant.",
+      "Matching uses explicit model-family aliases. Multiple reasoning variants require your choice. Manual selections may differ from Copilot’s reasoning settings.",
       "hint",
     ),
   );
@@ -239,9 +328,32 @@ function renderDetails() {
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
-  const focusedBenchmark = focused?.id === "benchmark";
+  const focusedDetail = [
+    "benchmark",
+    "variant-search",
+    "variant-manual",
+  ].includes(focused?.id ?? "")
+    ? focused?.id
+    : undefined;
+  const selectionStart =
+    focused instanceof HTMLInputElement && focused.type === "search"
+      ? focused.selectionStart
+      : null;
+  const previousActive = state?.activeProfileId;
   state = next;
-  if (!initialized) {
+  if (!initialized || appliedRevision !== state.optionsRevision) {
+    clearTimeout(timer);
+    appliedRevision = state.optionsRevision;
+    budgetDraft = { ...state.options.recommendation.budgets };
+    displayedBilling = state.options.billing;
+    el<HTMLSelectElement>("recommendation-mode").value =
+      state.options.recommendation.mode;
+    el<HTMLInputElement>("budget").value = String(
+      budgetDraft[displayedBilling],
+    );
+    el<HTMLInputElement>("score-gap").value = String(
+      state.options.recommendation.scoreGap,
+    );
     for (const key of ["preset", "billing", "plan", "filter"] as const)
       el<HTMLInputElement>(key).value = state.options[key];
     for (const key of ["input", "read", "write", "output"] as const)
@@ -251,6 +363,14 @@ function render(next: ViewState) {
   el("tokens").hidden = state.options.billing === "legacy";
   el("legacy-note").hidden = state.options.billing !== "legacy";
   el("plan-label").hidden = state.options.billing !== "legacy";
+  el("budget-label").hidden = state.options.recommendation.mode !== "budget";
+  el("gap-label").hidden = state.options.recommendation.mode !== "nearBest";
+  el("budget-unit").textContent =
+    state.options.billing === "credits"
+      ? "Maximum AI credits"
+      : "Maximum premium requests";
+  el("recommendation-result").textContent = state.recommendation.explanation;
+  renderProfiles(previousActive);
   el("status").textContent = state.message;
   el<HTMLButtonElement>("refresh").disabled = state.loading;
   el<HTMLButtonElement>("key").disabled = state.loading;
@@ -286,7 +406,13 @@ function render(next: ViewState) {
     button.dataset.modelId = row.id;
     button.setAttribute("aria-pressed", String(row.id === state.selected));
     button.onclick = () => send("select", { id: row.id });
-    name.append(button, text("span", row.provider, "provider"));
+    name.append(
+      button,
+      text("span", row.provider, "provider"),
+      text("span", mappingLabels[row.mappingStatus], "mapping-status"),
+    );
+    if (state.recommendation.modelIds.includes(row.id))
+      name.append(text("span", "★ Recommended", "recommended"));
     tr.append(
       name,
       text("td", format(row.score)),
@@ -311,28 +437,94 @@ function render(next: ViewState) {
     ).find((b) => b.dataset.modelId === focusedModel);
     button?.focus();
   }
-  if (focusedBenchmark) el("benchmark")?.focus();
+  if (focusedDetail) {
+    const input = el<HTMLInputElement>(focusedDetail);
+    input?.focus();
+    if (selectionStart !== null && input?.type === "search")
+      input.setSelectionRange(selectionStart, selectionStart);
+  }
+}
+function renderProfiles(previousActive: string | undefined) {
+  if (!state) return;
+  const picker = el<HTMLSelectElement>("profile"),
+    previous = picker.value;
+  picker.replaceChildren(new Option("Custom", ""));
+  for (const p of state.profiles) picker.append(new Option(p.name, p.id));
+  picker.value =
+    previousActive !== state.activeProfileId
+      ? (state.activeProfileId ?? "")
+      : state.profiles.some((p) => p.id === previous)
+        ? previous
+        : (state.activeProfileId ?? "");
+  const active = state.profiles.find((p) => p.id === state!.activeProfileId);
+  el("profile-state").textContent = active
+    ? `${active.name}${state.profileModified ? " · Modified (not saved)" : " · Saved"}`
+    : "Custom workload";
+  updateProfileButtons();
+}
+function updateProfileButtons() {
+  const chosen = el<HTMLSelectElement>("profile").value;
+  for (const id of ["profile-apply", "profile-rename", "profile-delete"])
+    el<HTMLButtonElement>(id).disabled = !chosen;
+  el<HTMLButtonElement>("profile-update").disabled =
+    !chosen || chosen !== state?.activeProfileId || !state?.profileModified;
 }
 let timer: ReturnType<typeof setTimeout>;
-function changeOptions() {
+function sendOptions(): boolean {
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    const tokens = {} as Options["tokens"];
-    for (const key of ["input", "read", "write", "output"] as const) {
-      const input = el<HTMLInputElement>(key);
-      if (!input.reportValidity() || input.value === "") return;
-      tokens[key] = Number(input.value);
+  const billing = el<HTMLSelectElement>("billing").value as Options["billing"];
+  const mode = el<HTMLSelectElement>("recommendation-mode")
+    .value as Options["recommendation"]["mode"];
+  const readNumber = (
+    id: string,
+    active: boolean,
+    fallback: number,
+  ): number | undefined => {
+    const input = el<HTMLInputElement>(id);
+    if (input.value !== "" && input.validity.valid) return Number(input.value);
+    if (active) {
+      input.reportValidity();
+      return undefined;
     }
-    send("options", {
-      options: {
-        preset: el<HTMLSelectElement>("preset").value,
-        billing: el<HTMLSelectElement>("billing").value,
-        plan: el<HTMLSelectElement>("plan").value,
-        filter: el<HTMLInputElement>("filter").value,
-        tokens,
-      },
-    });
-  }, 150);
+    input.value = String(fallback);
+    return fallback;
+  };
+  const tokens = {} as Options["tokens"];
+  for (const key of ["input", "read", "write", "output"] as const) {
+    const value = readNumber(
+      key,
+      billing === "credits",
+      state?.options.tokens[key] ?? 0,
+    );
+    if (value === undefined) return false;
+    tokens[key] = value;
+  }
+  const budget = readNumber(
+    "budget",
+    mode === "budget",
+    budgetDraft[displayedBilling],
+  );
+  const scoreGap = readNumber(
+    "score-gap",
+    mode === "nearBest",
+    state?.options.recommendation.scoreGap ?? 3,
+  );
+  if (budget === undefined || scoreGap === undefined) return false;
+  budgetDraft[displayedBilling] = budget;
+  const options: Options = {
+    preset: el<HTMLSelectElement>("preset").value as Options["preset"],
+    billing,
+    plan: el<HTMLSelectElement>("plan").value as Options["plan"],
+    filter: el<HTMLInputElement>("filter").value,
+    tokens,
+    recommendation: {
+      mode,
+      budgets: { ...budgetDraft },
+      scoreGap,
+    },
+  };
+  send("options", { options });
+  return true;
 }
 for (const id of [
   "preset",
@@ -343,8 +535,58 @@ for (const id of [
   "write",
   "output",
   "filter",
-])
-  el(id).addEventListener("input", changeOptions);
+  "recommendation-mode",
+  "budget",
+  "score-gap",
+]) {
+  el(id).addEventListener("input", () => {
+    if (id === "billing") {
+      const current = el<HTMLInputElement>("budget");
+      if (current.value && current.validity.valid)
+        budgetDraft[displayedBilling] = Number(current.value);
+      displayedBilling = el<HTMLSelectElement>("billing")
+        .value as Options["billing"];
+      current.value = String(budgetDraft[displayedBilling]);
+    }
+    clearTimeout(timer);
+    timer = setTimeout(sendOptions, 150);
+  });
+}
+el("profile").onchange = () => {
+  updateProfileButtons();
+  if (!el<HTMLSelectElement>("profile").value)
+    send("profile", { change: { action: "custom" } });
+};
+for (const [id, action] of [
+  ["profile-save", "saveAs"],
+  ["profile-update", "update"],
+  ["profile-rename", "rename"],
+  ["profile-delete", "delete"],
+  ["profile-apply", "apply"],
+] as const) {
+  el(id).onclick = () => {
+    // Flush pending edits before saving; applying a profile deliberately replaces the draft.
+    if (action === "apply") {
+      clearTimeout(timer);
+      if (state)
+        send("options", {
+          options: {
+            ...state.options,
+            filter: el<HTMLInputElement>("filter").value,
+          },
+        });
+    } else if (!sendOptions()) return;
+    const profileId = el<HTMLSelectElement>("profile").value,
+      name = el<HTMLInputElement>("profile-name").value;
+    const change =
+      action === "saveAs"
+        ? { action, name }
+        : action === "rename"
+          ? { action, id: profileId, name }
+          : { action, id: profileId };
+    send("profile", { change });
+  };
+}
 el("refresh").onclick = () => send("refresh");
 el("key").onclick = () => send("key");
 window.addEventListener("message", (event) => {

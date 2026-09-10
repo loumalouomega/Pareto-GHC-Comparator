@@ -8,6 +8,7 @@ const { html } = require("../src/html.ts");
 const { validSnapshot } = require("../src/api.ts");
 const { catalog, catalogDate } = require("../src/catalog.ts");
 const { compare } = require("../src/compare.ts");
+const { recommend } = require("../src/recommend.ts");
 const { defaults } = require("../src/types.ts");
 if (!process.argv[2])
   throw new Error(
@@ -53,6 +54,10 @@ const state = {
   message:
     "Live benchmark preview · 10 catalog models with explicitly selected reasoning variants. Copilot account availability has not been queried.",
 };
+state.recommendation = recommend(state.rows, options);
+state.profiles = [];
+state.profileModified = false;
+state.optionsRevision = 0;
 const browser = await chromium.launch({
   executablePath: process.env.PARETO_CHROMIUM_PATH,
 });

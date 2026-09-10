@@ -294,3 +294,51 @@ a {
     height: 340px;
   }
 }
+.profile-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  padding: 16px;
+  margin-bottom: 20px;
+  border: 1px solid var(--vscode-panel-border, #80808044);
+  border-radius: 8px;
+}
+.profile-bar label {
+  min-width: 160px;
+  flex: 1;
+}
+#profile-state {
+  width: 100%;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #a5aabc);
+}
+.recommendation-card {
+  border: 1px solid var(--vscode-focusBorder, #77b6ff);
+  border-radius: 8px;
+  padding: 18px;
+  margin: 20px 0;
+}
+#recommendation-result {
+  margin-top: 16px;
+}
+.mapping-status {
+  display: block;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #a5aabc);
+}
+.recommended {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground, #80b6ff);
+}
+.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  font-weight: 400;
+}
+.checkbox-label input {
+  width: auto;
+  min-height: 18px;
+}

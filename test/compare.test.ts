@@ -18,6 +18,8 @@ const row = (id: string, cost: number | null, score: number | null): Row => ({
   frontier: false,
   reasons: [],
   dominatedBy: [],
+  mappingStatus: "exact",
+  candidateIds: [],
 });
 const benchmark = (id: string, name = "GPT-5.4 (xhigh)"): Benchmark => ({
   id,

@@ -2,6 +2,9 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
 import { compare } from "../src/compare";
+import { recommend } from "../src/recommend";
+import { changeProfile, profileModified } from "../src/profiles";
+import type { ProfileStore } from "../src/types";
 import { defaults, type ViewState, type Benchmark } from "../src/types";
 const benchmarks: Benchmark[] = [
   {
@@ -49,22 +52,42 @@ for (const theme of ["light", "dark", "high-contrast"])
     let state: ViewState = {
       options: structuredClone(defaults),
       rows: [],
-      models: benchmarks,
+      models: structuredClone(benchmarks),
       loading: false,
       message: "Benchmark data ready.",
       hasKey: true,
       version: "4.3",
       fetchedAt: Date.now(),
       catalogDate: "2026-09-10",
+      recommendation: { modelIds: [], explanation: "" },
+      profiles: [],
+      profileModified: false,
+      optionsRevision: 0,
     };
+    let profiles: ProfileStore = { version: 1, items: [] };
     const mappings: Record<string, string> = {};
     const messages: Record<string, unknown>[] = [];
     await page.exposeBinding("hostMessage", async (_, m) => {
       messages.push(m);
       if (m.type === "options") state.options = m.options;
+      if (m.type === "profile") {
+        try {
+          const result = changeProfile(profiles, state.options, m.change);
+          profiles = result.store;
+          state.options = result.options;
+          if (m.change.action === "apply") state.optionsRevision++;
+          state.message = "Profile saved.";
+        } catch (error) {
+          state.message = (error as Error).message;
+        }
+      }
       if (m.type === "select") state.selected = m.id;
       if (m.type === "mapping") mappings[m.id] = m.benchmarkId;
-      state.rows = compare(available, benchmarks, state.options, mappings);
+      state.rows = compare(available, state.models, state.options, mappings);
+      state.recommendation = recommend(state.rows, state.options);
+      state.profiles = profiles.items.map(({ id, name }) => ({ id, name }));
+      state.activeProfileId = profiles.activeId;
+      state.profileModified = profileModified(profiles, state.options);
       await page.evaluate(
         (s) =>
           window.dispatchEvent(
@@ -131,6 +154,103 @@ for (const theme of ["light", "dark", "high-contrast"])
     expect(
       messages.some((m) => m.type === "copy" && m.id === "gpt-5.4"),
     ).toBeTruthy();
+    await expect(page.locator("#recommendation-result")).toContainText(
+      "Gemini 3.8 Flash",
+    );
+    await page.locator("#budget").fill("0");
+    await expect(page.locator("#recommendation-result")).toContainText(
+      "No displayed model fits",
+    );
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
+    await page.locator("#budget").fill("2");
+    await expect(page.locator("#recommendation-result")).toContainText(
+      "GPT-5.4",
+    );
+    await page.locator("#recommendation-mode").selectOption("nearBest");
+    await page.locator("#score-gap").fill("10");
+    await expect(page.locator("#recommendation-result")).toContainText(
+      "Gemini 3.8 Flash",
+    );
+    await expect(page.locator("#recommendation-result")).toContainText(
+      "at least 45",
+    );
+
+    // Multiple variants remain unresolved until selected, and disappearance never substitutes one.
+    state.models.push({
+      ...benchmarks[1],
+      id: "gpt-medium",
+      name: "GPT-5.4 (medium)",
+      scores: { general: 40, coding: 49, agentic: 30 },
+    });
+    await model.click();
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "Needs selection",
+    );
+    await expect(page.locator("#benchmark optgroup")).toHaveCount(1);
+    await page.locator("#variant-search").fill("medium");
+    await page.locator("#benchmark").focus();
+    await page.locator("#benchmark").selectOption("gpt-medium");
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "User selected",
+    );
+    await expect(page.locator("#benchmark")).toBeFocused();
+    state.models = state.models.filter((b) => b.id !== "gpt-medium");
+    await page.locator("#refresh").click();
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "Missing benchmark",
+    );
+    await page.locator("#benchmark").selectOption("");
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "Exact match",
+    );
+    await page.locator("#variant-search").fill("");
+    await page.locator("#variant-manual").check();
+    await expect(page.locator("#benchmark optgroup")).toHaveCount(2);
+    await page.locator("#variant-manual").uncheck();
+
+    await page.locator("#profile-name").fill("Debugging");
+    await page.locator("#profile-save").click();
+    await expect(page.locator("#profile-state")).toHaveText(
+      "Debugging · Saved",
+    );
+    await page.locator("#profile-save").click();
+    await expect(page.locator("#status")).toContainText("already exists");
+    await page.locator("#input").fill("5000");
+    await page.locator("#preset").selectOption("agentic");
+    await page.locator("#recommendation-mode").selectOption("budget");
+    await page.locator("#billing").selectOption("legacy");
+    await page.locator("#plan").selectOption("proPlus");
+    await page.locator("#budget").fill("7");
+    await expect(page.locator("#profile-state")).toContainText("Modified");
+    await page.locator("#filter").fill("gpt");
+    await page.locator("#profile-apply").click();
+    await expect(page.locator("#profile-apply")).toBeFocused();
+    await expect(page.locator("#input")).toHaveValue("1000");
+    await expect(page.locator("#preset")).toHaveValue("coding");
+    await expect(page.locator("#billing")).toHaveValue("credits");
+    await expect(page.locator("#plan")).toHaveValue("pro");
+    await expect(page.locator("#recommendation-mode")).toHaveValue("nearBest");
+    await expect(page.locator("#score-gap")).toHaveValue("10");
+    await expect(page.locator("#budget")).toHaveValue("2");
+    await expect(page.locator("#filter")).toHaveValue("gpt");
+    await expect(page.locator("#profile-state")).toHaveText(
+      "Debugging · Saved",
+    );
+    await page.locator("#filter").fill("");
+    await page.locator("#score-gap").fill("5");
+    await expect(page.locator("#profile-update")).toBeEnabled();
+    await page.locator("#profile-update").click();
+    await expect(page.locator("#profile-state")).toHaveText(
+      "Debugging · Saved",
+    );
+    await page.locator("#profile-name").fill("Refactoring");
+    await page.locator("#profile-rename").click();
+    await expect(page.locator("#profile-state")).toHaveText(
+      "Refactoring · Saved",
+    );
+    await page.locator("#profile-delete").click();
+    await expect(page.locator("#profile-state")).toHaveText("Custom workload");
+    await expect(page.locator("#score-gap")).toHaveValue("5");
     await page.screenshot({
       path: testInfo.outputPath(`${theme}.png`),
       fullPage: true,

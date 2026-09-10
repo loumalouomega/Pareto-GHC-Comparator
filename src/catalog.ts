@@ -10,6 +10,14 @@ const rates = (
   write: number | null,
   output: number,
 ): Rates => ({ input, read, write, output });
+const benchmarkAliases: Record<string, string[]> = {
+  "claude-haiku-4.5": ["Claude Haiku 4.5", "Claude 4.5 Haiku"],
+  "claude-sonnet-4": ["Claude Sonnet 4", "Claude 4 Sonnet"],
+  "gpt-5.3-codex": ["GPT-5.3-Codex", "GPT-5.3 Codex"],
+  "gpt-5.1-codex": ["GPT-5.1-Codex", "GPT-5.1 Codex"],
+  "gpt-5.1-codex-mini": ["GPT-5.1-Codex-Mini", "GPT-5.1 Codex Mini"],
+  "gpt-5.1-codex-max": ["GPT-5.1-Codex-Max", "GPT-5.1 Codex Max"],
+};
 function entry(
   name: string,
   provider: string,
@@ -28,13 +36,8 @@ function entry(
       multiplier === undefined
         ? undefined
         : { pro: multiplier, proPlus: multiplier },
-    // These are exact candidate names, never substring/fuzzy matches. Multiple hits require user selection.
-    benchmarkNames: [
-      name,
-      ...["high", "max", "xhigh", "medium", "non-reasoning"].map(
-        (e) => `${name} (${e})`,
-      ),
-    ],
+    // Explicit base-model aliases. Reasoning qualifiers are preserved as separate variants.
+    benchmarkFamilies: benchmarkAliases[id] ?? [name],
   };
 }
 export const catalog: CatalogEntry[] = [
