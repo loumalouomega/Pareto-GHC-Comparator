@@ -2,6 +2,12 @@
 
 A desktop VS Code extension for comparing the GitHub Copilot models exposed to your extension host. Pick a task and compare benchmark quality against estimated Copilot usage on a Pareto chart.
 
+## Preview
+
+![Pareto GHC Comparator showing a live coding-quality versus AI-credit comparison](docs/extension-preview.png)
+
+Webview preview captured with live Artificial Analysis data. The ten catalog models and reasoning variants were selected explicitly for illustration; this preview does not represent a signed-in account's discovered Copilot availability. Benchmark scores and the data retrieval date appear in the extension.
+
 ## Install and use
 
 1. Install VS Code 1.100 or newer and enable GitHub Copilot Chat. Sign in to an account with model access.
