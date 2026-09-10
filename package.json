@@ -2,7 +2,7 @@
   "name": "pareto-ghc-comparator",
   "displayName": "Pareto GHC Comparator",
   "description": "Compare available GitHub Copilot models by benchmark quality and estimated usage cost.",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "publisher": "kratos-multiphysics",
   "icon": "media/icon.png",
   "license": "MIT",
