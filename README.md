@@ -1,5 +1,9 @@
 # Pareto GHC Comparator
 
+[![Build](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml/badge.svg)](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml)
+[![Marketplace version](https://img.shields.io/visual-studio-marketplace/v/kratos-multiphysics.pareto-ghc-comparator)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator)
+[![License: MIT](https://img.shields.io/github/license/loumalouomega/Pareto-GHC-Comparator)](LICENSE)
+
 <img src="media/icon.png" alt="Pareto GHC Comparator logo" width="128" />
 
 A desktop VS Code extension for comparing the GitHub Copilot models exposed to your extension host. Pick a task and compare benchmark quality against estimated Copilot usage on a Pareto chart.

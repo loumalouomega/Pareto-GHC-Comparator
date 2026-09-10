@@ -7,6 +7,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 ### Changed
 
 - Split the README into a lean overview with links to new topic guides under `docs/` (getting started, user guide, billing, data/privacy, development, releases, catalog). No behavior change.
+- Added build-status, Marketplace-version, and license badges to the README. No behavior change.
 
 ## 0.7.0
 
