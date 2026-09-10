@@ -4,10 +4,13 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 0.7.0
+
 ### Added
 
 - Contributor guidance in `AGENTS.md` covering implementation boundaries, validation, state compatibility, and documentation/release maintenance.
 - This changelog, included in the VSIX, with history for repository versions 0.1.0 through 0.5.0.
+- OpenCode integration decision document (`docs/opencode-integration.md`, accepted 2026-09-10 against OpenCode 1.18.30) fixing the Tier 1 boundary: CLI `opencode models --verbose` discovery, Zen-gateway USD pricing scope, namespaced identity, and credential-safe failure states.
 
 ### Changed
 
@@ -17,6 +20,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 ### Fixed
 
 - Marketplace publish failures after a passing `verify-pat` now report the read-versus-write permission checklist and keep the tested GitHub Release available instead of failing with only `Failed request: (401)`.
+
+History: [v0.6.0...v0.7.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.6.0...v0.7.0).
 
 ## 0.5.0
 
