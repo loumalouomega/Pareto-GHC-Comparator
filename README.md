@@ -116,7 +116,7 @@ As a first approach, install from the GitHub Release (`Extensions: Install from 
 
 One-time setup:
 
-1. Register or select your publisher in [Marketplace publisher management](https://marketplace.visualstudio.com/manage). Set `publisher` in `package.json` to its exact ID. The current value is `pareto-ghc`; it must belong to an account you control.
+1. Register or select your publisher in [Marketplace publisher management](https://marketplace.visualstudio.com/manage/publishers/kratos-multiphysics). Set `publisher` in `package.json` to its exact ID. The current value is `kratos-multiphysics`; it must belong to an account you control.
 2. Create the GitHub Actions environment **marketplace**. Add `VSCE_PAT` as an environment secret (a repository secret also works): an Azure DevOps PAT with **Marketplace → Manage** permission and access to that publisher. Do not put the token in source files. See the [official publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for token creation and publisher membership.
 3. Push this workflow to GitHub. No Artificial Analysis API key is needed in CI; automated tests use fixtures.
 
