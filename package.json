@@ -1,0 +1,60 @@
+{
+  "name": "pareto-ghc-comparator",
+  "displayName": "Pareto GHC Comparator",
+  "description": "Compare available GitHub Copilot models by benchmark quality and estimated usage cost.",
+  "version": "0.1.0",
+  "publisher": "pareto-ghc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loumalouomega/Pareto-GHC-Comparator.git"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Machine Learning"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [],
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "paretoGhc.open",
+        "title": "Pareto GHC: Open Model Comparison"
+      },
+      {
+        "command": "paretoGhc.setApiKey",
+        "title": "Pareto GHC: Set Artificial Analysis API Key"
+      },
+      {
+        "command": "paretoGhc.clearApiKey",
+        "title": "Pareto GHC: Remove Artificial Analysis API Key"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:ui": "playwright test",
+    "vscode:prepublish": "npm run check && npm run build",
+    "package": "vsce package --no-dependencies --out pareto-ghc-comparator-0.1.0.vsix"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.3.0",
+    "esbuild": "^0.25.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
