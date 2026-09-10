@@ -19,7 +19,8 @@ This repository builds a desktop VS Code extension that compares discovered GitH
 | `scripts/build.mjs` | Bundles host/webview code and copies styles into `dist/`. |
 | `scripts/verify-release.mjs` | Checks a supplied tag name against manifest and lockfile versions. |
 | `scripts/capture-screenshot.mjs` | Captures a preview from a previously validated snapshot, without accepting an API key. |
-| `.vscode/`, `.github/workflows/extension.yml` | Local build/debug tasks and CI/Marketplace publication. |
+| `site/index.html` | Static landing page deployed to GitHub Pages from version tags. |
+| `.vscode/`, `.github/workflows/extension.yml`, `.github/workflows/pages.yml` | Local build/debug tasks, CI/Marketplace publication, and Pages deployment. |
 | `.vscodeignore` | VSIX allowlist; explicitly include new distributable assets. |
 
 ## Toolchain and validation
@@ -88,6 +89,6 @@ Cache freshness is 24 hours. There is at most one automatic download attempt per
 - Update `README.md` for user-visible behavior/setup changes and the relevant feature section here for verified implementation changes. Keep plans in `docs/roadmap.md`.
 - Add user-visible changes to `CHANGELOG.md` under `Unreleased`, grouped as Added, Changed, or Fixed as appropriate. Before removing a completed roadmap task, record its implemented behavior here and its relevant changes in the changelog; remove empty tiers and fix dependencies.
 - During release preparation, promote unreleased entries to the new version and leave an empty `Unreleased` section. Use `npm version patch`, `minor`, or `major` to update both manifests and create the version commit/tag after changes are committed. Record dates only when backed by release evidence; a tag does not prove Marketplace publication.
-- CI builds on branch pushes, PRs, tags, and manual dispatch. Only version-tag pushes reach publication after checks pass. `scripts/verify-release.mjs` requires a stable tag matching both manifests. A separate release job uploads the tested VSIX to GitHub Releases. The Marketplace publish job uses the tested VSIX artifact, verifies publisher access, uses `VSCE_PAT` when present, and otherwise attempts Entra credentials. `verify-pat` checks Reader access while publish needs write access, so a passing verification followed by a 401/403 fails with a PAT scope/organization/role checklist and leaves the GitHub Release usable. Credential provisioning is external to this repository.
+- CI builds on branch pushes, PRs, tags, and manual dispatch. Only version-tag pushes reach publication after checks pass. A separate Pages workflow deploys `site/` to GitHub Pages on version tags. `scripts/verify-release.mjs` requires a stable tag matching both manifests. A separate release job uploads the tested VSIX to GitHub Releases. The Marketplace publish job uses the tested VSIX artifact, verifies publisher access, uses `VSCE_PAT` when present, and otherwise attempts Entra credentials. `verify-pat` checks Reader access while publish needs write access, so a passing verification followed by a 401/403 fails with a PAT scope/organization/role checklist and leaves the GitHub Release usable. Credential provisioning is external to this repository.
 - `npm run package` is local packaging; installing, pushing release tags, and publishing have additional side effects. Follow the user's authorized scope and do not treat documentation work as a request to release.
 - Ship `CHANGELOG.md` in the VSIX for user-facing history. Keep `AGENTS.md` and the planning roadmap as repository documentation.

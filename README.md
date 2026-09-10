@@ -24,6 +24,7 @@ Requires VS Code 1.100 or newer with GitHub Copilot Chat. See [Getting started](
 
 ## Guides
 
+- [Website](https://loumalouomega.github.io/Pareto-GHC-Comparator/) — project landing page.
 - [Getting started](docs/getting-started.md) — install, API key, model mapping.
 - [User guide](docs/user-guide.md) — recommendations, saved workload profiles, reading the chart.
 - [Billing estimates](docs/billing.md) — AI-credit formula and legacy premium requests.

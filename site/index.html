@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pareto GHC Comparator</title>
+  <meta
+    name="description"
+    content="Compare available GitHub Copilot models by benchmark quality and estimated usage cost."
+  />
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      margin: 0 auto;
+      max-width: 44rem;
+      padding: 2rem 1.25rem 4rem;
+    }
+    header {
+      align-items: center;
+      display: flex;
+      gap: 1rem;
+    }
+    header img {
+      height: 4rem;
+      width: 4rem;
+    }
+    .version {
+      color: gray;
+      font-size: 0.9rem;
+    }
+    figure {
+      margin: 2rem 0;
+    }
+    figure img {
+      border: 1px solid #8884;
+      border-radius: 0.5rem;
+      max-width: 100%;
+    }
+    figcaption {
+      color: gray;
+      font-size: 0.9rem;
+    }
+    .cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin: 1.5rem 0;
+    }
+    .cta a {
+      border: 1px solid currentColor;
+      border-radius: 0.5rem;
+      padding: 0.5rem 1rem;
+      text-decoration: none;
+    }
+    footer {
+      color: gray;
+      font-size: 0.85rem;
+      margin-top: 3rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icon.png" alt="Pareto GHC Comparator logo" />
+    <div>
+      <h1>Pareto GHC Comparator</h1>
+      <p class="version">Version {{VERSION}}</p>
+    </div>
+  </header>
+
+  <p>
+    A desktop VS Code extension for comparing the GitHub Copilot models exposed
+    to your extension host. Pick a task and compare benchmark quality against
+    estimated Copilot usage on a Pareto chart.
+  </p>
+
+  <div class="cta">
+    <a
+      href="https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator"
+      >Install from Marketplace</a
+    >
+    <a href="https://github.com/loumalouomega/Pareto-GHC-Comparator"
+      >Source on GitHub</a
+    >
+  </div>
+
+  <figure>
+    <img
+      src="extension-preview.png"
+      alt="Pareto GHC Comparator showing a live coding-quality versus AI-credit comparison"
+    />
+    <figcaption>
+      Webview preview captured with live Artificial Analysis data. Model
+      selections are illustrative and do not represent a signed-in account's
+      Copilot availability.
+    </figcaption>
+  </figure>
+
+  <h2>Quick start</h2>
+  <ol>
+    <li>Install VS Code 1.100 or newer with GitHub Copilot Chat.</li>
+    <li>
+      Run <strong>Pareto GHC: Open Model Comparison</strong> and set your
+      <a href="https://artificialanalysis.ai/data-api"
+        >Artificial Analysis Free API key</a
+      >.
+    </li>
+    <li>
+      Pick a task, billing mode, and token workload, then select a chart point
+      or table row to inspect the tradeoff.
+    </li>
+  </ol>
+  <p>
+    Full setup and model-mapping details:
+    <a
+      href="https://github.com/loumalouomega/Pareto-GHC-Comparator/blob/master/docs/getting-started.md"
+      >Getting started</a
+    >.
+  </p>
+
+  <h2>Guides</h2>
+  <ul>
+    <li>
+      <a
+        href="https://github.com/loumalouomega/Pareto-GHC-Comparator/blob/master/docs/user-guide.md"
+        >User guide</a
+      >
+      — recommendations, saved workload profiles, reading the chart.
+    </li>
+    <li>
+      <a
+        href="https://github.com/loumalouomega/Pareto-GHC-Comparator/blob/master/docs/billing.md"
+        >Billing estimates</a
+      >
+      — AI-credit formula and legacy premium requests.
+    </li>
+    <li>
+      <a
+        href="https://github.com/loumalouomega/Pareto-GHC-Comparator/blob/master/docs/data-privacy.md"
+        >Data, refresh, and privacy</a
+      >
+      — benchmark source, caching, failure handling.
+    </li>
+    <li>
+      <a
+        href="https://github.com/loumalouomega/Pareto-GHC-Comparator/blob/master/docs/development.md"
+        >Development</a
+      >
+      — local build, tests, and VS Code tasks.
+    </li>
+  </ul>
+
+  <footer>
+    <p>
+      Extension code: MIT. Benchmarks: Artificial Analysis, subject to its API
+      terms. Pricing: GitHub documentation.
+    </p>
+  </footer>
+</body>
+</html>

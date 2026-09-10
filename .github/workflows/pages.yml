@@ -1,0 +1,52 @@
+name: Deploy landing page
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Prepare site
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          rm -rf public && mkdir public
+          cp site/index.html public/
+          cp media/icon.png public/icon.png
+          cp docs/extension-preview.png public/extension-preview.png
+          sed -i "s/{{VERSION}}/$VERSION/g" public/index.html
+          if grep -qF "{{VERSION}}" public/index.html; then
+            echo "::error::Version placeholder was not replaced."
+            exit 1
+          fi
+          ls -lh public/
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public/
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
