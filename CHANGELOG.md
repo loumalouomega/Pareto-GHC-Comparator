@@ -12,6 +12,11 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 ### Changed
 
 - Updated README documentation links and release instructions to reflect the current repository version and publishing workflow.
+- Clarified Marketplace PAT requirements (all accessible organizations, Marketplace Manage scope, future expiry, Owner/Contributor role) and the GitHub Release fallback when publish credentials lack write access.
+
+### Fixed
+
+- Marketplace publish failures after a passing `verify-pat` now report the read-versus-write permission checklist and keep the tested GitHub Release available instead of failing with only `Failed request: (401)`.
 
 ## 0.5.0
 
