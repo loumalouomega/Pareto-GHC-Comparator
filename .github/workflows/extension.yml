@@ -153,4 +153,25 @@ jobs:
             AUTH_ARGS=(--azure-credential)
             npx --no-install vsce verify-pat --azure-credential "$PUBLISHER"
           fi
-          npx --no-install vsce publish --packagePath "$VSIX" "${AUTH_ARGS[@]}" --skip-duplicate
+          # verify-pat only checks Reader access (getRoleAssignments) while the
+          # actual upload needs write access. A 401 here with a passing
+          # verify-pat almost always means the PAT scope/organization or the
+          # publisher role is insufficient, not a broken pipeline.
+          if ! npx --no-install vsce publish --packagePath "$VSIX" "${AUTH_ARGS[@]}" --skip-duplicate; then
+            STATUS=$?
+            echo "::error::Marketplace publish failed for '$PUBLISHER' version '$VERSION'. verify-pat checks read access only; publish needs write access."
+            {
+              echo "## Marketplace publish failed (401/403 checklist)"
+              echo ""
+              echo "The tested VSIX is still available from this run's GitHub Release."
+              echo "Install it via **Extensions: Install from VSIX…** while fixing credentials."
+              echo ""
+              echo "- Azure DevOps PAT organization: **All accessible organizations** (a single-organization PAT returns 401 on publish)."
+              echo "- PAT scope: **Marketplace → Manage** (Read is enough for verify-pat, not for publish)."
+              echo "- PAT expiry: set a real future date; tokens defaulting to today pass verify-pat and then fail publish."
+              echo "- Publisher role: the PAT identity needs **Owner/Contributor** on https://marketplace.visualstudio.com/manage/publishers/$PUBLISHER (Reader passes verify-pat only)."
+              echo "- Secret placement: VSCE_PAT as an environment secret on the 'marketplace' environment; environment secrets override repository secrets."
+              echo "- Then rerun this tag's publish job; --skip-duplicate makes it safe if the version already exists."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit "$STATUS"
+          fi
