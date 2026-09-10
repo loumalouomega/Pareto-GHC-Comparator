@@ -119,6 +119,22 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 - Breakdown numbers multiply out to the displayed cost for credits, legacy, and USD rows; unit tests cover each billing mode plus free and unpriced states.
 
+#### Free-tier Zen comparison spotlight
+
+**Effort:** S. **Dependencies:** None.
+
+**Deliverables:**
+
+- A one-click "Free tier only" view ranking the currently free OpenCode Zen models by benchmark score for the selected task preset, answering "is free good enough for this task?".
+- A gap indicator reusing the near-best machinery: best-free score versus best-overall score, plus the cheapest paid model closing the gap.
+- Free status always reflects the latest CLI discovery (a model can leave the free tier at any time), never a static list. Documentation notes free-tier availability is time-limited by the provider.
+
+**Acceptance criteria:**
+
+- The view lists only currently-free models with scores; paid and provider-billed models are excluded with the reason stated.
+- The gap indicator names the best free model, its score, and how many index points it trails the best overall model.
+- Fixture tests cover free-only filtering, gap math, and a model transitioning from free to paid between discoveries (latest discovery wins).
+
 ## Non-goals / known constraints
 
 ### Product boundaries
