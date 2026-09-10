@@ -75,6 +75,32 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Automated checks pass and the packaged extension contains the required assets. Real-environment smoke-test results are recorded; unavailable credentials are reported as outstanding validation, not a passing test.
 - Documentation accurately distinguishes configured availability, benchmark quality, estimated workload cost, and actual account billing.
 
+### Tier 2 — Documented verification with Vitest
+
+**Admission criterion:** Strengthen the test and documentation workflow without changing product behavior. Tiers are ordered, so this follows the OpenCode work; it may be pulled forward if test maintenance becomes the bottleneck.
+
+**Outcome:** Unit and mocked host tests run under Vitest with coverage, and a contributor following the docs can run the full verification workflow (focused tests, coverage, type-check, build, browser tests) without tribal knowledge.
+
+**Current gap:** Unit and mocked host tests use `node:test` via `tsx` (`npm test` runs `test/*.test.ts`); Vitest is not a dependency and there is no coverage reporting. The verification workflow is described only briefly in the README development section, and there is no dedicated testing document.
+
+#### Adopt Vitest and document the verification workflow
+
+**Effort:** S. **Dependencies:** None; product behavior and existing test cases are unchanged.
+
+**Deliverables:**
+
+- Add Vitest as a dev dependency, migrate the existing `test/*.test.ts` unit and mocked host tests to it, and wire `npm test` (and any watch/coverage scripts) to Vitest. Keep the Playwright browser tests in `test/webview.spec.ts` as-is.
+- Enable coverage for the migrated suite with an explicit threshold policy so new logic without regression coverage fails the check. Keep the meaningful-behavior-and-failure-cases coverage rule from the contributor guidance.
+- Create the missing testing documentation: how to run focused tests, read coverage, and run the full validation sequence (type-check, unit/host tests, build, browser tests, packaging) for logic, UI, and release changes. Record it in the README development section and in `AGENTS.md` validation rules.
+- Update CI to run the Vitest command and upload coverage results on failure, preserving the no-API-key property of automated tests.
+
+**Acceptance criteria:**
+
+- The migrated suite covers the same behavior as the current `node:test` suite (Pareto ties and dominance, filtering, pricing formulas and thresholds, mappings, API failures, recommendations, profiles, messages) and all tests pass under Vitest in CI.
+- Coverage thresholds are enforced; a change that adds logic without tests fails the check with an actionable message.
+- A contributor following only the docs can run a single test file, the full suite with coverage, and the complete pre-release validation without asking for help.
+- Documentation states what automated tests do not prove (real-account model discovery, real API access), matching the existing smoke-test policy.
+
 ## Non-goals / known constraints
 
 ### Product boundaries
