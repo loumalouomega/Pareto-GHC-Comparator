@@ -1,0 +1,5 @@
+# Maintaining the catalog
+
+Update `src/catalog.ts` against the two GitHub sources, change `catalogDate`, and verify rates, thresholds, promotional expiry dates, and legacy plan availability. Rates are USD per million tokens; `null` cache-write rates mean normal input billing. Add only explicit Copilot IDs. Do not infer a pricing mapping from a similar family or display name.
+
+`benchmarkFamilies` contains explicit model-family aliases. Matching allows a known family name followed by a reasoning qualifier; it does not fuzzy-match sibling model names. A single candidate may resolve automatically; multiple candidates require an explicit user selection. Preserve reasoning and fallback qualifiers. API response validation and the three index mappings live in `src/api.ts`; comparison and cost rules live in `src/compare.ts`. Keep new cases covered by tests, then build and package a new release. Full benchmark datasets are fetched using each user's key and are not bundled in the VSIX; the illustrated preview contains only its displayed scores.
