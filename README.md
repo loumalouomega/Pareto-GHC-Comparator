@@ -5,7 +5,7 @@ A desktop VS Code extension for comparing the GitHub Copilot models exposed to y
 ## Install and use
 
 1. Install VS Code 1.100 or newer and enable GitHub Copilot Chat. Sign in to an account with model access.
-2. Run **Extensions: Install from VSIX…** and select `pareto-ghc-comparator-0.1.0.vsix`.
+2. Run **Extensions: Install from VSIX…** and select `pareto-ghc-comparator.vsix`.
 3. Run **Pareto GHC: Open Model Comparison** from the Command Palette.
 4. Click **Set API key** and enter your own [Artificial Analysis Free API key](https://artificialanalysis.ai/data-api). The key is stored in VS Code SecretStorage, not settings or the webview.
 5. Choose **Coding**, **General**, or **Agentic**, select a billing mode, and edit the illustrative token workload if needed.
@@ -58,11 +58,49 @@ npm run build
 npx playwright install chromium
 npm run test:ui
 npm run package
+npm run install:extension
 ```
 
 Press **F5** to open an Extension Development Host after the build task runs. To use an existing Chromium installation for UI tests, set `PARETO_CHROMIUM_PATH` to its executable. The packaged VSIX contains the compiled extension, webview assets, documentation, and dependency license notices. It does not include test fixtures or credentials.
 
 Tests cover Pareto ties and dominance, filtering, missing data, pricing formulas and thresholds, expired promotions, exact and ambiguous mappings, API pagination and failures, cache retention, host/webview messages, secret isolation, keyboard selection, and themed browser rendering. Browser tests use synthetic model data and a mocked host; a real-account smoke test still requires Copilot sign-in and an Artificial Analysis key.
+
+## VS Code tasks and installation
+
+Run **Tasks: Run Build Task** (`Ctrl+Shift+B`) for the default `build` task. **Tasks: Run Task** also offers:
+
+| Task | Result |
+| --- | --- |
+| `build` | Compile the extension and webview. |
+| `package` | Type-check, build, and generate `pareto-ghc-comparator.vsix`. |
+| `install` | Package the current source, then install the VSIX into VS Code using `--force`. |
+
+Run `npm ci` once before using the tasks. The install task requires the `code` command on PATH. On macOS, use **Shell Command: Install 'code' command in PATH**. Reload the VS Code window after updating the extension. For another VS Code profile or Insiders, run the package task and use that editor's **Extensions: Install from VSIX…** command.
+
+The VSIX filename stays constant as versions change; the version inside it comes from `package.json`. `npm run install:extension` is the equivalent terminal command. It is deliberately separate from npm's dependency installation lifecycle.
+
+## CI and Marketplace releases
+
+`.github/workflows/extension.yml` runs on branch pushes, pull requests, version-tag pushes, and manual dispatch. It installs locked dependencies with Node.js 22, type-checks, runs the unit and host tests, builds, runs Chromium UI tests, and packages the VSIX. Successful runs upload a **pareto-ghc-comparator-<commit SHA>** artifact, retained for 30 days. Failed runs upload any browser diagnostics for 7 days.
+
+Only a **push of a stable version tag** publishes to the VS Code Marketplace. The tag must exactly match `v` plus the manifest version, and the lockfile version must match too. Publication waits for all checks to pass, downloads the VSIX from that same run, and publishes those exact packaged bytes. Branch pushes, pull requests, and manual dispatch only build artifacts.
+
+One-time setup:
+
+1. Register or select your publisher in [Marketplace publisher management](https://marketplace.visualstudio.com/manage). Set `publisher` in `package.json` to its exact ID. The current value is `pareto-ghc`; it must belong to an account you control.
+2. Create the GitHub Actions environment **marketplace**. Add `VSCE_PAT` as an environment secret (a repository secret also works): an Azure DevOps PAT with **Marketplace → Manage** permission and access to that publisher. Do not put the token in source files. See the [official publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for token creation and publisher membership.
+3. Push this workflow to GitHub. No Artificial Analysis API key is needed in CI; automated tests use fixtures.
+
+To release, start with a clean checkout, run `npm version patch` (or `minor` / `major`) to update both manifests and create a version commit and tag, then push the commit and **that specific tag**. For example, if the new version is `0.1.1`:
+
+```sh
+git push origin HEAD
+git push origin v0.1.1
+```
+
+For the initial `0.1.0` release, tag the committed source as `v0.1.0` instead of incrementing it. `npm run release:check -- v0.1.0` checks the initial tag locally. Use a new version for subsequent Marketplace releases; the workflow does not overwrite an existing version. A failed publication can be rerun after fixing authentication, provided that version has not already been published.
+
+Authentication maintenance: Microsoft's publishing guide states that global Azure DevOps PATs retire on December 1, 2026. This workflow uses `VSCE_PAT`; migrate the publish job to Microsoft Entra workload identity and `vsce publish --azure-credential` before that retirement. The build and artifact jobs do not depend on publishing credentials.
 
 ## Maintaining the catalog
 

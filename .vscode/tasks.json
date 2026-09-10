@@ -6,7 +6,24 @@
       "type": "npm",
       "script": "build",
       "problemMatcher": [],
-      "group": "build"
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "package",
+      "type": "npm",
+      "script": "package",
+      "problemMatcher": [],
+      "detail": "Check, build, and package the installable VSIX."
+    },
+    {
+      "label": "install",
+      "type": "npm",
+      "script": "install:extension",
+      "problemMatcher": [],
+      "detail": "Check, build, package, and install the extension into VS Code."
     }
   ]
 }

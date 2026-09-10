@@ -42,7 +42,9 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:ui": "playwright test",
     "vscode:prepublish": "npm run check && npm run build",
-    "package": "vsce package --no-dependencies --out pareto-ghc-comparator-0.1.0.vsix"
+    "package": "vsce package --no-dependencies --out pareto-ghc-comparator.vsix",
+    "install:extension": "npm run package && code --install-extension pareto-ghc-comparator.vsix --force",
+    "release:check": "node scripts/verify-release.mjs"
   },
   "dependencies": {
     "chart.js": "^4.4.8"
