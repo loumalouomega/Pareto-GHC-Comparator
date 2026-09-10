@@ -1,5 +1,7 @@
 # Pareto GHC Comparator
 
+<img src="media/icon.png" alt="Pareto GHC Comparator logo" width="128" />
+
 A desktop VS Code extension for comparing the GitHub Copilot models exposed to your extension host. Pick a task and compare benchmark quality against estimated Copilot usage on a Pareto chart.
 
 ## Preview
