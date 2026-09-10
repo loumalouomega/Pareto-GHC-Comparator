@@ -4,9 +4,13 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 0.8.0
+
 ### Added
 
 - OpenCode model comparison: source selector, `opencode models --verbose` discovery with actionable setup/error states, namespaced `opencode:<provider>/<model>[#variant]` identities with one row per reasoning variant, live USD pricing (Zen free tier at 0, provider-billed models visibly unpriced), USD budgets, source-scoped workload profiles, and Copilot-default migration of existing settings. No behavior change for existing Copilot comparisons.
+
+History: [v0.7.3...v0.8.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.7.3...v0.8.0).
 
 ## 0.7.3
 
