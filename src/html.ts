@@ -23,6 +23,7 @@ export function html(
  </section>
  <fieldset id="tokens"><legend>Illustrative token workload · editable estimate</legend><div class="token-grid">
  <label>Uncached input<input id="input" type="number" required min="0" max="100000000" step="1" value="1000"></label><label>Cache read<input id="read" type="number" required min="0" max="100000000" step="1" value="0"></label><label>Cache write<input id="write" type="number" required min="0" max="100000000" step="1" value="0"></label><label>Output (including reasoning)<input id="output" type="number" required min="0" max="100000000" step="1" value="1000"></label></div>
+  <div class="controls"><button id="usage-prefill" class="secondary">Use my average</button> <span id="usage-prefill-note" class="hint" role="status"></span></div>
  <p class="hint">Input buckets are disjoint. Cache-write tokens use the write rate when listed, otherwise the normal input rate. This is not measured task cost or your account bill.</p></fieldset>
   <p id="legacy-note" class="hint" hidden>For existing annual Pro / Pro+ plans using legacy billing. Manual model selection, per interaction; Auto discounts and code review are not included.</p>
   <section class="controls" aria-label="Chart display settings">
@@ -35,7 +36,7 @@ export function html(
   <label class="checkbox-label" id="free-only-label" hidden><input id="free-only" type="checkbox">Free tier only</label>
   </section>
   <section class="controls" aria-label="Model inclusion">
-  <div><strong>Included models</strong> <button id="include-all" class="secondary">Select all</button> <button id="include-none" class="secondary">Select none</button></div>
+  <div><strong>Included models</strong> <button id="include-all" class="secondary">Select all</button> <button id="include-none" class="secondary">Select none</button> <label class="checkbox-label"><input id="only-mine" type="checkbox">Only my models</label></div>
   <label class="filter">Filter models for selection<input id="checklist-search" type="search" placeholder="Filter families, models, or thinking levels" maxlength="200"></label>
   <p class="hint" id="checklist-hint">Families contain models; models with multiple thinking variants expand. Select a family, a model, or an individual thinking level. While filtering, bulk actions apply to matching models.</p>
   <div id="checklist"></div>
@@ -59,7 +60,7 @@ export function html(
  <label>Recommendation mode<select id="recommendation-mode"><option value="budget">Best under budget</option><option value="nearBest">Cheapest near best</option></select></label>
  <label id="budget-label"><span id="budget-unit">Maximum AI credits</span><input id="budget" type="number" required min="0" max="100000000" step="any" value="1"></label>
  <label id="gap-label" hidden>Allowed score gap (index points)<input id="score-gap" type="number" required min="0" max="100000000" step="any" value="3"></label>
-  </div><p id="recommendation-result" role="status" aria-live="polite"></p><p class="hint">Recommendations use only the displayed, comparable models. Star markers identify recommendations; the dotted line remains the Pareto frontier.</p></section>
+  </div><p id="recommendation-result" role="status" aria-live="polite"></p><p id="budget-suggestion" class="hint" role="status"></p><button id="budget-apply" class="secondary" hidden>Use suggested budget</button><p class="hint">Recommendations use only the displayed, comparable models. Star markers identify recommendations; the dotted line remains the Pareto frontier.</p></section>
   <section class="recommendation-card" aria-labelledby="usage-title" id="usage-card">
   <h2 id="usage-title">Local Copilot usage</h2><div class="controls">
   <button id="usage-scan" class="secondary">Scan local usage</button>

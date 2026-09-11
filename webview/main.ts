@@ -259,7 +259,9 @@ function drawChart() {
               ? 11
               : r.frontier
                 ? 7
-                : 5,
+                : (r.requests ?? 0) > 0
+                  ? 6
+                  : 5,
           ),
           pointHoverRadius: 11,
           pointStyle: rows.map((r) =>
@@ -295,7 +297,7 @@ function drawChart() {
           callbacks: {
             label: (item) => {
               const r = rows[item.dataIndex];
-              return `${r.name}: ${format(r.score)} score · ${format(r.cost)} ${taskView ? `${unitNoun(state!.options.billing)} per task` : unitNoun(state!.options.billing)}${r.frontier ? " · Pareto frontier" : ""}`;
+              return `${r.name}: ${format(r.score)} score · ${format(r.cost)} ${taskView ? `${unitNoun(state!.options.billing)} per task` : unitNoun(state!.options.billing)}${r.frontier ? " · Pareto frontier" : ""}${(r.requests ?? 0) > 0 ? ` · ${r.requests} local requests` : ""}`;
             },
           },
         },
@@ -412,6 +414,10 @@ function renderDetails() {
         `Selected index score: ${format(row.score)} · version ${state.version ?? "unknown"}`,
       ),
     );
+    if ((row.requests ?? 0) > 0)
+      target.append(
+        text("p", `${row.requests} local requests in the scanned history.`, "hint"),
+      );
     const drift = row.benchmark ? state.drift[row.benchmark.id] : undefined;
     if (state.prevVersion && drift) {
       target.append(
@@ -975,6 +981,14 @@ function render(next: ViewState) {
         ? "Maximum premium requests"
         : `Maximum USD${perTask}`;
   el("recommendation-result").textContent = state.recommendation.explanation;
+  const suggestion = state.budgetSuggestion;
+  el("budget-suggestion").textContent = suggestion
+    ? suggestion.value === null
+      ? `Budget suggestion unavailable: ${suggestion.note}`
+      : `Suggested budget ${suggestion.value} (${suggestion.note})`
+    : "";
+  (el("budget-apply") as HTMLButtonElement).hidden =
+    !suggestion || suggestion.value === null;
   renderProfiles(previousActive);
   el("status").textContent = state.message;
   el<HTMLButtonElement>("refresh").disabled = state.loading;
@@ -1013,6 +1027,19 @@ function render(next: ViewState) {
   (el("free-only-label") as HTMLElement).hidden =
     state.options.source !== "opencode";
   (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
+  (el("only-mine") as HTMLInputElement).checked = state.options.onlyMine;
+  const usageSummary = state.usage;
+  const prefill = el("usage-prefill") as HTMLButtonElement;
+  prefill.disabled = !usageSummary || usageSummary.medianSample === 0;
+  el("usage-prefill-note").textContent = usageSummary
+    ? usageSummary.medianSample === 0
+      ? "No requests with token data in the local scan."
+      : `Median ${usageSummary.medianPrompt} prompt + ${usageSummary.medianOutput} output per request · ` +
+        `${usageSummary.medianSample} requests` +
+        (usageSummary.dateRange
+          ? ` · ${new Date(usageSummary.dateRange.from).toLocaleDateString()} – ${new Date(usageSummary.dateRange.to).toLocaleDateString()}`
+          : "")
+    : "Scan local usage first.";
   el("spotlight-result").textContent = state.freeSpotlight.explanation;
   (el("spotlight-card") as HTMLElement).hidden =
     state.options.source !== "opencode";
@@ -1070,6 +1097,8 @@ function render(next: ViewState) {
     );
     if (state.recommendation.modelIds.includes(row.id))
       name.append(text("span", "★ Recommended", "recommended"));
+    if ((row.requests ?? 0) > 0)
+      name.append(text("span", `· ${row.requests} used`, "used-badge"));
     const drift = row.benchmark ? state.drift[row.benchmark.id] : undefined;
     const scoreText =
       format(row.score) +
@@ -1208,6 +1237,7 @@ function sendOptions(): boolean {
       sort: (el("display-sort") as HTMLSelectElement).value as Options["display"]["sort"],
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
+    onlyMine: (el("only-mine") as HTMLInputElement).checked,
   };
   send("options", { options });
   return true;
@@ -1238,6 +1268,7 @@ for (const id of [
   "display-scale",
   "display-sort",
   "free-only",
+  "only-mine",
 ]) {
   el(id).addEventListener("input", () => {
     if (id === "billing") {
@@ -1323,6 +1354,18 @@ el("include-none").onclick = () => {
 };
 el("usage-scan").onclick = () => send("scanUsage");
 el("usage-clear").onclick = () => send("clearUsage");
+el("usage-prefill").onclick = () => {
+  if (!state?.usage || state.usage.medianSample === 0) return;
+  el<HTMLInputElement>("input").value = String(state.usage.medianPrompt);
+  el<HTMLInputElement>("output").value = String(state.usage.medianOutput);
+  sendOptions();
+};
+el("budget-apply").onclick = () => {
+  const value = state?.budgetSuggestion?.value ?? null;
+  if (value === null) return;
+  el<HTMLInputElement>("budget").value = String(value);
+  sendOptions();
+};
 el("export-csv").onclick = () => send("exportCsv");
 el("export-snapshot").onclick = () => send("exportSnapshot");
 el("export-badge").onclick = () => send("exportBadge");

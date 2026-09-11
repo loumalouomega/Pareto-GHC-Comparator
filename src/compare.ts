@@ -108,6 +108,7 @@ export function parseOptions(value: unknown): Options {
     },
     display: { labels, frontier, scale, chart, quadrant, sort },
     freeOnly: v.freeOnly === true,
+    onlyMine: v.onlyMine === true,
     tokens: {
       input: v.tokens.input,
       read: v.tokens.read,
@@ -415,11 +416,13 @@ export function compare(
     pins?: Record<string, string[]>;
     excluded?: string[];
     byok?: ByokStore;
+    usedCounts?: Map<string, number>;
   } = {},
 ): Row[] {
   const pins = extra.pins ?? {};
   const excluded = new Set(extra.excluded ?? []);
   const byok = extra.byok ?? {};
+  const usedCounts = extra.usedCounts ?? new Map<string, number>();
   const byId = new Map(benchmarks.map((b) => [b.id, b]));
   const rows = available
     .filter((m) => !excluded.has(m.id))
@@ -428,6 +431,11 @@ export function compare(
         !options.freeOnly ||
         options.source !== "opencode" ||
         m.freeTier === true,
+    )
+    .filter(
+      (m) =>
+        !options.onlyMine ||
+        (usedCounts.get(m.id) ?? usedCounts.get(baseModelIdOf(m.id)) ?? 0) > 0,
     )
     .filter((m) =>
       `${m.name} ${m.id}`.toLowerCase().includes(options.filter.toLowerCase()),
@@ -509,6 +517,8 @@ export function compare(
           id: rowId,
           modelId: m.id,
           baseModelId: baseModelIdOf(m.id),
+          requests:
+            usedCounts.get(m.id) ?? usedCounts.get(baseModelIdOf(m.id)) ?? 0,
           name: displayName,
           provider: entry?.provider ?? matched.benchmark?.provider ?? "Unknown",
           score,
@@ -625,6 +635,7 @@ export function freeSpotlight(
     pins?: Record<string, string[]>;
     excluded?: string[];
     byok?: ByokStore;
+    usedCounts?: Map<string, number>;
   } = {},
 ): {
   bestFree?: { id: string; name: string; score: number };
@@ -633,7 +644,7 @@ export function freeSpotlight(
   cheapestToBest?: { id: string; name: string; cost: number };
 } {
   if (options.source !== "opencode" || options.billing !== "usd") return {};
-  const baseline = { ...options, freeOnly: false };
+  const baseline = { ...options, freeOnly: false, onlyMine: false };
   const all = compare(available, benchmarks, baseline, overrides, entries, {
     ...extra,
     // Baseline uses checklist/filter but ignores the free-only restriction.

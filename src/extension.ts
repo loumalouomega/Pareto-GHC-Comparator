@@ -24,10 +24,12 @@ import {
   aggregateUsage,
   blankUsageIndex,
   discoverUsageFiles,
+  normalizeUsageModelId,
   parseUsageJsonl,
   parseUsageLegacyJson,
   selectChangedFiles,
   storageCandidates,
+  suggestBudget,
   validUsageFile,
   type StoredUsageFile,
 } from "./usage";
@@ -257,9 +259,20 @@ export function activate(context: vscode.ExtensionContext) {
   /** Row ids from the last render, for validating variant-level exclusions. */
   let lastStructureIds = new Set<string>();
   const excludedFor = (source: Source): string[] => excluded[source] ?? [];
+  const usedCountsFor = () => {
+    const usedCounts = new Map<string, number>();
+    if (usage) {
+      for (const stat of usage.models) {
+        const id = normalizeUsageModelId(stat.modelId);
+        if (id) usedCounts.set(id, (usedCounts.get(id) ?? 0) + stat.requests);
+      }
+    }
+    return usedCounts;
+  };
   const render = () => {
     const available = availableBySource[options.source];
     const benchmarks = snapshot?.models ?? [];
+    const usedCounts = usedCountsFor();
     // Structure rows ignore the text filter and exclusions so every thinking
     // level stays selectable (unchecked leaves remain visible).
     const structureRows = compare(
@@ -280,7 +293,7 @@ export function activate(context: vscode.ExtensionContext) {
       options,
       overrides,
       undefined,
-      { pins, excluded: excludedFor(options.source), byok },
+      { pins, excluded: excludedFor(options.source), byok, usedCounts },
     );
     const rows =
       options.display.sort === "efficiency"
@@ -292,7 +305,7 @@ export function activate(context: vscode.ExtensionContext) {
       options,
       overrides,
       undefined,
-      { pins, excluded: excludedFor(options.source), byok },
+      { pins, excluded: excludedFor(options.source), byok, usedCounts },
     );
     const comparable = rows.filter(
       (r) => r.cost !== null && r.score !== null,
@@ -345,6 +358,7 @@ export function activate(context: vscode.ExtensionContext) {
       byok,
       usage,
       usageWatching: usageWatchers.length > 0,
+      budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
       message: [message, discoveryError].filter(Boolean).join(" "),
       hasKey,
@@ -733,7 +747,12 @@ export function activate(context: vscode.ExtensionContext) {
                   options,
                   overrides,
                   undefined,
-                  { pins, excluded: excludedFor(options.source), byok },
+                  {
+                    pins,
+                    excluded: excludedFor(options.source),
+                    byok,
+                    usedCounts: usedCountsFor(),
+                  },
                 );
                 const rows =
                   options.display.sort === "efficiency"

@@ -40,6 +40,7 @@ export interface Options {
   plan: "pro" | "proPlus";
   tokens: Tokens;
   filter: string;
+  onlyMine: boolean;
   recommendation: RecommendationSettings;
   display: DisplaySettings;
   freeOnly: boolean;
@@ -58,6 +59,7 @@ export const defaults: Options = {
   },
   display: { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" },
   freeOnly: false,
+  onlyMine: false,
 };
 export interface Benchmark {
   id: string;
@@ -114,9 +116,19 @@ export interface UsageSummary {
   estimatedTokens: number;
   unknownModels: string[];
   dateRange: { from: number; to: number } | null;
+  medianPrompt: number;
+  medianOutput: number;
+  medianSample: number;
+  premiumP90: number | null;
+  creditP90: number | null;
+  creditSample: number;
   models: UsageModelStat[];
   days: UsageDayStat[];
   workspaces: UsageWorkspaceStat[];
+}
+export interface BudgetSuggestion {
+  value: number | null;
+  note: string;
 }
 export interface ByokEntry {
   rates: Rates;
@@ -196,6 +208,7 @@ export interface Row {
   dominatedBy: string[];
   mappingStatus: MappingStatus;
   candidateIds: string[];
+  requests?: number;
   selectedBenchmarkId?: string;
   pinnedBenchmarkId?: string;
   /** Benchmark automatically expanded as its own row when several variants match. */
@@ -299,6 +312,7 @@ export interface ViewState {
   byok: ByokStore;
   usage: UsageSummary | null;
   usageWatching: boolean;
+  budgetSuggestion: BudgetSuggestion | null;
   loading: boolean;
   message: string;
   hasKey: boolean;

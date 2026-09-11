@@ -25,11 +25,13 @@ import { usageMultiplier } from "../src/usageMultipliers";
 import {
   aggregateUsage,
   blankUsageIndex,
+  normalizeUsageModelId,
   parseUsageJsonl,
   parseUsageLegacyJson,
   premiumForRequest,
   selectChangedFiles,
   storageCandidates,
+  suggestBudget,
   uriToPath,
   usageParserVersion,
   validUsageFile,
@@ -1078,6 +1080,66 @@ test("usage aggregation totals requests with per-event premium eras", () => {
 test("usage messages validate scan and clear actions", () => {
   assert.deepEqual(parseMessage({ type: "scanUsage" }), { type: "scanUsage" });
   assert.deepEqual(parseMessage({ type: "clearUsage" }), { type: "clearUsage" });
+});
+
+test("usage medians and p90s summarize priced requests", () => {
+  const req = (promptTokens: number, outputTokens: number, modelId: string | null = "copilot/gpt-5-mini") => ({
+    sessionId: "s", workspaceId: "w", requestIndex: 0, modelId,
+    timestampMs: Date.parse("2026-09-01"), promptTokens, outputTokens,
+    toolCallRounds: 0, tokensEstimated: false,
+  });
+  const summary = aggregateUsage([
+    { workspaceId: "w", workspacePath: "/r", requests: [req(0, 0), req(100, 50), req(200, 100), req(300, 150)] },
+  ]);
+  assert.equal(summary.medianPrompt, 200);
+  assert.equal(summary.medianOutput, 100);
+  assert.equal(summary.medianSample, 3);
+  assert.ok((summary.premiumP90 ?? 0) > 0);
+  assert.ok((summary.creditP90 ?? 0) > 0);
+  assert.equal(summary.creditSample, 3);
+  const empty = aggregateUsage([]);
+  assert.equal(empty.medianSample, 0);
+  assert.equal(empty.premiumP90, null);
+  assert.equal(suggestBudget(null, "credits"), null);
+  assert.equal(suggestBudget(empty, "credits"), null);
+  const legacy = suggestBudget(summary, "legacy");
+  assert.equal(legacy?.value, summary.premiumP90);
+  assert.match(legacy?.note ?? "", /p90 of 3 requests/);
+  const credits = suggestBudget(summary, "credits");
+  assert.equal(credits?.value, summary.creditP90);
+  const usd = suggestBudget(summary, "usd");
+  assert.equal(usd?.value, null);
+  assert.match(usd?.note ?? "", /Copilot/);
+  assert.equal(normalizeUsageModelId("copilot/gpt-5-mini"), "gpt-5-mini");
+  assert.equal(normalizeUsageModelId("bare-id"), "bare-id");
+  assert.equal(normalizeUsageModelId(null), null);
+});
+
+test("only-my-models filters before the frontier with preserved exclusions", () => {
+  const second: AvailableModel = {
+    id: "gpt-5-mini",
+    name: "GPT-5 mini",
+    family: "gpt-5-mini",
+    maxInputTokens: 400000,
+    source: "copilot",
+  };
+  const used = new Map([["gpt-5-mini", 4]]);
+  const mine = compare([copilotModel, second], benchmarks, { ...defaults, onlyMine: true }, {}, undefined, {
+    usedCounts: used,
+  });
+  assert.ok(mine.length > 0 && mine.every((r) => r.modelId === "gpt-5-mini"));
+  assert.ok(mine.every((r) => r.requests === 4));
+  const all = compare([copilotModel, second], benchmarks, defaults, {}, undefined, { usedCounts: used });
+  assert.ok(all.some((r) => r.modelId !== "gpt-5-mini"));
+  assert.ok(all.find((r) => r.modelId === "gpt-5.4")?.requests === 0);
+  const excluded = compare([copilotModel, second], benchmarks, { ...defaults, onlyMine: true }, {}, undefined, {
+    usedCounts: used,
+    excluded: ["gpt-5-mini"],
+  });
+  assert.equal(excluded.length, 0);
+  assert.equal(parseOptions({ ...defaults }).onlyMine, false);
+  assert.equal(savedOptions({ ...defaults, onlyMine: undefined }).onlyMine, false);
+  assert.equal(parseOptions({ ...defaults, onlyMine: true }).onlyMine, true);
 });
 
 test("coverage: webview shell exposes new controls and CSP", async () => {

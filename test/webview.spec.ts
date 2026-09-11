@@ -5,6 +5,7 @@ import { compare } from "../src/compare";
 import { buildGroups } from "../src/groups";
 import { recommend } from "../src/recommend";
 import { changeProfile, profileModified } from "../src/profiles";
+import { normalizeUsageModelId, suggestBudget } from "../src/usage";
 import type { ProfileStore } from "../src/types";
 import { defaults, type ViewState, type Benchmark } from "../src/types";
 const benchmarks: Benchmark[] = [
@@ -90,6 +91,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       byok: {},
       usage: null,
       usageWatching: false,
+      budgetSuggestion: null,
       recommendation: { modelIds: [], explanation: "" },
       profiles: [],
       profileModified: false,
@@ -156,10 +158,23 @@ for (const theme of ["light", "dark", "high-contrast"])
         if (m.excluded) for (const id of listedIds) excluded.add(id);
         else excluded.clear();
       }
+      if (m.type === "clearUsage") {
+        state.usage = null;
+        state.usageWatching = false;
+      }
       const listed = state.source === "opencode" ? opencodeAvailable : available;
+      const usedCounts = new Map<string, number>();
+      if (state.usage) {
+        for (const stat of state.usage.models) {
+          const id = normalizeUsageModelId(stat.modelId);
+          if (id) usedCounts.set(id, (usedCounts.get(id) ?? 0) + stat.requests);
+        }
+      }
       state.rows = compare(listed, state.models, state.options, mappings, undefined, {
         excluded: [...excluded],
+        usedCounts,
       });
+      state.budgetSuggestion = suggestBudget(state.usage, state.options.billing);
       state.checklist = listed.map((a) => ({
         id: a.id,
         name: a.name,
@@ -499,6 +514,12 @@ for (const theme of ["light", "dark", "high-contrast"])
           estimatedTokens: 1,
           unknownModels: ["copilot/mystery"],
           dateRange: { from: Date.parse("2026-09-01"), to: Date.parse("2026-09-03") },
+          medianPrompt: 150,
+          medianOutput: 75,
+          medianSample: 3,
+          premiumP90: 2,
+          creditP90: 0.5,
+          creditSample: 2,
           models: [
             { modelId: "copilot/gpt-5-mini", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 0.66 },
             { modelId: "copilot/mystery", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1 },
@@ -518,7 +539,21 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-workspaces")).toContainText("/repo");
     await expect(page.locator("#usage-unknown")).toContainText("copilot/mystery");
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
+    // Only-my-models filter, workload prefill, and budget suggestion.
+    await expect(page.locator("#usage-prefill-note")).toContainText("Median 150 prompt + 75 output");
+    await page.locator("#only-mine").check();
+    await expect(page.locator("#count")).toHaveText("1 plotted / 1 models");
+    await expect(page.locator("#rows")).toContainText("2 used");
+    await page.locator("#only-mine").uncheck();
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
+    await page.locator("#usage-prefill").click();
+    await expect(page.locator("#input")).toHaveValue("150");
+    await expect(page.locator("#output")).toHaveValue("75");
+    await expect(page.locator("#budget-suggestion")).toContainText("0.5");
+    await page.locator("#budget-apply").click();
+    await expect(page.locator("#budget")).toHaveValue("0.5");
     await page.locator("#usage-clear").click();
     expect(messages.some((m) => m.type === "clearUsage")).toBeTruthy();
+    await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
     expect(errors).toEqual([]);
   });

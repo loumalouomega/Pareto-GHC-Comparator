@@ -2,12 +2,18 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { usageMultiplier } from "./usageMultipliers";
-import type {
-  UsageDayStat,
-  UsageModelStat,
-  UsageRequest,
-  UsageSummary,
-  UsageWorkspaceStat,
+import { estimate } from "./compare";
+import { catalog } from "./catalog";
+import {
+  defaults,
+  type Billing,
+  type BudgetSuggestion,
+  type CatalogEntry,
+  type UsageDayStat,
+  type UsageModelStat,
+  type UsageRequest,
+  type UsageSummary,
+  type UsageWorkspaceStat,
 } from "./types";
 export const usageParserVersion = 1;
 export interface UsageCandidate {
@@ -370,9 +376,30 @@ function dayOf(timestampMs: number | null | undefined): string | null {
   if (timestampMs === null || timestampMs === undefined) return null;
   return new Date(timestampMs).toISOString().slice(0, 10);
 }
+function medianOf(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return Math.min(100000000, Math.max(0, Math.round(median)));
+}
+function quantileOf(values: number[], q: number): number | null {
+  const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
+  if (!positive.length) return null;
+  return positive[Math.min(positive.length - 1, Math.ceil(q * positive.length) - 1)];
+}
+function stripCopilotPrefix(modelId: string | null): string | null {
+  if (!modelId) return null;
+  return modelId.startsWith("copilot/") ? modelId.slice("copilot/".length) : modelId;
+}
+export function normalizeUsageModelId(modelId: string | null): string | null {
+  return stripCopilotPrefix(modelId);
+}
 export function aggregateUsage(
   files: { workspaceId: string; workspacePath: string; requests: UsageRequest[] }[],
   scannedAt = Date.now(),
+  entries: CatalogEntry[] = catalog,
 ): UsageSummary {
   const models = new Map<string, UsageModelStat & { key: string }>();
   const days = new Map<string, UsageDayStat>();
@@ -432,6 +459,37 @@ export function aggregateUsage(
     }
   }
   const round2 = (n: number) => Math.round(n * 100) / 100;
+  const round4 = (n: number) => Math.round(n * 10000) / 10000;
+  const prompts: number[] = [];
+  const outputs: number[] = [];
+  const premiums: number[] = [];
+  const credits: number[] = [];
+  for (const file of files) {
+    for (const r of file.requests) {
+      if (r.promptTokens + r.outputTokens <= 0) continue;
+      prompts.push(r.promptTokens);
+      outputs.push(r.outputTokens);
+      const premium = premiumForRequest(r);
+      premiums.push(premium.value);
+      const id = stripCopilotPrefix(r.modelId);
+      const entry = id ? entries.find((e) => e.ids.includes(id)) : undefined;
+      if (entry) {
+        const price = estimate(entry, {
+          ...defaults,
+          tokens: {
+            input: r.promptTokens,
+            read: 0,
+            write: 0,
+            output: r.outputTokens,
+          },
+        });
+        if (price.cost !== null) credits.push(price.cost);
+      }
+    }
+  }
+  const premiumP90 = quantileOf(premiums, 0.9);
+  const creditP90 = quantileOf(credits, 0.9);
+  const creditSample = credits.filter((v) => v > 0).length;
   return {
     scannedAt,
     fileCount: totalFiles,
@@ -442,6 +500,12 @@ export function aggregateUsage(
     estimatedTokens,
     unknownModels: [...unknown].sort().slice(0, 50),
     dateRange: from !== null && to !== null ? { from, to } : null,
+    medianPrompt: medianOf(prompts),
+    medianOutput: medianOf(outputs),
+    medianSample: prompts.length,
+    premiumP90,
+    creditP90: creditP90 === null ? null : round4(creditP90),
+    creditSample,
     models: [...models.values()]
       .map((m) => ({ ...m, premiumEstimate: round2(m.premiumEstimate) }))
       .sort((a, b) => b.requests - a.requests || a.modelId.localeCompare(b.modelId)),
@@ -452,4 +516,31 @@ export function aggregateUsage(
       .map((w) => ({ ...w, premiumEstimate: round2(w.premiumEstimate) }))
       .sort((a, b) => b.requests - a.requests || a.id.localeCompare(b.id)),
   };
+}
+export function suggestBudget(
+  summary: UsageSummary | null,
+  billing: Billing,
+): BudgetSuggestion | null {
+  if (!summary || summary.medianSample === 0) return null;
+  const window =
+    summary.dateRange
+      ? `${new Date(summary.dateRange.from).toLocaleDateString()} – ${new Date(summary.dateRange.to).toLocaleDateString()}`
+      : "undated requests";
+  if (billing === "legacy") {
+    if (summary.premiumP90 === null)
+      return { value: null, note: `No priced legacy requests in ${summary.medianSample} sampled requests.` };
+    return {
+      value: summary.premiumP90,
+      note: `p90 of ${summary.medianSample} requests · ${window}.`,
+    };
+  }
+  if (billing === "credits") {
+    if (summary.creditP90 === null)
+      return { value: null, note: `No priced credit requests in ${summary.medianSample} sampled requests.` };
+    return {
+      value: summary.creditP90,
+      note: `p90 of ${summary.creditSample} priced requests · ${window}.`,
+    };
+  }
+  return { value: null, note: "Local history covers Copilot requests only." };
 }
