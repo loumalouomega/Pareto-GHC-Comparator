@@ -15,6 +15,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Usage-aware workload prefill: **Use my average** fills the token inputs from median observed prompt/output tokens with the sample size and date range shown; it composes with saved profiles like any manual edit.
 - Used-models overlay: chart points, tooltips, table rows, and model details mark models seen in local history with request counts, and an **Only my models** filter restricts the comparison (frontier, recommendations, and exports included) to them.
 - Budget from reality: a suggested budget from p90 observed costs (premium requests for legacy billing, AI credits for credit billing) with its sample and window cited; applying it is explicit and manual budgets always win. No suggestion for USD, since local history covers Copilot requests only.
+- Per-workspace breakdown: the usage card shows up to 20 workspaces with basename-only labels by default (full paths on toggle, kept in tooltips), and storage ids with an inline unmapped-workspace explanation when `workspace.json` is missing or unreadable; the model table grows to 12 rows.
 
 ## 0.11.0
 

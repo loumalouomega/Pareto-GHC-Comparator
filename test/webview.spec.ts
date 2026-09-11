@@ -528,7 +528,16 @@ for (const theme of ["light", "dark", "high-contrast"])
             { date: "2026-09-03", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
           ],
           workspaces: [
-            { id: "ws1", path: "/repo", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
+            { id: "ws1", path: "/home/user/myrepo", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 5 },
+            { id: "deadbeef", path: "", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1.5 },
+            ...Array.from({ length: 9 }, (_, i) => ({
+              id: `ws-extra-${i}`,
+              path: `/home/user/proj${i}`,
+              requests: 1,
+              promptTokens: 10,
+              outputTokens: 5,
+              premiumEstimate: 0.1,
+            })),
           ],
         },
       },
@@ -536,7 +545,14 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-summary")).toContainText("3 requests");
     await expect(page.locator("#usage-models")).toContainText("copilot/gpt-5-mini");
     await expect(page.locator("#usage-days")).toContainText("2026-09-03");
-    await expect(page.locator("#usage-workspaces")).toContainText("/repo");
+    await expect(page.locator("#usage-workspaces")).toContainText("myrepo");
+    await expect(page.locator("#usage-workspaces")).not.toContainText("/home/user/myrepo");
+    await expect(page.locator("#usage-workspaces")).toContainText("deadbeef · unmapped workspace");
+    await expect(page.locator("#usage-workspaces tr")).toHaveCount(12);
+    await page.locator("#usage-full-paths").check();
+    await expect(page.locator("#usage-workspaces")).toContainText("/home/user/myrepo");
+    await page.locator("#usage-full-paths").uncheck();
+    await expect(page.locator("#usage-workspaces")).not.toContainText("/home/user/myrepo");
     await expect(page.locator("#usage-unknown")).toContainText("copilot/mystery");
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
     // Only-my-models filter, workload prefill, and budget suggestion.

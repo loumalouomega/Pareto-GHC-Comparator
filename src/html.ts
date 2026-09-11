@@ -65,6 +65,7 @@ export function html(
   <h2 id="usage-title">Local Copilot usage</h2><div class="controls">
   <button id="usage-scan" class="secondary">Scan local usage</button>
   <button id="usage-clear" class="secondary">Erase local usage</button>
+  <label class="checkbox-label"><input id="usage-full-paths" type="checkbox">Show full paths</label>
   <span id="usage-watching" role="status"></span>
   </div><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
   <p id="status" role="status" aria-live="polite"></p>

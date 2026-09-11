@@ -10,6 +10,7 @@ import type {
 } from "../src/types";
 import { sources } from "../src/sources";
 import { efficiencyOf } from "../src/efficiency";
+import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert } from "../src/freshness";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -89,6 +90,7 @@ let byokDraft: Record<
   string,
   { input: string; read: string; write: string; output: string }
 > = {};
+let usageFullPaths = false;
 const collapsedFamilies = new Set<string>();
 const collapsedModels = new Set<string>();
 const mappingLabels = {
@@ -885,7 +887,7 @@ function renderUsage() {
         "By model",
         ["Model", "Requests", "Prompt", "Output", "Premium ≈"],
         u.models
-          .slice(0, 8)
+          .slice(0, 12)
           .map((m) => [m.modelId, String(m.requests), num(m.promptTokens), num(m.outputTokens), String(m.premiumEstimate)]),
       ),
     );
@@ -899,16 +901,25 @@ function renderUsage() {
           .map((d) => [d.date, String(d.requests), num(d.promptTokens), num(d.outputTokens), String(d.premiumEstimate)]),
       ),
     );
-  if (u.workspaces.length)
-    wsEl.append(
-      table(
-        "By workspace",
-        ["Workspace", "Requests", "Prompt", "Output", "Premium ≈"],
-        u.workspaces
-          .slice(0, 8)
-          .map((w) => [w.path || w.id, String(w.requests), num(w.promptTokens), num(w.outputTokens), String(w.premiumEstimate)]),
-      ),
+  if (u.workspaces.length) {
+    const shown = u.workspaces.slice(0, 20);
+    const wrap = table(
+      "By workspace",
+      ["Workspace", "Requests", "Prompt", "Output", "Premium ≈"],
+      shown.map((w) => [
+        workspaceLabel(w.path, w.id, usageFullPaths),
+        String(w.requests),
+        num(w.promptTokens),
+        num(w.outputTokens),
+        String(w.premiumEstimate),
+      ]),
     );
+    wrap.querySelectorAll("tbody tr").forEach((tr, i) => {
+      const cell = tr.querySelector("td");
+      if (cell && shown[i].path) cell.title = shown[i].path;
+    });
+    wsEl.append(wrap);
+  }
   if (u.unknownModels.length)
     el("usage-unknown").textContent =
       `Unknown models use a 1.0 fallback multiplier: ${u.unknownModels.slice(0, 10).join(", ")}` +
@@ -1354,6 +1365,10 @@ el("include-none").onclick = () => {
 };
 el("usage-scan").onclick = () => send("scanUsage");
 el("usage-clear").onclick = () => send("clearUsage");
+el("usage-full-paths").addEventListener("input", () => {
+  usageFullPaths = el<HTMLInputElement>("usage-full-paths").checked;
+  renderUsage();
+});
 el("usage-prefill").onclick = () => {
   if (!state?.usage || state.usage.medianSample === 0) return;
   el<HTMLInputElement>("input").value = String(state.usage.medianPrompt);
