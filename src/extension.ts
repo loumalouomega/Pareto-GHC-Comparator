@@ -20,11 +20,25 @@ import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
 import { parseMessage } from "./messages";
 import { loadByokStore } from "./byok";
+import {
+  aggregateUsage,
+  blankUsageIndex,
+  discoverUsageFiles,
+  parseUsageJsonl,
+  parseUsageLegacyJson,
+  selectChangedFiles,
+  storageCandidates,
+  validUsageFile,
+  type StoredUsageFile,
+} from "./usage";
+import { readFile as readLocalFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import type {
   AvailableModel,
   ByokStore,
   Snapshot,
   Source,
+  UsageSummary,
   ViewState,
 } from "./types";
 const secretName = "artificialAnalysis.apiKey";
@@ -39,7 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   const writeSnapshotFile = async (
     uri: ReturnType<typeof vscode.Uri.joinPath>,
-    value: Snapshot,
+    value: unknown,
   ) => {
     await vscode.workspace.fs.createDirectory(context.globalStorageUri);
     const temporary = vscode.Uri.joinPath(
@@ -89,6 +103,124 @@ export function activate(context: vscode.ExtensionContext) {
     } catch {
       return undefined;
     }
+  };
+  const usageSummaryUri = vscode.Uri.joinPath(
+    context.globalStorageUri,
+    "usage.json",
+  );
+  let usage: UsageSummary | null = null,
+    usageScanning = false,
+    usageWatchers: vscode.Disposable[] = [],
+    usageTimer: ReturnType<typeof setTimeout> | undefined;
+  const readStoredUsage = async (): Promise<StoredUsageFile | undefined> => {
+    try {
+      const raw = JSON.parse(
+        Buffer.from(
+          await vscode.workspace.fs.readFile(usageSummaryUri),
+        ).toString(),
+      );
+      return validUsageFile(raw) ? raw : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const setupUsageWatchers = () => {
+    if (
+      usageWatchers.length ||
+      typeof vscode.workspace.createFileSystemWatcher !== "function" ||
+      typeof vscode.RelativePattern !== "function"
+    )
+      return;
+    for (const root of storageCandidates()) {
+      for (const pattern of ["**/chatSessions/*.jsonl", "**/chatSessions/*.json"]) {
+        try {
+          const watcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(root, pattern),
+          );
+          const kick = () => {
+            clearTimeout(usageTimer);
+            usageTimer = setTimeout(() => void runUsageScan(), 1000);
+          };
+          watcher.onDidChange(kick);
+          watcher.onDidCreate(kick);
+          usageWatchers.push(watcher);
+          context.subscriptions.push(watcher);
+        } catch {
+          // A root that cannot be watched is skipped; manual scans still work.
+        }
+      }
+    }
+  };
+  const ensureUsageConsent = async (): Promise<boolean> => {
+    if (context.globalState.get("usageConsent", false)) return true;
+    const choice = await vscode.window.showInformationMessage(
+      "Scan local Copilot chat sessions for usage totals? Files stay on this machine; nothing is uploaded.",
+      "Scan locally",
+      "Not now",
+    );
+    if (choice !== "Scan locally") return false;
+    await context.globalState.update("usageConsent", true);
+    return true;
+  };
+  const runUsageScan = async () => {
+    if (usageScanning) return;
+    usageScanning = true;
+    message = "Scanning local Copilot sessions…";
+    render();
+    try {
+      const candidates = await discoverUsageFiles();
+      const stored = await readStoredUsage();
+      const index = stored?.index ?? blankUsageIndex();
+      const { changed, deleted } = selectChangedFiles(candidates, index);
+      const files: StoredUsageFile["files"] = { ...(stored?.files ?? {}) };
+      for (const gone of deleted) delete files[gone];
+      for (const candidate of changed) {
+        try {
+          const text = await readLocalFile(candidate.filePath, "utf8");
+          const stem = basename(candidate.filePath, extname(candidate.filePath));
+          const parsed = candidate.legacy
+            ? parseUsageLegacyJson(text, candidate.workspaceId, stem)
+            : parseUsageJsonl(text, candidate.workspaceId, stem);
+          files[candidate.filePath] = {
+            workspaceId: candidate.workspaceId,
+            workspacePath: candidate.workspacePath,
+            requests: parsed.requests,
+          };
+          index.files[candidate.filePath] = {
+            size: candidate.size,
+            mtime: candidate.mtime,
+            parser: 1,
+          };
+        } catch {
+          // Unreadable files are skipped without failing the scan.
+        }
+      }
+      const scannedAt = Date.now();
+      usage = aggregateUsage(Object.values(files), scannedAt);
+      await writeSnapshotFile(usageSummaryUri, {
+        version: 1,
+        scannedAt,
+        index,
+        files,
+      });
+      setupUsageWatchers();
+      message =
+        `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
+        "Local estimates only, not a bill.";
+    } catch {
+      message = "Local usage scan failed. Retry when Copilot chat sessions exist.";
+    } finally {
+      usageScanning = false;
+      render();
+    }
+  };
+  const loadUsage = async () => {
+    const stored = await readStoredUsage();
+    if (stored) {
+      usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
+      if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+    }
+    render();
   };
   const availableBySource: Record<Source, AvailableModel[]> = {
     copilot: [],
@@ -211,6 +343,8 @@ export function activate(context: vscode.ExtensionContext) {
       prevFetchedAt: prevSnapshot?.fetchedAt,
       drift: driftOf(prevSnapshot, snapshot?.models ?? [], options.preset),
       byok,
+      usage,
+      usageWatching: usageWatchers.length > 0,
       loading,
       message: [message, discoveryError].filter(Boolean).join(" "),
       hasKey,
@@ -322,6 +456,25 @@ export function activate(context: vscode.ExtensionContext) {
     hasKey = true;
     await refresh(true);
   };
+  if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+  const clearUsageData = async () => {
+    for (const watcher of usageWatchers) watcher.dispose();
+    usageWatchers = [];
+    usage = null;
+    await context.globalState.update("usageConsent", false);
+    try {
+      await vscode.workspace.fs.delete(usageSummaryUri);
+    } catch {
+      // No stored scan to erase.
+    }
+    message =
+      "Local usage data erased. Rescanning will ask for consent again.";
+    render();
+  };
+  const openPanel = () => {
+    if (panel) panel.reveal();
+    else void vscode.commands.executeCommand("paretoGhc.open");
+  };
   context.subscriptions.push(
     vscode.commands.registerCommand("paretoGhc.setApiKey", setKey),
     vscode.commands.registerCommand("paretoGhc.clearApiKey", async () => {
@@ -329,6 +482,15 @@ export function activate(context: vscode.ExtensionContext) {
       hasKey = false;
       message = "API key removed. Cached benchmarks remain available.";
       render();
+    }),
+    vscode.commands.registerCommand("paretoGhc.scanUsage", async () => {
+      openPanel();
+      if (await ensureUsageConsent()) await runUsageScan();
+      else render();
+    }),
+    vscode.commands.registerCommand("paretoGhc.clearUsage", async () => {
+      openPanel();
+      await clearUsageData();
     }),
     vscode.commands.registerCommand("paretoGhc.open", () => {
       if (panel) {
@@ -369,7 +531,14 @@ export function activate(context: vscode.ExtensionContext) {
             if (m.type === "ready") {
               render();
               await refresh();
+              await loadUsage();
             } else if (m.type === "refresh") await refresh(true);
+            else if (m.type === "scanUsage") {
+              if (await ensureUsageConsent()) await runUsageScan();
+              else render();
+            } else if (m.type === "clearUsage") {
+              await clearUsageData();
+            }
             else if (m.type === "key") await setKey();
             else if (m.type === "source") {
               if (m.source !== options.source) {

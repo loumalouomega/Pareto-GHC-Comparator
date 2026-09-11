@@ -70,6 +70,54 @@ export interface ScoreDrift {
   prevScore: number | null;
   delta: number | null;
 }
+export interface UsageRequest {
+  sessionId: string;
+  workspaceId: string;
+  requestIndex: number;
+  requestId?: string;
+  modelId: string | null;
+  timestampMs: number | null;
+  promptTokens: number;
+  outputTokens: number;
+  toolCallRounds: number;
+  tokensEstimated: boolean;
+}
+export interface UsageModelStat {
+  modelId: string;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+}
+export interface UsageDayStat {
+  date: string;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+}
+export interface UsageWorkspaceStat {
+  id: string;
+  path: string;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+}
+export interface UsageSummary {
+  scannedAt: number;
+  fileCount: number;
+  requestCount: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+  estimatedTokens: number;
+  unknownModels: string[];
+  dateRange: { from: number; to: number } | null;
+  models: UsageModelStat[];
+  days: UsageDayStat[];
+  workspaces: UsageWorkspaceStat[];
+}
 export interface ByokEntry {
   rates: Rates;
   long?: { threshold: number; rates: Rates };
@@ -193,6 +241,8 @@ export type HostMessage =
   | { type: "exportSnapshot" }
   | { type: "exportBadge" }
   | { type: "byok"; rates: ByokStore }
+  | { type: "scanUsage" }
+  | { type: "clearUsage" }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -247,6 +297,8 @@ export interface ViewState {
   prevFetchedAt?: number;
   drift: Record<string, ScoreDrift>;
   byok: ByokStore;
+  usage: UsageSummary | null;
+  usageWatching: boolean;
   loading: boolean;
   message: string;
   hasKey: boolean;

@@ -1,5 +1,8 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { build } from "esbuild";
 import { validSnapshot } from "../src/api";
 
@@ -73,6 +76,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
         reveal() {},
       }),
       showInputBox: async () => secret,
+      showInformationMessage: async () => "Scan locally",
     },
     workspace: {
       fs: {
@@ -222,5 +226,30 @@ test("extension discovers Copilot models, serves cached data, validates messages
   assert.ok(!JSON.stringify(messages).includes(secret));
   await commands.get("paretoGhc.clearApiKey")!();
   assert.equal(last().hasKey, false);
+  const home = process.env.HOME;
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const appdata = process.env.APPDATA;
+  const empty = mkdtempSync(join(tmpdir(), "pareto-usage-"));
+  process.env.HOME = empty;
+  process.env.XDG_CONFIG_HOME = join(empty, "xdg");
+  process.env.APPDATA = join(empty, "appdata");
+  try {
+    await receiver({ type: "scanUsage" });
+    assert.equal(state.get("usageConsent"), true);
+    assert.equal(last().usage.requestCount, 0);
+    assert.equal(last().usage.fileCount, 0);
+    assert.match(last().message, /Local usage ready/);
+    await receiver({ type: "clearUsage" });
+    assert.equal(last().usage, null);
+    assert.equal(state.get("usageConsent"), false);
+    assert.match(last().message, /erased/);
+  } finally {
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+    if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = xdg;
+    if (appdata === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = appdata;
+  }
   delete (globalThis as any).__paretoVscodeMock;
 });

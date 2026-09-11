@@ -59,8 +59,14 @@ export function html(
  <label>Recommendation mode<select id="recommendation-mode"><option value="budget">Best under budget</option><option value="nearBest">Cheapest near best</option></select></label>
  <label id="budget-label"><span id="budget-unit">Maximum AI credits</span><input id="budget" type="number" required min="0" max="100000000" step="any" value="1"></label>
  <label id="gap-label" hidden>Allowed score gap (index points)<input id="score-gap" type="number" required min="0" max="100000000" step="any" value="3"></label>
- </div><p id="recommendation-result" role="status" aria-live="polite"></p><p class="hint">Recommendations use only the displayed, comparable models. Star markers identify recommendations; the dotted line remains the Pareto frontier.</p></section>
- <p id="status" role="status" aria-live="polite"></p>
+  </div><p id="recommendation-result" role="status" aria-live="polite"></p><p class="hint">Recommendations use only the displayed, comparable models. Star markers identify recommendations; the dotted line remains the Pareto frontier.</p></section>
+  <section class="recommendation-card" aria-labelledby="usage-title" id="usage-card">
+  <h2 id="usage-title">Local Copilot usage</h2><div class="controls">
+  <button id="usage-scan" class="secondary">Scan local usage</button>
+  <button id="usage-clear" class="secondary">Erase local usage</button>
+  <span id="usage-watching" role="status"></span>
+  </div><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
+  <p id="status" role="status" aria-live="polite"></p>
  <section class="chart-card" aria-labelledby="chart-title"><div class="chart-heading"><h2 id="chart-title">Quality vs. usage cost</h2><span id="count"></span></div><div id="legend" aria-label="Providers"></div><div id="chart-wrap"><canvas id="chart" role="img" aria-label="Model quality and cost scatter plot. The table below provides all values and model selection."></canvas></div><p id="empty" hidden></p><p class="hint">Dotted line: Pareto frontier — no displayed model offers both a lower or equal cost and a higher or equal score, with one strict improvement. Shaded quadrant: most attractive — above-median score at or below median cost.</p></section>
  <div class="results"><section class="table-card" aria-labelledby="table-title"><h2 id="table-title">Models exposed to this extension</h2><div class="table-scroll"><table><caption class="sr-only">Filtered comparison results. Select a model to inspect its benchmark and tradeoffs.</caption><thead><tr><th scope="col">Model</th><th scope="col">Score</th><th id="cost-heading" scope="col">AI credits</th><th id="efficiency-heading" scope="col">Cost / quality</th><th scope="col">Comparison</th></tr></thead><tbody id="rows"></tbody></table></div></section>
  <aside aria-labelledby="details-title"><h2 id="details-title">Model details</h2><div id="details"><p>Select a model in the chart or table.</p></div></aside></div>

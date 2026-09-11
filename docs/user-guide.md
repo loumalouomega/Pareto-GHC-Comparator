@@ -39,6 +39,12 @@ Each successful benchmark refresh retains the previous validated snapshot locall
 
 Under the OpenCode source, the **Provider-billed (BYOK) rates** table lists models the CLI reports as provider-billed with fields for input, cache-read, cache-write (blank means input rate), and output USD rates per million tokens. **Save BYOK rates** stores the table locally and prices those models with a visible BYOK label; empty rows remove the entry, and invalid entries keep the model unpriced. Free-tier models are never overridden.
 
+## Local Copilot usage
+
+The **Local Copilot usage** card is independent of the benchmark comparison. **Scan local usage** asks for consent on first use, then reads `workspaceStorage/chatSessions` files (stable and Insiders installations, current JSONL plus legacy JSON sessions) on this machine only and reports request, token, and premium-request totals by model, day, and workspace. Only changed files are re-parsed between scans, using a size/mtime index; an opt-in file watcher keeps totals fresh with a visible indicator. **Erase local usage** stops watching and deletes the stored data; rescanning asks for consent again.
+
+Treat every figure as a local estimate, not a bill: session files omit hidden system and context tokens, tokenizers differ by model, legacy sessions are estimated from text length, and unknown models use a labeled 1.0 premium fallback. Premium estimates apply the pre-2026-06 or post-2026-06 multiplier table per request date. The card never changes the comparison, profiles, or exports.
+
 ## Exports
 
 **Export CSV** writes the displayed rows with recommendation markers. **Export snapshot JSON** writes the same rows plus the source, task, billing mode, catalog and registry dates, and benchmark snapshot version, with a note that figures are illustrative rather than measured cost or a bill. **Export badge JSON** writes a shields-compatible payload naming the highest-scoring displayed model. **Export chart PNG** saves the current chart image. All exports go through the save dialog and reflect the current filter, exclusions, and sort.

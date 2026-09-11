@@ -88,6 +88,8 @@ for (const theme of ["light", "dark", "high-contrast"])
       staticRegistryDate: "2026-09-11",
       drift: {},
       byok: {},
+      usage: null,
+      usageWatching: false,
       recommendation: { modelIds: [], explanation: "" },
       profiles: [],
       profileModified: false,
@@ -475,5 +477,48 @@ for (const theme of ["light", "dark", "high-contrast"])
       "aria-label",
       /linear cost scale/,
     );
+    // Local usage section: empty state, scan message, and rendered aggregates.
+    await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
+    await page.locator("#usage-scan").click();
+    expect(messages.some((m) => m.type === "scanUsage")).toBeTruthy();
+    await page.evaluate(
+      (s) =>
+        window.dispatchEvent(
+          new MessageEvent("message", { data: { type: "state", state: s } }),
+        ),
+      {
+        ...state,
+        usageWatching: true,
+        usage: {
+          scannedAt: Date.now(),
+          fileCount: 2,
+          requestCount: 3,
+          promptTokens: 300,
+          outputTokens: 150,
+          premiumEstimate: 6.5,
+          estimatedTokens: 1,
+          unknownModels: ["copilot/mystery"],
+          dateRange: { from: Date.parse("2026-09-01"), to: Date.parse("2026-09-03") },
+          models: [
+            { modelId: "copilot/gpt-5-mini", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 0.66 },
+            { modelId: "copilot/mystery", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1 },
+          ],
+          days: [
+            { date: "2026-09-03", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
+          ],
+          workspaces: [
+            { id: "ws1", path: "/repo", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
+          ],
+        },
+      },
+    );
+    await expect(page.locator("#usage-summary")).toContainText("3 requests");
+    await expect(page.locator("#usage-models")).toContainText("copilot/gpt-5-mini");
+    await expect(page.locator("#usage-days")).toContainText("2026-09-03");
+    await expect(page.locator("#usage-workspaces")).toContainText("/repo");
+    await expect(page.locator("#usage-unknown")).toContainText("copilot/mystery");
+    await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
+    await page.locator("#usage-clear").click();
+    expect(messages.some((m) => m.type === "clearUsage")).toBeTruthy();
     expect(errors).toEqual([]);
   });

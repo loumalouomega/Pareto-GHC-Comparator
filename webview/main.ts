@@ -820,6 +820,95 @@ function renderByok() {
     table.append(wrap);
   }
 }
+function renderUsage() {
+  if (!state) return;
+  const u = state.usage;
+  el("usage-watching").textContent = state.usageWatching
+    ? "Watching for new sessions."
+    : "";
+  const summary = el("usage-summary");
+  const modelsEl = el("usage-models"),
+    daysEl = el("usage-days"),
+    wsEl = el("usage-workspaces");
+  modelsEl.replaceChildren();
+  daysEl.replaceChildren();
+  wsEl.replaceChildren();
+  el("usage-unknown").textContent = "";
+  if (!u) {
+    summary.textContent =
+      "No local scan yet. Scanning reads VS Code chat sessions on this machine only.";
+    return;
+  }
+  const num = (n: number) =>
+    new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
+  const range = u.dateRange
+    ? `${new Date(u.dateRange.from).toLocaleDateString()} – ${new Date(u.dateRange.to).toLocaleDateString()}`
+    : "no dated requests";
+  summary.textContent =
+    `${u.requestCount} requests · ${num(u.promptTokens)} prompt + ${num(u.outputTokens)} output tokens · ` +
+    `≈${num(u.premiumEstimate)} premium requests · ${u.fileCount} files · ${range} · ` +
+    `scanned ${new Date(u.scannedAt).toLocaleString()}` +
+    (u.estimatedTokens ? ` · ${u.estimatedTokens} text-estimated` : "");
+  const table = (title: string, head: string[], rows: string[][]) => {
+    const wrap = document.createElement("div");
+    wrap.append(text("h3", title));
+    const tbl = document.createElement("table");
+    const hr = document.createElement("tr");
+    for (const h of head) {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = h;
+      hr.append(th);
+    }
+    const headEl = document.createElement("thead");
+    headEl.append(hr);
+    tbl.append(headEl);
+    const body = document.createElement("tbody");
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      for (const c of r) tr.append(text("td", c));
+      body.append(tr);
+    }
+    tbl.append(body);
+    wrap.append(tbl);
+    return wrap;
+  };
+  if (u.models.length)
+    modelsEl.append(
+      table(
+        "By model",
+        ["Model", "Requests", "Prompt", "Output", "Premium ≈"],
+        u.models
+          .slice(0, 8)
+          .map((m) => [m.modelId, String(m.requests), num(m.promptTokens), num(m.outputTokens), String(m.premiumEstimate)]),
+      ),
+    );
+  if (u.days.length)
+    daysEl.append(
+      table(
+        "By day",
+        ["Date", "Requests", "Prompt", "Output", "Premium ≈"],
+        u.days
+          .slice(-14)
+          .map((d) => [d.date, String(d.requests), num(d.promptTokens), num(d.outputTokens), String(d.premiumEstimate)]),
+      ),
+    );
+  if (u.workspaces.length)
+    wsEl.append(
+      table(
+        "By workspace",
+        ["Workspace", "Requests", "Prompt", "Output", "Premium ≈"],
+        u.workspaces
+          .slice(0, 8)
+          .map((w) => [w.path || w.id, String(w.requests), num(w.promptTokens), num(w.outputTokens), String(w.premiumEstimate)]),
+      ),
+    );
+  if (u.unknownModels.length)
+    el("usage-unknown").textContent =
+      `Unknown models use a 1.0 fallback multiplier: ${u.unknownModels.slice(0, 10).join(", ")}` +
+      (u.unknownModels.length > 10 ? ` (+${u.unknownModels.length - 10} more)` : "") +
+      ".";
+}
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
@@ -929,6 +1018,7 @@ function render(next: ViewState) {
     state.options.source !== "opencode";
   el("export-note").textContent = state.exportNote ?? "";
   renderByok();
+  renderUsage();
   el("provenance").textContent = state.fetchedAt
     ? `Index v${state.version} · retrieved ${new Date(state.fetchedAt).toLocaleString()}${Date.now() - state.fetchedAt > 86400000 ? " · older than 24 hours" : ""}`
     : "No benchmark snapshot loaded";
@@ -1231,6 +1321,8 @@ el("include-none").onclick = () => {
   }
   send("excludeAll", { excluded: true });
 };
+el("usage-scan").onclick = () => send("scanUsage");
+el("usage-clear").onclick = () => send("clearUsage");
 el("export-csv").onclick = () => send("exportCsv");
 el("export-snapshot").onclick = () => send("exportSnapshot");
 el("export-badge").onclick = () => send("exportBadge");

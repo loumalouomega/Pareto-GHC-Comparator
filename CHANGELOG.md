@@ -11,6 +11,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Pricing-freshness alert: the footer shows both the pricing catalog and static registry dates and nudges toward `docs/catalog.md` when either is older than 90 days, without blocking the comparison.
 - Benchmark drift: the previous validated snapshot is retained locally on each successful refresh, and the table shows per-model score changes with the model-details panel citing both snapshot versions and retrieval dates; models without a comparable previous score show unknown, never zero.
 - OpenCode BYOK rates: an explicit per-model rate table (USD per million tokens, webview form under the OpenCode source) prices provider-billed models the CLI leaves unpriced, saved locally with a visible BYOK provenance label; free-tier zero costs are never overridden and invalid entries keep the model unpriced.
+- Local Copilot usage history (opt-in): **Scan Local Copilot Usage** reads `workspaceStorage` chat sessions on this machine only — after an explicit consent prompt, never before — and shows request, token, and premium-request totals by model, day, and workspace with an estimates-are-not-bills disclaimer. Incremental rescans reuse a size/mtime index, an opt-in file watcher refreshes totals with a visible indicator, and **Erase Local Copilot Usage** disables watching and deletes the data. Historical premium estimates use dual-era multipliers around the 2026-06-01 rebase; unknown models fall back to a labeled 1.0 estimate.
 
 ## 0.11.0
 

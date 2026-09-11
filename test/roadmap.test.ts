@@ -21,6 +21,19 @@ import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
 import { freshnessAlert } from "../src/freshness";
 import { driftOf, selectPrevSnapshot } from "../src/drift";
 import { loadByokStore, parseByokStore } from "../src/byok";
+import { usageMultiplier } from "../src/usageMultipliers";
+import {
+  aggregateUsage,
+  blankUsageIndex,
+  parseUsageJsonl,
+  parseUsageLegacyJson,
+  premiumForRequest,
+  selectChangedFiles,
+  storageCandidates,
+  uriToPath,
+  usageParserVersion,
+  validUsageFile,
+} from "../src/usage";
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
 import { defaults, type AvailableModel, type Benchmark } from "../src/types";
@@ -898,10 +911,179 @@ test("BYOK rates price provider-billed models without touching free tier or CLI 
   assert.ok(cross.every((r) => r.cost === null && r.reasons.some((x) => /USD billing/.test(x))));
 });
 
+test("usage multipliers select era by timestamp with labeled fallbacks", () => {
+  const pre = Date.parse("2026-05-01");
+  const post = Date.parse("2026-09-01");
+  assert.deepEqual(usageMultiplier("copilot/gpt-5-mini", pre), { value: 0, estimated: false });
+  assert.deepEqual(usageMultiplier("copilot/gpt-5-mini", post), { value: 0.33, estimated: false });
+  assert.deepEqual(usageMultiplier("copilot/gpt-5.4", pre), { value: 1, estimated: false });
+  assert.deepEqual(usageMultiplier("copilot/gpt-5.4", post), { value: 6, estimated: false });
+  assert.deepEqual(usageMultiplier("copilot/gpt-5.4"), { value: 6, estimated: false });
+  assert.deepEqual(usageMultiplier("copilot/unknown-model", post), { value: 1, estimated: true });
+  assert.deepEqual(usageMultiplier(null, post), { value: 1, estimated: true });
+  assert.equal(usageMultiplier("copilot/gpt-5.4", post, true).value, 5.4);
+  assert.equal(usageMultiplier("copilot/auto", post, true).value, 0);
+});
+
+test("usage JSONL parser honors token, model, and timestamp precedence", () => {
+  const lines = [
+    JSON.stringify({
+      kind: 0,
+      v: {
+        sessionId: "s1",
+        creationDate: 1000,
+        inputState: { selectedModel: { identifier: "copilot/gpt-5-mini" } },
+      },
+    }),
+    JSON.stringify({ kind: 2, k: ["requests"], v: [{ modelId: "copilot/appended", requestId: "r1", timestamp: 1100 }] }),
+    JSON.stringify({
+      kind: 1,
+      k: ["requests", 0, "result"],
+      v: {
+        metadata: { promptTokens: 10, outputTokens: 5, toolCallRounds: [{}, {}] },
+        usage: { promptTokens: 99, completionTokens: 99 },
+        timings: { requestSent: 1200 },
+      },
+    }),
+    JSON.stringify({
+      kind: 1,
+      k: ["requests", 1, "result"],
+      v: { metadata: { resolvedModel: "claude-opus-4-7" }, usage: {} },
+    }),
+    "not json",
+  ].join("\n");
+  const parsed = parseUsageJsonl(lines, "ws1", "stem");
+  assert.equal(parsed.anchor.sessionId, "s1");
+  assert.equal(parsed.requests.length, 2);
+  const first = parsed.requests[0];
+  assert.equal(first.promptTokens, 10);
+  assert.equal(first.outputTokens, 5);
+  assert.equal(first.modelId, "copilot/appended");
+  assert.equal(first.timestampMs, 1200);
+  assert.equal(first.toolCallRounds, 2);
+  assert.equal(first.tokensEstimated, false);
+  const second = parsed.requests[1];
+  assert.equal(second.modelId, "copilot/claude-opus-4.7");
+  assert.equal(second.timestampMs, 1000);
+  assert.equal(second.promptTokens, 0);
+  const fallback = parseUsageJsonl("", "ws1", "stem");
+  assert.equal(fallback.anchor.sessionId, "stem");
+  assert.deepEqual(fallback.requests, []);
+});
+
+test("usage legacy parser estimates missing tokens from text", () => {
+  const text = JSON.stringify({
+    sessionId: "old",
+    creationDate: 500,
+    selectedModel: { id: "copilot/gpt-4o" },
+    requests: [
+      {
+        message: { text: "hello world, this is a prompt" },
+        variableData: { variables: [{ value: "context" }] },
+        response: { result: { value: "response text here, fairly long", metadata: {}, usage: {} } },
+      },
+      {
+        message: { text: "x" },
+        response: { result: { metadata: { promptTokens: 7, outputTokens: 3 }, usage: {} } },
+      },
+    ],
+  });
+  const parsed = parseUsageLegacyJson(text, "ws1", "stem");
+  assert.equal(parsed.requests.length, 2);
+  assert.equal(parsed.requests[0].tokensEstimated, true);
+  assert.ok(parsed.requests[0].promptTokens > 0 && parsed.requests[0].outputTokens > 0);
+  assert.equal(parsed.requests[1].tokensEstimated, false);
+  assert.equal(parsed.requests[1].promptTokens, 7);
+  assert.deepEqual(parseUsageLegacyJson("broken", "ws1", "stem").requests, []);
+});
+
+test("usage file index selects changed files and reports deletions", () => {
+  const cand = (filePath: string, size: number, mtime: number) => ({
+    workspaceId: "w",
+    workspacePath: "/repo",
+    filePath,
+    size,
+    mtime,
+    legacy: false,
+  });
+  const index = blankUsageIndex();
+  assert.equal(index.version, 1);
+  assert.equal(usageParserVersion, 1);
+  index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: 1 };
+  index.files["/gone.jsonl"] = { size: 1, mtime: 1, parser: 1 };
+  const { changed, deleted } = selectChangedFiles(
+    [cand("/a.jsonl", 10, 100), cand("/b.jsonl", 5, 50)],
+    index,
+  );
+  assert.deepEqual(changed.map((c) => c.filePath), ["/b.jsonl"]);
+  assert.deepEqual(deleted, ["/gone.jsonl"]);
+  index.files["/a.jsonl"] = { size: 11, mtime: 100, parser: 1 };
+  assert.equal(selectChangedFiles([cand("/a.jsonl", 11, 100)], index).changed.length, 1);
+  index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: 0 };
+  assert.equal(selectChangedFiles([cand("/a.jsonl", 10, 100)], index).changed.length, 1);
+});
+
+test("usage storage roots and URIs resolve per platform", () => {
+  assert.ok(storageCandidates("linux", {}).some((p) => p.endsWith("Code/User/workspaceStorage")));
+  assert.ok(storageCandidates("darwin", {}).some((p) => p.includes("Application Support")));
+  assert.ok(storageCandidates("win32", { APPDATA: "C:/A" }).some((p) => p.startsWith("C:/A")));
+  assert.equal(uriToPath("file:///c%3A/repo", "/root"), "c:/repo");
+  assert.equal(uriToPath("plain/path", "/root"), "plain/path");
+  assert.ok(uriToPath("vscode-userdata:///Code/settings.json", "/a/b/Code/User/workspaceStorage").endsWith("Code/settings.json"));
+});
+
+test("usage aggregation totals requests with per-event premium eras", () => {
+  const summary = aggregateUsage([
+    {
+      workspaceId: "w1",
+      workspacePath: "/repo",
+      requests: [
+        {
+          sessionId: "s", workspaceId: "w1", requestIndex: 0, modelId: "copilot/gpt-5-mini",
+          timestampMs: Date.parse("2026-05-01"), promptTokens: 100, outputTokens: 50,
+          toolCallRounds: 0, tokensEstimated: false,
+        },
+        {
+          sessionId: "s", workspaceId: "w1", requestIndex: 1, modelId: "copilot/gpt-5-mini",
+          timestampMs: Date.parse("2026-09-01"), promptTokens: 100, outputTokens: 50,
+          toolCallRounds: 0, tokensEstimated: true,
+        },
+        {
+          sessionId: "s", workspaceId: "w1", requestIndex: 2, modelId: "copilot/mystery",
+          timestampMs: null, promptTokens: 10, outputTokens: 5,
+          toolCallRounds: 0, tokensEstimated: false,
+        },
+      ],
+    },
+  ]);
+  assert.equal(summary.requestCount, 3);
+  assert.equal(summary.fileCount, 1);
+  assert.equal(summary.promptTokens, 210);
+  assert.equal(summary.estimatedTokens, 1);
+  assert.equal(summary.premiumEstimate, 0.33 + 1);
+  assert.deepEqual(summary.unknownModels, ["copilot/mystery"]);
+  assert.ok(summary.dateRange && summary.dateRange.from < summary.dateRange.to);
+  assert.equal(summary.models[0].modelId, "copilot/gpt-5-mini");
+  assert.equal(summary.days.length, 2);
+  assert.equal(summary.workspaces[0].id, "w1");
+  assert.deepEqual(premiumForRequest({
+    sessionId: "s", workspaceId: "w", requestIndex: 0, modelId: "x",
+    timestampMs: null, promptTokens: 0, outputTokens: 0, toolCallRounds: 0, tokensEstimated: false,
+  }), { value: 0, estimated: false });
+  assert.ok(validUsageFile({ version: 1, scannedAt: 1, index: blankUsageIndex(), files: {} }));
+  assert.equal(validUsageFile({ version: 2 }), false);
+  assert.equal(validUsageFile(null), false);
+});
+
+test("usage messages validate scan and clear actions", () => {
+  assert.deepEqual(parseMessage({ type: "scanUsage" }), { type: "scanUsage" });
+  assert.deepEqual(parseMessage({ type: "clearUsage" }), { type: "clearUsage" });
+});
+
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

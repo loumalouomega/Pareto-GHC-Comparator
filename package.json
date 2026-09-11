@@ -34,6 +34,14 @@
       {
         "command": "paretoGhc.clearApiKey",
         "title": "Pareto GHC: Remove Artificial Analysis API Key"
+      },
+      {
+        "command": "paretoGhc.scanUsage",
+        "title": "Pareto GHC: Scan Local Copilot Usage"
+      },
+      {
+        "command": "paretoGhc.clearUsage",
+        "title": "Pareto GHC: Erase Local Copilot Usage"
       }
     ]
   },

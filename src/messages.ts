@@ -23,6 +23,8 @@ export function parseMessage(raw: unknown): HostMessage {
   if (m.type === "exportSnapshot") return { type: "exportSnapshot" };
   if (m.type === "exportBadge") return { type: "exportBadge" };
   if (m.type === "byok") return { type: "byok", rates: parseByokStore(m.rates) };
+  if (m.type === "scanUsage") return { type: "scanUsage" };
+  if (m.type === "clearUsage") return { type: "clearUsage" };
   if (
     m.type === "exportPng" &&
     typeof m.png === "string" &&
