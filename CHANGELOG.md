@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 0.10.0
+
 ### Added
 
 - Grouped model selection (family → model → thinking level) with collapsible checkboxes, partial-selection states, counts, selection search, and single-message bulk updates; per-model exclusion storage is preserved.
@@ -21,6 +23,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 ### Removed
 
 - Retired Codex models (GPT-5.4, GPT-5.4 mini, GPT-5.3-Codex, GPT-5.1-Codex-Mini) and end-of-support Claude Opus 4.5. Saved exclusions referencing them are harmless orphans.
+
+History: [v0.9.0...v0.10.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.9.0...v0.10.0).
 
 ## 0.9.0
 
