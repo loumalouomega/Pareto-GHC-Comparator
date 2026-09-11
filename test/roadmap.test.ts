@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   baseModelIdOf,
   compare,
+  efficiencyOf,
   estimate,
   freeSpotlight,
   migrateOptions,
@@ -10,12 +11,14 @@ import {
   parseOptions,
   pinRowId,
   savedOptions,
+  sortRowsByEfficiency,
   taskCost,
   taskMix,
   thinkingLabelOf,
   variantDisplayName,
 } from "../src/compare";
-import { exportCsv } from "../src/export";
+import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
+import { freshnessAlert } from "../src/freshness";
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
 import { defaults, type AvailableModel, type Benchmark } from "../src/types";
@@ -212,7 +215,7 @@ test("checklist exclusions hide models before frontier calculation", () => {
 
 test("display settings default, persist, and migrate", () => {
   const parsed = parseOptions({ ...defaults });
-  assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true });
+  assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" });
   assert.equal(parsed.freeOnly, false);
   const migrated = savedOptions({ source: "copilot", preset: "coding", billing: "credits", plan: "pro", filter: "", tokens: defaults.tokens, recommendation: defaults.recommendation });
   assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true });
@@ -318,7 +321,7 @@ test("free-only filtering and spotlight use latest discovery", () => {
 });
 
 test("workload excludes display settings but keeps source and freeOnly", () => {
-  const w = workload({ ...defaults, display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false }, freeOnly: true });
+  const w = workload({ ...defaults, display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false, sort: "efficiency" }, freeOnly: true });
   assert.ok(!("display" in w));
   assert.equal(w.source, "copilot");
   assert.equal(w.freeOnly, true);
@@ -466,7 +469,7 @@ test("coverage: options migration edge cases", () => {
   assert.equal(badBilling.billing, "credits");
   const kept = parseOptions({
     ...defaults,
-    display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false },
+    display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false, sort: "efficiency" },
     freeOnly: true,
   });
   assert.equal(kept.display.labels, false);
@@ -704,10 +707,92 @@ test("task chart view uses fixed per-task mix, workload view uses tokens", () =>
   assert.notEqual(taskRows[0].cost, workloadRows[0].cost);
 });
 
+test("table sort defaults to discovery order and accepts efficiency", () => {
+  assert.equal(parseOptions({ ...defaults }).display.sort, "default");
+  assert.equal(
+    parseOptions({ ...defaults, display: { ...defaults.display, sort: "efficiency" } }).display.sort,
+    "efficiency",
+  );
+  assert.equal(
+    parseOptions({ ...defaults, display: { ...defaults.display, sort: "x" } }).display.sort,
+    "default",
+  );
+  const migrated = savedOptions({ ...defaults, display: undefined });
+  assert.equal(migrated.display.sort, "default");
+});
+
+test("efficiency sort ranks cost per quality with nulls last", () => {
+  const mk = (id: string, score: number | null, cost: number | null) => ({
+    id,
+    modelId: id,
+    baseModelId: id,
+    name: id,
+    provider: "P",
+    score,
+    cost,
+    frontier: true,
+    reasons: [] as string[],
+    mappingStatus: "exact" as const,
+    candidateIds: [] as string[],
+    dominatedBy: [] as string[],
+  });
+  assert.equal(efficiencyOf(mk("a", 80, 4)), 0.05);
+  assert.equal(efficiencyOf(mk("b", null, 4)), null);
+  assert.equal(efficiencyOf(mk("c", 80, null)), null);
+  assert.equal(efficiencyOf(mk("d", 0, 4)), null);
+  const sorted = sortRowsByEfficiency([
+    mk("paid", 80, 8),
+    mk("unpriced", 90, null),
+    mk("cheap", 40, 2),
+  ]);
+  assert.deepEqual(
+    sorted.map((r) => r.id),
+    ["cheap", "paid", "unpriced"],
+  );
+});
+
+test("freshness alert stays silent for current dates and nudges when stale", () => {
+  assert.equal(freshnessAlert("2026-09-10", "2026-09-11", Date.parse("2026-09-20")), null);
+  const stale = freshnessAlert("2026-01-01", "2026-01-02", Date.parse("2026-09-20"));
+  assert.match(stale ?? "", /stale/);
+  assert.match(stale ?? "", /docs\/catalog\.md/);
+  assert.match(freshnessAlert("not-a-date", "2026-09-11") ?? "", /unavailable/);
+});
+
+test("snapshot and badge exports reflect displayed rows", () => {
+  const rows = compare([copilotModel], benchmarks, defaults);
+  assert.ok(rows.length >= 1);
+  const recommended = new Set([rows[0].id]);
+  const snapshot = JSON.parse(
+    exportSnapshot(rows, defaults, recommended, {
+      source: "copilot",
+      preset: "general",
+      billing: "credits",
+      catalogDate: "2026-09-10",
+      staticRegistryDate: "2026-09-11",
+      version: "4.3",
+      fetchedAt: 1,
+    }),
+  );
+  assert.equal(snapshot.version, 1);
+  assert.equal(snapshot.rows.length, rows.length);
+  assert.match(snapshot.disclaimer, /Illustrative/);
+  assert.equal(snapshot.catalogDate, "2026-09-10");
+  assert.equal(snapshot.staticRegistryDate, "2026-09-11");
+  const badge = JSON.parse(exportBadge(rows, defaults, { source: "copilot", preset: "general" }));
+  assert.equal(badge.schemaVersion, 1);
+  assert.match(badge.label, /pareto copilot general/);
+  assert.ok(badge.message.length > 0);
+  const empty = JSON.parse(exportBadge([], defaults, { source: "copilot", preset: "general" }));
+  assert.match(empty.message, /no comparable models/);
+  assert.deepEqual(parseMessage({ type: "exportSnapshot" }), { type: "exportSnapshot" });
+  assert.deepEqual(parseMessage({ type: "exportBadge" }), { type: "exportBadge" });
+});
+
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "free-only", "checklist", "export-csv", "export-png", "spotlight-result"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

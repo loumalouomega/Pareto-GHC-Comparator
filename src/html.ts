@@ -31,6 +31,7 @@ export function html(
   <label class="checkbox-label"><input id="display-frontier" type="checkbox" checked>Pareto frontier line</label>
   <label class="checkbox-label"><input id="display-quadrant" type="checkbox" checked>Most attractive quadrant</label>
   <label>Cost scale<select id="display-scale"><option value="auto">Auto</option><option value="log">Logarithmic</option><option value="linear">Linear</option></select></label>
+  <label>Table sort<select id="display-sort"><option value="default">Discovery order</option><option value="efficiency">Cost per quality</option></select></label>
   <label class="checkbox-label" id="free-only-label" hidden><input id="free-only" type="checkbox">Free tier only</label>
   </section>
   <section class="controls" aria-label="Model inclusion">
@@ -41,6 +42,8 @@ export function html(
   </section>
   <section class="controls" aria-label="Exports">
   <button id="export-csv" class="secondary">Export CSV</button>
+  <button id="export-snapshot" class="secondary">Export snapshot JSON</button>
+  <button id="export-badge" class="secondary">Export badge JSON</button>
   <button id="export-png" class="secondary">Export chart PNG</button>
   <span id="export-note" role="status"></span>
   </section>
@@ -54,7 +57,7 @@ export function html(
  </div><p id="recommendation-result" role="status" aria-live="polite"></p><p class="hint">Recommendations use only the displayed, comparable models. Star markers identify recommendations; the dotted line remains the Pareto frontier.</p></section>
  <p id="status" role="status" aria-live="polite"></p>
  <section class="chart-card" aria-labelledby="chart-title"><div class="chart-heading"><h2 id="chart-title">Quality vs. usage cost</h2><span id="count"></span></div><div id="legend" aria-label="Providers"></div><div id="chart-wrap"><canvas id="chart" role="img" aria-label="Model quality and cost scatter plot. The table below provides all values and model selection."></canvas></div><p id="empty" hidden></p><p class="hint">Dotted line: Pareto frontier — no displayed model offers both a lower or equal cost and a higher or equal score, with one strict improvement. Shaded quadrant: most attractive — above-median score at or below median cost.</p></section>
- <div class="results"><section class="table-card" aria-labelledby="table-title"><h2 id="table-title">Models exposed to this extension</h2><div class="table-scroll"><table><caption class="sr-only">Filtered comparison results. Select a model to inspect its benchmark and tradeoffs.</caption><thead><tr><th scope="col">Model</th><th scope="col">Score</th><th id="cost-heading" scope="col">AI credits</th><th scope="col">Comparison</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+ <div class="results"><section class="table-card" aria-labelledby="table-title"><h2 id="table-title">Models exposed to this extension</h2><div class="table-scroll"><table><caption class="sr-only">Filtered comparison results. Select a model to inspect its benchmark and tradeoffs.</caption><thead><tr><th scope="col">Model</th><th scope="col">Score</th><th id="cost-heading" scope="col">AI credits</th><th id="efficiency-heading" scope="col">Cost / quality</th><th scope="col">Comparison</th></tr></thead><tbody id="rows"></tbody></table></div></section>
  <aside aria-labelledby="details-title"><h2 id="details-title">Model details</h2><div id="details"><p>Select a model in the chart or table.</p></div></aside></div>
   <footer>Benchmarks by <a href="https://artificialanalysis.ai/">Artificial Analysis</a> · <span id="provenance">Not loaded</span><br><span id="pricing-line">Copilot pricing: <a id="pricing-link" href="https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing">GitHub Docs</a></span> · <span id="catalog"></span><p id="pricing-note">Benchmark results describe the tested variant, not guaranteed performance in Copilot. Pricing updates ship with extension releases.</p></footer>
  </main><script nonce="${nonce}" src="${script}"></script></body></html>`;

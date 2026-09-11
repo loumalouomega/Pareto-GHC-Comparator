@@ -1,4 +1,13 @@
 import type { Options, Row } from "./types";
+export interface SnapshotMeta {
+  source: Options["source"];
+  preset: Options["preset"];
+  billing: Options["billing"];
+  catalogDate: string;
+  staticRegistryDate: string;
+  version?: string;
+  fetchedAt?: number;
+}
 
 function cell(value: string): string {
   return /[",\n\r]/.test(value) || /^(=|\+|-|@)/.test(value)
@@ -57,4 +66,82 @@ export function exportCsv(
     );
   }
   return lines.join("\n") + "\n";
+}
+export function exportSnapshot(
+  rows: Row[],
+  options: Options,
+  recommended: Set<string>,
+  meta: SnapshotMeta,
+): string {
+  return (
+    JSON.stringify(
+      {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        disclaimer:
+          "Illustrative comparison from published benchmarks and catalog rates; not measured task cost or an account bill.",
+        source: meta.source,
+        preset: meta.preset,
+        billing: meta.billing,
+        catalogDate: meta.catalogDate,
+        staticRegistryDate: meta.staticRegistryDate,
+        benchmarkVersion: meta.version ?? null,
+        benchmarkFetchedAt: meta.fetchedAt ?? null,
+        rows: rows.map((r) => ({
+          id: r.id,
+          modelId: r.modelId,
+          name: r.name,
+          provider: r.provider,
+          benchmark: r.benchmark
+            ? { id: r.benchmark.id, name: r.benchmark.name }
+            : null,
+          score: r.score,
+          cost: r.cost,
+          tier: r.tier ?? null,
+          frontier: r.frontier,
+          recommended: recommended.has(r.id),
+          mappingStatus: r.mappingStatus,
+          reasons: r.reasons,
+        })),
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+export function exportBadge(
+  rows: Row[],
+  options: Options,
+  meta: Pick<SnapshotMeta, "source" | "preset">,
+): string {
+  const comparable = rows.filter(
+    (r): r is Row & { cost: number; score: number } =>
+      r.cost !== null &&
+      r.score !== null &&
+      Number.isFinite(r.cost) &&
+      Number.isFinite(r.score),
+  );
+  const unit =
+    options.billing === "credits"
+      ? "AI credits"
+      : options.billing === "legacy"
+        ? "premium requests"
+        : "USD";
+  const best = comparable.length
+    ? [...comparable].sort((a, b) => b.score - a.score || a.cost - b.cost)[0]
+    : undefined;
+  return (
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        label: `pareto ${meta.source} ${meta.preset}`,
+        message: best
+          ? `${best.name.slice(0, 120)}: ${best.score} pts at ${best.cost} ${unit}`
+          : "no comparable models",
+        color: best ? (best.frontier ? "brightgreen" : "blue") : "lightgrey",
+      },
+      null,
+      2,
+    ) + "\n"
+  );
 }

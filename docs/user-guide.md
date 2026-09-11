@@ -31,6 +31,12 @@ Two chart views are available under **Chart display settings**. **Intelligence v
 
 Higher scores and lower costs are preferred. The dotted line connects the Pareto frontier: models for which no displayed model has both an equal or lower cost and an equal or higher score, with at least one strict improvement. Tied models remain on the frontier. The shaded **most attractive quadrant** (toggleable) marks models with an above-median score at or below the median cost; median guides divide the plot. Filtering recomputes the comparison for the visible models. Points with missing data are excluded from the chart, with reasons shown in the table.
 
-Positive costs use a logarithmic axis. If any comparable model has zero cost, the chart switches to a linear axis. The table supports keyboard selection and provides the same values as the chart. Light, dark, and high-contrast themes follow VS Code.
+Positive costs use a logarithmic axis. If any comparable model has zero cost, the chart switches to a linear axis. The table supports keyboard selection and provides the same values as the chart, plus a **Cost / quality** column (cost per index point; missing values show as unresolved). **Table sort** under chart display settings orders the table by cost per quality with unpriced or unscored rows last, or keeps discovery order. Light, dark, and high-contrast themes follow VS Code.
+
+The footer shows the pricing catalog and registry dates. When either is older than 90 days, a stale-pricing nudge appears with a pointer to `docs/catalog.md`; it never blocks the comparison.
+
+## Exports
+
+**Export CSV** writes the displayed rows with recommendation markers. **Export snapshot JSON** writes the same rows plus the source, task, billing mode, catalog and registry dates, and benchmark snapshot version, with a note that figures are illustrative rather than measured cost or a bill. **Export badge JSON** writes a shields-compatible payload naming the highest-scoring displayed model. **Export chart PNG** saves the current chart image. All exports go through the save dialog and reflect the current filter, exclusions, and sort.
 
 Each preset uses its published Artificial Analysis index directly; scores are not invented or blended into a custom ranking. The tested reasoning variant appears in the details. Benchmark scores are a proxy for task suitability, not a guarantee of performance with Copilot's configuration. Comparing a fixed token workload does not estimate how many tokens different models need to complete the same task.

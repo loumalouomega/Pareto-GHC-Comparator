@@ -2,12 +2,18 @@ import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl } from "./api";
 import { catalogDate } from "./catalog";
-import { compare, freeSpotlight, parseOptions, savedOptions } from "./compare";
+import {
+  compare,
+  freeSpotlight,
+  parseOptions,
+  savedOptions,
+  sortRowsByEfficiency,
+} from "./compare";
 import { discoverOpenCode, OpenCodeError } from "./opencode";
-import { staticModels } from "./staticSources";
+import { staticModels, staticRegistryDate } from "./staticSources";
 import { buildGroups } from "./groups";
 import { defaultBilling } from "./sources";
-import { exportCsv } from "./export";
+import { exportBadge, exportCsv, exportSnapshot } from "./export";
 import { html } from "./html";
 import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
@@ -94,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
       ...available.map((a) => a.id),
       ...structureRows.map((r) => r.id),
     ]);
-    const rows = compare(
+    const unsorted = compare(
       available,
       benchmarks,
       options,
@@ -102,6 +108,10 @@ export function activate(context: vscode.ExtensionContext) {
       undefined,
       { pins, excluded: excludedFor(options.source) },
     );
+    const rows =
+      options.display.sort === "efficiency"
+        ? sortRowsByEfficiency(unsorted)
+        : unsorted;
     const spotlight = freeSpotlight(
       available,
       snapshot?.models ?? [],
@@ -159,6 +169,7 @@ export function activate(context: vscode.ExtensionContext) {
       message: [message, discoveryError].filter(Boolean).join(" "),
       hasKey,
       catalogDate,
+      staticRegistryDate,
       checklist,
       groups,
       freeSpotlight: freeSpotlightState,
@@ -485,10 +496,14 @@ export function activate(context: vscode.ExtensionContext) {
               };
               await context.globalState.update("excluded", excluded);
               render();
-            } else if (m.type === "exportCsv") {
+            } else if (
+              m.type === "exportCsv" ||
+              m.type === "exportSnapshot" ||
+              m.type === "exportBadge"
+            ) {
               try {
                 const available = availableBySource[options.source];
-                const rows = compare(
+                const unsorted = compare(
                   available,
                   snapshot?.models ?? [],
                   options,
@@ -496,28 +511,66 @@ export function activate(context: vscode.ExtensionContext) {
                   undefined,
                   { pins, excluded: excludedFor(options.source) },
                 );
-                const csv = exportCsv(
-                  rows,
-                  options,
-                  new Set(
-                    recommend(rows, options).modelIds,
-                  ),
+                const rows =
+                  options.display.sort === "efficiency"
+                    ? sortRowsByEfficiency(unsorted)
+                    : unsorted;
+                const recommended = new Set(recommend(rows, options).modelIds);
+                const uri = await vscode.window.showSaveDialog(
+                  m.type === "exportCsv"
+                    ? {
+                        filters: { "CSV files": ["csv"] },
+                        saveLabel: "Export comparison CSV",
+                      }
+                    : {
+                        filters: { "JSON files": ["json"] },
+                        saveLabel:
+                          m.type === "exportSnapshot"
+                            ? "Export comparison snapshot"
+                            : "Export comparison badge",
+                      },
                 );
-                const uri = await vscode.window.showSaveDialog({
-                  filters: { "CSV files": ["csv"] },
-                  saveLabel: "Export comparison CSV",
-                });
                 if (!uri) {
-                  exportNote = "CSV export cancelled.";
+                  exportNote =
+                    m.type === "exportCsv"
+                      ? "CSV export cancelled."
+                      : m.type === "exportSnapshot"
+                        ? "Snapshot export cancelled."
+                        : "Badge export cancelled.";
                 } else {
+                  const payload =
+                    m.type === "exportCsv"
+                      ? exportCsv(rows, options, recommended)
+                      : m.type === "exportSnapshot"
+                        ? exportSnapshot(rows, options, recommended, {
+                            source: options.source,
+                            preset: options.preset,
+                            billing: options.billing,
+                            catalogDate,
+                            staticRegistryDate,
+                            version: snapshot?.version,
+                            fetchedAt: snapshot?.fetchedAt,
+                          })
+                        : exportBadge(rows, options, {
+                            source: options.source,
+                            preset: options.preset,
+                          });
                   await vscode.workspace.fs.writeFile(
                     uri,
-                    Buffer.from(csv),
+                    Buffer.from(payload),
                   );
-                  exportNote = `Exported ${rows.length} rows.`;
+                  exportNote =
+                    m.type === "exportBadge"
+                      ? "Exported badge."
+                      : `Exported ${rows.length} rows.`;
                 }
               } catch {
-                exportNote = "CSV export failed. Retry with fewer rows.";
+                exportNote =
+                  m.type === "exportCsv"
+                    ? "CSV export failed. Retry with fewer rows."
+                    : m.type === "exportSnapshot"
+                      ? "Snapshot export failed. Retry with fewer rows."
+                      : "Badge export failed. Retry from the current view.";
               }
               render();
             } else if (m.type === "exportPng") {

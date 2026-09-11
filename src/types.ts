@@ -12,12 +12,14 @@ export type Source =
   | "amazon-q";
 export type CostScale = "auto" | "log" | "linear";
 export type ChartType = "workload" | "task";
+export type TableSort = "default" | "efficiency";
 export interface DisplaySettings {
   labels: boolean;
   frontier: boolean;
   scale: CostScale;
   chart: ChartType;
   quadrant: boolean;
+  sort: TableSort;
 }
 export interface Tokens {
   input: number;
@@ -54,7 +56,7 @@ export const defaults: Options = {
     budgets: { credits: 1, legacy: 1, usd: 1 },
     scoreGap: 3,
   },
-  display: { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true },
+  display: { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" },
   freeOnly: false,
 };
 export interface Benchmark {
@@ -179,6 +181,8 @@ export type HostMessage =
   | { type: "excludeMany"; ids: string[]; excluded: boolean }
   | { type: "excludeAll"; excluded: boolean }
   | { type: "exportCsv" }
+  | { type: "exportSnapshot" }
+  | { type: "exportBadge" }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -233,6 +237,7 @@ export interface ViewState {
   message: string;
   hasKey: boolean;
   catalogDate: string;
+  staticRegistryDate: string;
   recommendation: RecommendationResult;
   profiles: ProfileSummary[];
   activeProfileId?: string;

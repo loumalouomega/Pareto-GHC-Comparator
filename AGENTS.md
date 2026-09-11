@@ -75,6 +75,14 @@ When updating `src/catalog.ts`, verify the sources linked in the README/catalog,
 
 When updating `src/staticSources.ts`, verify the provider pricing pages linked in `staticPricingSources`, keep `staticRegistryDate` current, and check rates, units, context limits, IDs, benchmark aliases, and family grouping. Preserve existing identities where valid so saved exclusions survive; never conflate distinct models in one alias (e.g. Gemini 3 Flash versus 3.5 Flash). Remove models the official docs mark retired, deprecated, or end-of-support (e.g. Codex GPT-5.4/5.4-mini after 2026-08-31, Claude Opus 4.5 after 2026-08-05) instead of keeping stale rows; orphaned saved exclusions are ignored. Current Codex lineup: GPT-6 Astra, GPT-5.6 Sol/Terra/Luna, GPT-5.5, unpriced GPT-5.3-Codex-Spark preview.
 
+### Table sort, freshness, and shareable exports
+
+`src/efficiency.ts` (pure, webview-safe: no Node imports) defines `efficiencyOf` (cost per index point, null for missing/non-positive scores or negative costs) and `sortRowsByEfficiency` (nulls last, deterministic name/id tiebreaks). `src/compare.ts` re-exports both; `DisplaySettings.sort` (`default`|`efficiency`, default `default`) is parsed in `parseOptions` and auto-migrated via `defaults.display` spread in `migrateOptions`. `src/extension.ts` sorts displayed rows and CSV/snapshot/badge payloads when enabled; structure rows for grouping stay in discovery order. The webview adds a `display-sort` select and a Cost / quality column reusing `efficiencyOf`.
+
+`src/freshness.ts` defines `freshnessAlert(catalogDate, staticRegistryDate, now)` with a 90-day threshold and a `docs/catalog.md` pointer. `ViewState` carries `staticRegistryDate`; the footer renders both dates plus the nudge without blocking comparison.
+
+`src/export.ts` builds snapshot JSON (version 1, illustrative-figures disclaimer, catalog/registry dates, benchmark version) and shields-compatible badge JSON (schemaVersion 1, best-by-score with lower-cost tiebreak, empty-state message) from already-filtered, already-sorted rows. `exportSnapshot`/`exportBadge` messages validate in `parseMessage` and are handled like `exportCsv` via the save dialog with `exportNote` feedback. Coverage: `test/roadmap.test.ts` and `test/webview.spec.ts`.
+
 ### Recommendations
 
 `src/recommend.ts` considers displayed rows with finite cost and score. Best-under-budget maximizes score, breaking ties by lower cost. Cheapest-near-best minimizes cost within an absolute index-point gap from the highest displayed score, breaking ties by higher score. Exact ties are retained. Defaults in `src/types.ts` are one unit per billing mode and a three-point gap. Recommendation markers are separate from the Pareto frontier. Coverage: `test/selection.test.ts` and `test/webview.spec.ts`.

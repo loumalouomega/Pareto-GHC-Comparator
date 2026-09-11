@@ -9,6 +9,8 @@ import type {
   HostMessage,
 } from "../src/types";
 import { sources } from "../src/sources";
+import { efficiencyOf } from "../src/efficiency";
+import { freshnessAlert } from "../src/freshness";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -808,7 +810,13 @@ function render(next: ViewState) {
   el<HTMLButtonElement>("refresh").disabled = state.loading;
   el<HTMLButtonElement>("key").disabled = state.loading;
   el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
-  el("catalog").textContent = `Catalog dated ${state.catalogDate}`;
+  const stale = freshnessAlert(
+    state.catalogDate,
+    state.staticRegistryDate,
+  );
+  el("catalog").textContent =
+    `Catalog dated ${state.catalogDate} · Registries dated ${state.staticRegistryDate}` +
+    (stale ? ` · ${stale}` : "");
   el("pricing-line").replaceChildren(
     text("span", `${meta.pricingLabel.split(":")[0]}: `),
     (() => {
@@ -828,6 +836,8 @@ function render(next: ViewState) {
     state.options.display.scale;
   (el("display-chart") as HTMLSelectElement).value =
     state.options.display.chart;
+  (el("display-sort") as HTMLSelectElement).value =
+    state.options.display.sort;
   (el("display-quadrant") as HTMLInputElement).checked =
     state.options.display.quadrant;
   (el("free-only-label") as HTMLElement).hidden =
@@ -892,6 +902,7 @@ function render(next: ViewState) {
       name,
       text("td", format(row.score)),
       text("td", format(row.cost)),
+      text("td", format(efficiencyOf(row))),
       text(
         "td",
         row.frontier
@@ -1016,6 +1027,7 @@ function sendOptions(): boolean {
       scale: (el("display-scale") as HTMLSelectElement).value as Options["display"]["scale"],
       chart: (el("display-chart") as HTMLSelectElement).value as Options["display"]["chart"],
       quadrant: (el("display-quadrant") as HTMLInputElement).checked,
+      sort: (el("display-sort") as HTMLSelectElement).value as Options["display"]["sort"],
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
   };
@@ -1046,6 +1058,7 @@ for (const id of [
   "display-chart",
   "display-quadrant",
   "display-scale",
+  "display-sort",
   "free-only",
 ]) {
   el(id).addEventListener("input", () => {
@@ -1131,6 +1144,8 @@ el("include-none").onclick = () => {
   send("excludeAll", { excluded: true });
 };
 el("export-csv").onclick = () => send("exportCsv");
+el("export-snapshot").onclick = () => send("exportSnapshot");
+el("export-badge").onclick = () => send("exportBadge");
 el("export-png").onclick = () => {
   const canvas = el("chart") as HTMLCanvasElement;
   const exportCanvas = document.createElement("canvas");

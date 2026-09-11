@@ -19,6 +19,8 @@ export function parseMessage(raw: unknown): HostMessage {
   if (m.type === "ready" || m.type === "refresh" || m.type === "key")
     return { type: m.type };
   if (m.type === "exportCsv") return { type: "exportCsv" };
+  if (m.type === "exportSnapshot") return { type: "exportSnapshot" };
+  if (m.type === "exportBadge") return { type: "exportBadge" };
   if (
     m.type === "exportPng" &&
     typeof m.png === "string" &&

@@ -86,6 +86,8 @@ export function parseOptions(value: unknown): Options {
     displayRecord.quadrant === undefined
       ? true
       : displayRecord.quadrant === true;
+  const sort =
+    displayRecord.sort === "efficiency" ? "efficiency" : "default";
   if (!allowedBilling(v.source).includes(v.billing))
     throw new Error("That billing mode is not available for this source.");
   return {
@@ -103,7 +105,7 @@ export function parseOptions(value: unknown): Options {
       },
       scoreGap: recommendation.scoreGap,
     },
-    display: { labels, frontier, scale, chart, quadrant },
+    display: { labels, frontier, scale, chart, quadrant, sort },
     freeOnly: v.freeOnly === true,
     tokens: {
       input: v.tokens.input,
@@ -353,6 +355,7 @@ export function markFrontier(rows: Row[]): Row[] {
     };
   });
 }
+export { efficiencyOf, sortRowsByEfficiency } from "./efficiency";
 export function baseModelIdOf(id: string): string {
   const withoutPin = id.split("::")[0];
   const withoutSource = withoutPin.includes(":")
