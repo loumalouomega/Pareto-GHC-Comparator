@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 0.9.0
+
 ### Added
 
 - Multiple benchmark variants per model as separate comparable rows via pins, with independent costs and fail-closed stale pins.
@@ -13,6 +15,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Free-tier Zen comparison spotlight for OpenCode with best-free versus best-overall gap and cheapest paid model reaching the top score.
 - One-click comparison CSV export and chart PNG export via the save dialog; exports reflect the displayed rows and chart.
 - Static known-model registries needing no connection for Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Aider references, and Amazon Q Developer references, with namespaced identities, shared benchmark matching, illustrative USD estimates, and source-scoped budgets, profiles, and mappings.
+
+History: [v0.8.0...v0.9.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.8.0...v0.9.0).
 
 ## 0.8.0
 
