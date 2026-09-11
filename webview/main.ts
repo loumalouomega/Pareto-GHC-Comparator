@@ -297,18 +297,28 @@ function renderDetails() {
   } else if (row.cost === 0) {
     target.append(text("p", "Free tier: no usage cost.", "hint"));
   }
-  const pinButton = text(
-    "button",
-    row.pinnedBenchmarkId ? "Unpin this variant" : "Pin as separate row",
-  ) as HTMLButtonElement;
-  pinButton.onclick = () => {
-    if (row.pinnedBenchmarkId)
-      send("unpin", { id: row.modelId, benchmarkId: row.pinnedBenchmarkId });
-    else if (row.benchmark)
-      send("pin", { id: row.modelId, benchmarkId: row.benchmark.id });
-  };
-  pinButton.disabled = !row.benchmark;
-  target.append(pinButton);
+  if (row.expandedBenchmarkId) {
+    target.append(
+      text(
+        "p",
+        "Shown automatically once per matching benchmark variant. Use the benchmark dropdown below to keep only one.",
+        "hint",
+      ),
+    );
+  } else {
+    const pinButton = text(
+      "button",
+      row.pinnedBenchmarkId ? "Unpin this variant" : "Pin as separate row",
+    ) as HTMLButtonElement;
+    pinButton.onclick = () => {
+      if (row.pinnedBenchmarkId)
+        send("unpin", { id: row.modelId, benchmarkId: row.pinnedBenchmarkId });
+      else if (row.benchmark)
+        send("pin", { id: row.modelId, benchmarkId: row.benchmark.id });
+    };
+    pinButton.disabled = !row.benchmark;
+    target.append(pinButton);
+  }
   for (const reason of row.reasons) target.append(text("p", reason, "notice"));
   if (row.benchmark) {
     target.append(
@@ -406,8 +416,8 @@ function renderDetails() {
     text(
       "p",
       state.options.source === "opencode"
-        ? "Matching uses explicit model-family aliases. Reasoning variants are separate OpenCode rows. Manual selections may differ from OpenCode's runtime configuration."
-        : "Matching uses explicit model-family aliases. Multiple reasoning variants require your choice. Manual selections may differ from Copilot’s reasoning settings.",
+        ? "Matching uses explicit model-family aliases. Multiple benchmark variants are shown as separate rows; the dropdown keeps only one. Manual selections may differ from OpenCode's runtime configuration."
+        : "Matching uses explicit model-family aliases. Multiple benchmark variants are shown as separate rows; the dropdown keeps only one. Manual selections may differ from Copilot’s reasoning settings.",
       "hint",
     ),
   );

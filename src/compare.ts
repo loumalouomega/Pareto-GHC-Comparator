@@ -327,6 +327,42 @@ export function baseModelIdOf(id: string): string {
   return withoutSource.split("#")[0];
 }
 
+/**
+ * Thinking label carried by a display name, e.g. "low" for "GPT-5.4 (low)"
+ * or "Adaptive Reasoning, Max Effort" for "Claude Opus 5 (Adaptive Reasoning,
+ * Max Effort)". Names without a recognized reasoning qualifier are "Standard".
+ */
+export function thinkingLabelOf(name: string): string {
+  const suffix = name.match(/\(([^()]*)\)\s*$/);
+  if (!suffix) return "Standard";
+  const inner = suffix[1].trim().replace(/\s+/g, " ");
+  if (
+    !/^(non[- ]reasoning|reasoning|adaptive reasoning|low|medium|high|xhigh|max)\b/i.test(
+      inner,
+    )
+  )
+    return "Standard";
+  return inner;
+}
+
+/** Thinking level reported by a discovered/static model (`#variant` or name). */
+export function modelThinkingOf(model: AvailableModel): string {
+  const hash = model.id.split("#")[1];
+  if (hash && hash.length > 0 && hash.length <= 100) return hash;
+  return thinkingLabelOf(model.name);
+}
+
+/** Display name for one auto-expanded variant row. */
+export function variantDisplayName(
+  modelName: string,
+  benchmarkName: string,
+): string {
+  if (modelName === benchmarkName) return modelName;
+  const suffix = benchmarkName.match(/\s*\([^()]*\)\s*$/);
+  if (suffix && modelName.endsWith(suffix[0].trim())) return modelName;
+  return `${modelName} · ${benchmarkName}`;
+}
+
 export function pinRowId(modelId: string, benchmarkId: string): string {
   return `${modelId}::${benchmarkId}`;
 }
@@ -397,10 +433,11 @@ export function compare(
       }
       const buildRow = (
         rowId: string,
+        matched: MappingResult,
         overrideId: string | undefined,
-        pinnedBenchmarkId?: string,
+        ids: { pinnedBenchmarkId?: string; expandedBenchmarkId?: string },
+        displayName: string,
       ): Row => {
-        const matched = resolveBenchmark(entry, benchmarks, overrideId);
         const price = crossUnit
           ? { cost: null as number | null, reason: crossUnit }
           : estimate(entry, options);
@@ -410,10 +447,6 @@ export function compare(
           m.maxInputTokens > 0 &&
           options.tokens.input + options.tokens.read + options.tokens.write >
             m.maxInputTokens;
-        const displayName =
-          pinnedBenchmarkId && matched.benchmark
-            ? `${m.name} · ${matched.benchmark.name}`
-            : m.name;
         return {
           id: rowId,
           modelId: m.id,
@@ -428,7 +461,12 @@ export function compare(
           mappingStatus: matched.status,
           candidateIds: matched.candidateIds,
           selectedBenchmarkId: overrideId,
-          pinnedBenchmarkId,
+          ...(ids.pinnedBenchmarkId
+            ? { pinnedBenchmarkId: ids.pinnedBenchmarkId }
+            : {}),
+          ...(ids.expandedBenchmarkId
+            ? { expandedBenchmarkId: ids.expandedBenchmarkId }
+            : {}),
           tier: price.tier,
           breakdown: tooLong ? undefined : price.breakdown,
           reasons: [
@@ -442,13 +480,78 @@ export function compare(
           ].filter((r): r is string => !!r),
         };
       };
+      const pinnedName = (benchmark: Benchmark | undefined, fallback: string) =>
+        benchmark ? `${m.name} · ${benchmark.name}` : `${m.name} · ${fallback}`;
       const modelPins = (pins[m.id] ?? []).filter(
         (b) => typeof b === "string" && byId.has(b),
       );
-      if (modelPins.length === 0)
-        return [buildRow(m.id, overrides[m.id])];
-      return modelPins.map((b) => buildRow(pinRowId(m.id, b), b, b));
-    });
+      const overrideId = overrides[m.id];
+      if (overrideId || modelPins.length > 0) {
+        // Explicit user choices keep single-row (mapping) or pinned-row behavior.
+        if (modelPins.length === 0)
+          return [
+            buildRow(
+              m.id,
+              resolveBenchmark(entry, benchmarks, overrideId),
+              overrideId,
+              {},
+              m.name,
+            ),
+          ];
+        return modelPins.map((b) => {
+          const matched = resolveBenchmark(entry, benchmarks, b);
+          return buildRow(pinRowId(m.id, b), matched, b, {
+            pinnedBenchmarkId: b,
+          }, pinnedName(matched.benchmark, b));
+        });
+      }
+      const automatic = resolveBenchmark(entry, benchmarks, undefined);
+      if (automatic.status !== "selection") {
+        return [buildRow(m.id, automatic, undefined, {}, m.name)];
+      }
+      const candidates = automatic.candidateIds
+        .map((id) => byId.get(id))
+        .filter((b): b is Benchmark => !!b)
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+        );
+      if (!candidates.length) {
+        return [buildRow(m.id, automatic, undefined, {}, m.name)];
+      }
+      // A model reporting its own thinking level resolves to that same level.
+      const reported = modelThinkingOf(m).toLowerCase();
+      if (reported !== "standard") {
+        const same = candidates.filter(
+          (b) => thinkingLabelOf(b.name).toLowerCase() === reported,
+        );
+        if (same.length === 1) {
+          const matched: MappingResult = {
+            status: "exact",
+            candidateIds: automatic.candidateIds,
+            benchmark: same[0],
+          };
+          return [
+            buildRow(m.id, matched, undefined, {}, variantDisplayName(m.name, same[0].name)),
+          ];
+        }
+      }
+      // Otherwise each benchmark variant becomes its own comparable row with
+      // its own thinking-level checkbox, instead of blocking on manual choice.
+      return candidates.map((b) => {
+        const matched: MappingResult = {
+          status: "exact",
+          candidateIds: automatic.candidateIds,
+          benchmark: b,
+        };
+        return buildRow(pinRowId(m.id, b.id), matched, undefined, {
+          expandedBenchmarkId: b.id,
+        }, variantDisplayName(m.name, b.name));
+      });
+    })
+    // Variant-level exclusions (modelId::benchmarkId) hide one expanded or
+    // pinned row; whole-model exclusions were already applied above.
+    .filter((r) => !excluded.has(r.id));
   return markFrontier(rows);
 }
 

@@ -121,7 +121,18 @@ for (const theme of ["light", "dark", "high-contrast"])
         }
       }
       if (m.type === "select") state.selected = m.id;
-      if (m.type === "mapping") mappings[m.id] = m.benchmarkId;
+      if (m.type === "mapping") {
+        // Mirror the host: mappings on auto-expanded rows collapse to an
+        // override keyed by the base model id; "" resets to automatic.
+        if (m.id.includes("::")) {
+          const [base] = m.id.split("::");
+          if (m.benchmarkId) {
+            mappings[base] = m.benchmarkId;
+            if (state.selected === m.id) state.selected = base;
+          } else delete mappings[base];
+        } else if (m.benchmarkId) mappings[m.id] = m.benchmarkId;
+        else delete mappings[m.id];
+      }
       if (m.type === "exclude") {
         if (m.excluded) excluded.add(m.id);
         else excluded.delete(m.id);
@@ -150,7 +161,13 @@ for (const theme of ["light", "dark", "high-contrast"])
         included: !excluded.has(a.id),
         rowCount: state.rows.filter((r) => r.modelId === a.id).length,
       }));
-      state.groups = buildGroups(listed as never, [...excluded], state.rows);
+      const structure = compare(
+        listed,
+        state.models,
+        { ...state.options, filter: "" },
+        mappings,
+      );
+      state.groups = buildGroups(listed as never, [...excluded], state.rows, structure);
       state.recommendation = recommend(state.rows, state.options);
       state.profiles = profiles.items.map(({ id, name }) => ({ id, name }));
       state.activeProfileId = profiles.activeId;
@@ -242,24 +259,49 @@ for (const theme of ["light", "dark", "high-contrast"])
       "at least 45",
     );
 
-    // Multiple variants remain unresolved until selected, and disappearance never substitutes one.
+    // Multiple matching variants expand automatically into thinking rows with
+    // one checkbox each, and disappearance never substitutes another variant.
     state.models.push({
       ...benchmarks[1],
       id: "gpt-medium",
       name: "GPT-5.4 (medium)",
       scores: { general: 40, coding: 49, agentic: 30 },
     });
-    await model.click();
+    await page.locator("#refresh").click();
+    await expect(page.locator("#count")).toHaveText("5 plotted / 6 models");
+    await expect(page.locator("#checklist")).toContainText("(medium)");
+    const mediumRow = page.getByRole("button", { name: /GPT-5\.4.*medium/ });
+    await mediumRow.click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Needs selection",
+      "Exact match",
     );
-    await expect(page.locator("#benchmark optgroup")).toHaveCount(1);
+    await expect(page.locator("#details")).toContainText(
+      "Tested variant: GPT-5.4 (medium)",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "once per matching benchmark variant",
+    );
+    const mediumLeaf = page
+      .locator(".check-leaf-row", { hasText: "(medium)" })
+      .locator("input");
+    await mediumLeaf.uncheck();
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
+    expect(
+      messages.some(
+        (m) => m.type === "exclude" && m.id === "gpt-5.4::gpt-medium",
+      ),
+    ).toBeTruthy();
+    await mediumLeaf.check();
+    await expect(page.locator("#count")).toHaveText("5 plotted / 6 models");
+    // The benchmark dropdown collapses the model to one manual choice.
+    await mediumRow.click();
     await page.locator("#variant-search").fill("medium");
     await page.locator("#benchmark").focus();
     await page.locator("#benchmark").selectOption("gpt-medium");
     await expect(page.locator("#details .mapping-status")).toHaveText(
       "User selected",
     );
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await expect(page.locator("#benchmark")).toBeFocused();
     state.models = state.models.filter((b) => b.id !== "gpt-medium");
     await page.locator("#refresh").click();

@@ -1,4 +1,8 @@
-import { baseModelIdOf } from "./compare";
+import {
+  baseModelIdOf,
+  modelThinkingOf,
+  thinkingLabelOf,
+} from "./compare";
 import type { AvailableModel, Row } from "./types";
 
 export type CheckState = "checked" | "unchecked" | "mixed";
@@ -36,11 +40,9 @@ export interface FamilyGroup {
 const checkState = (included: number, total: number): CheckState =>
   included === 0 ? "unchecked" : included === total ? "checked" : "mixed";
 
-/** Extract the thinking/variant label from an OpenCode `#variant` id. */
+/** Thinking/variant label reported by a model (`#variant` or name). */
 export function thinkingOf(model: AvailableModel): string {
-  const hash = model.id.split("#")[1];
-  if (hash && hash.length > 0 && hash.length <= 100) return hash;
-  return "Standard";
+  return modelThinkingOf(model);
 }
 
 /** Base-model display name: strip a trailing parenthetical variant. */
@@ -65,22 +67,29 @@ function modelNameOf(models: AvailableModel[]): string {
 
 /**
  * Build Family → Model → Thinking groups from discovery/static availability.
- * Grouping is presentational: leaves map 1:1 to AvailableModel ids so the
- * existing per-model exclusion storage keeps working, including one leaf per
- * OpenCode `#variant` row.
+ * Grouping is presentational: single-row models map to one leaf keyed by the
+ * model id, while models with several comparable rows (automatic benchmark
+ * expansion or pins) map to one leaf per row keyed by the row id, so each
+ * thinking level can be selected individually. Whole-model exclusions keep
+ * working alongside variant-level ones.
  */
 export function buildGroups(
   available: AvailableModel[],
   excluded: Set<string> | string[],
   rows: Row[] = [],
+  structureRows?: Row[],
 ): FamilyGroup[] {
   const excludedSet = excluded instanceof Set ? excluded : new Set(excluded);
-  const rowCounts = new Map<string, number>();
-  for (const row of rows) {
-    rowCounts.set(row.modelId, (rowCounts.get(row.modelId) ?? 0) + 1);
+  const structure = structureRows ?? rows;
+  const structByModel = new Map<string, Row[]>();
+  for (const row of structure) {
+    const list = structByModel.get(row.modelId) ?? [];
+    list.push(row);
+    structByModel.set(row.modelId, list);
   }
+  const displayedById = new Map(rows.map((r) => [r.id, r]));
   const providerOf = new Map<string, string>();
-  for (const row of rows) {
+  for (const row of [...structure, ...rows]) {
     if (!providerOf.has(row.modelId)) providerOf.set(row.modelId, row.provider);
   }
 
@@ -115,13 +124,40 @@ export function buildGroups(
       ),
     )) {
       const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name));
-      const leaves: ThinkingLeaf[] = sorted.map((m) => ({
-        id: m.id,
-        name: m.name,
-        thinking: thinkingOf(m),
-        included: !excludedSet.has(m.id),
-        rowCount: rowCounts.get(m.id) ?? 0,
-      }));
+      const leaves: ThinkingLeaf[] = sorted.flatMap((m) => {
+        const srows = [...(structByModel.get(m.id) ?? [])].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
+        if (srows.length > 1) {
+          // One comparable row per benchmark variant (automatic expansion or
+          // pins): each thinking level gets its own selectable leaf, labeled
+          // by the tested variant (the model name is on the group header).
+          return srows.map((r) => ({
+            id: r.id,
+            name: r.benchmark?.name ?? r.name,
+            thinking:
+              r.benchmark?.name !== undefined
+                ? thinkingLabelOf(r.benchmark.name)
+                : thinkingOf(m),
+            included:
+              !excludedSet.has(m.id) && !excludedSet.has(r.id),
+            rowCount: displayedById.has(r.id) ? 1 : 0,
+          }));
+        }
+        const only = srows[0];
+        return [
+          {
+            id: m.id,
+            name: m.name,
+            thinking:
+              only?.benchmark?.name !== undefined
+                ? thinkingLabelOf(only.benchmark.name)
+                : thinkingOf(m),
+            included: !excludedSet.has(m.id),
+            rowCount: rows.filter((r) => r.modelId === m.id).length,
+          },
+        ];
+      });
       const includedCount = leaves.filter((l) => l.included).length;
       const provider =
         providerOf.get(sorted[0]?.id ?? "") ?? "Unknown";

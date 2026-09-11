@@ -7,6 +7,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 ### Added
 
 - Grouped model selection (family → model → thinking level) with collapsible checkboxes, partial-selection states, counts, selection search, and single-message bulk updates; per-model exclusion storage is preserved.
+- Automatic benchmark-variant rows: when several benchmark variants match one model, each variant becomes its own comparable row with its own thinking-level checkbox instead of blocking on manual choice; models reporting their own thinking level resolve to that same level. The benchmark dropdown still collapses to one manual choice, with automatic matching restored on reset.
+- Claude Fable 5 and 5.1 in the Claude Code, Cursor, Windsurf, and Aider known-model registries (assuming access), grouped under a Claude Fable family with verified USD rates.
 - Refreshed static known-model registries: current Claude Code (Sonnet 4.6, Opus 4.6/4.7, Sonnet 5, Opus 5), Codex (GPT-5.4 mini, GPT-5.5), Gemini CLI (separate Gemini 3.5 Flash), and Cursor/Aider Sonnet 4.6 references, with corrected rates, context limits, and family grouping.
 
 ### Fixed

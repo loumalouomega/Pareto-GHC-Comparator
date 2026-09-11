@@ -23,7 +23,7 @@ Profiles live in VS Code extension global storage and are reusable across worksp
 
 The **Included models** checklist groups models by family, then by model, then by thinking level. Select a whole family, a model with all its thinking variants, or an individual thinking level. Parent checkboxes show a partial-selection state and selected/total counts. Sections collapse without losing the selection, and the **Filter models for selection** search keeps matching families and models visible. While filtering, **Select matching** and **Clear matching** (otherwise **Select all**/**Select none**) apply to the matching models. Selections persist per source and apply before the frontier, recommendations, and exports.
 
-OpenCode reasoning variants appear as one thinking leaf per `#variant` row under a shared model. Other sources show one Standard leaf per model unless variants are discovered. Benchmark reasoning variants (for example low/high) are still resolved through the model-details mapping and pins, not through the checklist.
+OpenCode reasoning variants appear as one thinking leaf per `#variant` row under a shared model. When several benchmark variants match one model (for example low/high), each variant automatically becomes its own comparable row with its own thinking-level checkbox — no manual selection needed. A model reporting its own thinking level resolves to that same level instead of expanding. To keep only one variant, pick it in the **Benchmark variant** dropdown in model details; **Use automatic matching** restores every variant. A selection that disappears stays visibly unresolved instead of silently switching to another variant. Pins still expand one model into one row per pinned variant.
 
 ## Reading the chart
 

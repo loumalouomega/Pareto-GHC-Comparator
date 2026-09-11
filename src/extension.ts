@@ -74,12 +74,29 @@ export function activate(context: vscode.ExtensionContext) {
     hasKey = false;
   let profileStore = loadProfiles(context.globalState.get("profiles"));
   let optionsRevision = 0;
+  /** Row ids from the last render, for validating variant-level exclusions. */
+  let lastStructureIds = new Set<string>();
   const excludedFor = (source: Source): string[] => excluded[source] ?? [];
   const render = () => {
     const available = availableBySource[options.source];
+    const benchmarks = snapshot?.models ?? [];
+    // Structure rows ignore the text filter and exclusions so every thinking
+    // level stays selectable (unchecked leaves remain visible).
+    const structureRows = compare(
+      available,
+      benchmarks,
+      { ...options, filter: "" },
+      overrides,
+      undefined,
+      { pins },
+    );
+    lastStructureIds = new Set([
+      ...available.map((a) => a.id),
+      ...structureRows.map((r) => r.id),
+    ]);
     const rows = compare(
       available,
-      snapshot?.models ?? [],
+      benchmarks,
       options,
       overrides,
       undefined,
@@ -124,7 +141,7 @@ export function activate(context: vscode.ExtensionContext) {
       included: !excludedList.includes(m.id),
       rowCount: rows.filter((r) => r.modelId === m.id).length,
     }));
-    const groups = buildGroups(available, excludedList, rows);
+    const groups = buildGroups(available, excludedList, rows, structureRows);
     const state: ViewState = {
       source: options.source,
       options,
@@ -374,22 +391,34 @@ export function activate(context: vscode.ExtensionContext) {
               ) {
                 if (m.id.includes("::")) {
                   const [base, bench] = m.id.split("::");
-                  const list = [...(pins[base] ?? [])];
-                  if (!m.benchmarkId) {
-                    const filtered = list.filter((b) => b !== bench);
-                    const next = { ...pins };
-                    if (filtered.length) next[base] = filtered;
-                    else delete next[base];
-                    pins = next;
-                    if (selected === m.id) selected = base;
-                  } else {
-                    const idx = list.indexOf(bench);
-                    if (idx >= 0) list[idx] = m.benchmarkId;
-                    pins = { ...pins, [base]: list };
+                  if (!pins[base]?.includes(bench)) {
+                    // Automatically expanded variant row: choosing a benchmark
+                    // collapses the model to that single manual mapping, while
+                    // "Use automatic matching" keeps every variant visible.
+                    overrides = { ...overrides };
+                    if (m.benchmarkId) overrides[base] = m.benchmarkId;
+                    else delete overrides[base];
+                    await context.globalState.update("mappings", overrides);
                     if (selected === m.id)
-                      selected = `${base}::${m.benchmarkId}`;
+                      selected = m.benchmarkId ? base : m.id;
+                  } else {
+                    const list = [...(pins[base] ?? [])];
+                    if (!m.benchmarkId) {
+                      const filtered = list.filter((b) => b !== bench);
+                      const next = { ...pins };
+                      if (filtered.length) next[base] = filtered;
+                      else delete next[base];
+                      pins = next;
+                      if (selected === m.id) selected = base;
+                    } else {
+                      const idx = list.indexOf(bench);
+                      if (idx >= 0) list[idx] = m.benchmarkId;
+                      pins = { ...pins, [base]: list };
+                      if (selected === m.id)
+                        selected = `${base}::${m.benchmarkId}`;
+                    }
+                    await context.globalState.update("pins", pins);
                   }
-                  await context.globalState.update("pins", pins);
                 } else {
                   overrides = { ...overrides };
                   if (m.benchmarkId) overrides[m.id] = m.benchmarkId;
@@ -428,16 +457,16 @@ export function activate(context: vscode.ExtensionContext) {
                 render();
               }
             } else if (m.type === "exclude") {
-              const current = new Set(excludedFor(options.source));
-              if (m.excluded) current.add(m.id);
-              else current.delete(m.id);
-              excluded = { ...excluded, [options.source]: [...current] };
-              await context.globalState.update("excluded", excluded);
+              if (lastStructureIds.has(m.id)) {
+                const current = new Set(excludedFor(options.source));
+                if (m.excluded) current.add(m.id);
+                else current.delete(m.id);
+                excluded = { ...excluded, [options.source]: [...current] };
+                await context.globalState.update("excluded", excluded);
+              }
               render();
             } else if (m.type === "excludeMany") {
-              const valid = new Set(
-                availableBySource[options.source].map((a) => a.id),
-              );
+              const valid = lastStructureIds;
               const current = new Set(excludedFor(options.source));
               for (const id of m.ids) {
                 if (!valid.has(id)) continue;

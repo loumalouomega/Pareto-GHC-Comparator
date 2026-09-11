@@ -9,7 +9,7 @@ import {
   thinkingOf,
 } from "../src/groups";
 import { parseMessage } from "../src/messages";
-import { compare } from "../src/compare";
+import { compare, pinRowId } from "../src/compare";
 import { staticEntries, staticModels } from "../src/staticSources";
 import { defaults, type AvailableModel, type Row } from "../src/types";
 
@@ -187,6 +187,83 @@ test("group helpers handle missing families, names, and ids", () => {
   assert.equal(providerHit[0].models[0].leaves.length, 2);
   const idHit = filterGroups(groups, "opencode:openai");
   assert.equal(idHit[0].models[0].leaves.length, 2);
+});
+
+test("expanded benchmark variants become one thinking leaf per row", () => {
+  const gpt = model("gpt-5.4", "GPT-5.4", "GPT");
+  const options = { ...defaults };
+  const benchmarks = [
+    {
+      id: "b-low",
+      slug: "b-low",
+      name: "GPT-5.4 (low)",
+      provider: "OpenAI",
+      scores: { general: 70, coding: 70, agentic: 70 },
+    },
+    {
+      id: "b-high",
+      slug: "b-high",
+      name: "GPT-5.4 (high)",
+      provider: "OpenAI",
+      scores: { general: 80, coding: 80, agentic: 80 },
+    },
+  ];
+  const structure = compare([gpt], benchmarks, options);
+  assert.equal(structure.length, 2);
+  const groups = buildGroups([gpt], [], structure, structure);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].models.length, 1);
+  const leaves = groups[0].models[0].leaves;
+  assert.equal(leaves.length, 2);
+  assert.deepEqual(
+    leaves.map((l) => l.thinking).sort(),
+    ["high", "low"],
+  );
+  assert.ok(leaves.every((l) => l.included));
+  assert.ok(leaves.every((l) => l.rowCount === 1));
+  // Excluding one variant keeps the other visible and selected.
+  const partial = buildGroups(
+    [gpt],
+    [pinRowId("gpt-5.4", "b-low")],
+    structure.filter((r) => r.id !== pinRowId("gpt-5.4", "b-low")),
+    structure,
+  );
+  const partialLeaves = partial[0].models[0].leaves;
+  assert.equal(partial[0].state, "mixed");
+  assert.equal(
+    partialLeaves.find((l) => l.thinking === "low")?.included,
+    false,
+  );
+  assert.equal(
+    partialLeaves.find((l) => l.thinking === "low")?.rowCount,
+    0,
+  );
+  assert.equal(
+    partialLeaves.find((l) => l.thinking === "high")?.included,
+    true,
+  );
+});
+
+test("fable models appear in every applicable static registry", () => {
+  for (const source of ["claude-code", "cursor", "windsurf", "aider"] as const) {
+    const models = staticModels(source);
+    const entries = staticEntries(source);
+    const fable = models.filter((m) => m.family === "Claude Fable");
+    assert.equal(fable.length, 2, source);
+    for (const m of fable) {
+      const entry = entries.find((e) => e.ids.includes(m.id))!;
+      assert.ok(entry.rates, m.id);
+      assert.equal(entry.rates?.input, 10);
+      assert.equal(entry.rates?.output, 50);
+      assert.equal(m.maxInputTokens, 1000000);
+    }
+    const groups = buildGroups(models, [], []);
+    assert.ok(groups.some((g) => g.id === "Claude Fable"), source);
+  }
+  const fable51 = staticEntries("claude-code").find(
+    (e) => e.ids[0] === "claude-code:claude-fable-5-1",
+  )!;
+  assert.equal(fable51.rates?.read, 0.25);
 });
 
 test("refreshed static registries keep namespaced identities and fix aliases", () => {

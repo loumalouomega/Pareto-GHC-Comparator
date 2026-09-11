@@ -136,6 +136,8 @@ export interface Row {
   candidateIds: string[];
   selectedBenchmarkId?: string;
   pinnedBenchmarkId?: string;
+  /** Benchmark automatically expanded as its own row when several variants match. */
+  expandedBenchmarkId?: string;
 }
 export interface RecommendationResult {
   modelIds: string[];
