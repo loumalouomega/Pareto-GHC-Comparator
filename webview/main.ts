@@ -1,6 +1,13 @@
 import Chart from "chart.js/auto";
 import type { Plugin, ScatterDataPoint } from "chart.js";
-import type { Billing, Options, Row, ViewState, HostMessage } from "../src/types";
+import type {
+  Billing,
+  ChecklistFamily,
+  Options,
+  Row,
+  ViewState,
+  HostMessage,
+} from "../src/types";
 import { sources } from "../src/sources";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -75,6 +82,9 @@ const unitCost = (billing: Billing) =>
 let variantSearch = "",
   showOtherVariants = false,
   detailsModelId: string | undefined;
+let checklistSearch = "";
+const collapsedFamilies = new Set<string>();
+const collapsedModels = new Set<string>();
 const mappingLabels = {
   exact: "Exact match",
   user: "User selected",
@@ -402,13 +412,254 @@ function renderDetails() {
     ),
   );
 }
+function groupMatches(
+  groups: ChecklistFamily[],
+  query: string,
+): ChecklistFamily[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return groups;
+  const out: ChecklistFamily[] = [];
+  for (const family of groups) {
+    const familyHit = family.name.toLowerCase().includes(q);
+    const models = [];
+    for (const model of family.models) {
+      const modelHit =
+        model.name.toLowerCase().includes(q) ||
+        model.provider.toLowerCase().includes(q);
+      const leaves = model.leaves.filter(
+        (l) =>
+          familyHit ||
+          modelHit ||
+          l.name.toLowerCase().includes(q) ||
+          l.thinking.toLowerCase().includes(q) ||
+          l.id.toLowerCase().includes(q),
+      );
+      if (familyHit || modelHit || leaves.length)
+        models.push({
+          ...model,
+          leaves: familyHit || modelHit ? model.leaves : leaves,
+        });
+    }
+    if (familyHit || models.length) out.push({ ...family, models });
+  }
+  return out;
+}
+
+function visibleLeafIds(
+  groups: ChecklistFamily[],
+  query: string,
+): string[] {
+  return groupMatches(groups, query).flatMap((f) =>
+    f.models.flatMap((m) => m.leaves.map((l) => l.id)),
+  );
+}
+
+function checkRow(
+  checked: boolean,
+  indeterminate: boolean,
+  label: string,
+  checkId: string,
+  onChange: (next: boolean) => void,
+): HTMLLabelElement {
+  const row = document.createElement("label");
+  row.className = "checkbox-label";
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = checked;
+  box.indeterminate = indeterminate;
+  box.setAttribute("aria-label", label);
+  (box.dataset as Record<string, string>).checkId = checkId;
+  box.onchange = () => onChange(box.checked);
+  row.append(box, text("span", label));
+  return row;
+}
+
+function renderChecklist() {
+  if (!state) return;
+  const source = state.groups?.length ? state.groups : [];
+  const groups =
+    source.length
+      ? groupMatches(source, checklistSearch)
+      : [];
+  // Fall back to the flat checklist when grouped data is unavailable
+  // (e.g. synthetic states in browser tests that predate grouping).
+  const flat = !source.length ? state.checklist : [];
+  const searchInput = el<HTMLInputElement>("checklist-search");
+  if (searchInput && searchInput.value !== checklistSearch)
+    searchInput.value = checklistSearch;
+  const searching = checklistSearch.trim().length > 0;
+  const allButton = el<HTMLButtonElement>("include-all");
+  const noneButton = el<HTMLButtonElement>("include-none");
+  if (allButton)
+    allButton.textContent = searching ? "Select matching" : "Select all";
+  if (noneButton)
+    noneButton.textContent = searching ? "Clear matching" : "Select none";
+  const checklistEl = el("checklist");
+  checklistEl.replaceChildren();
+  if (!groups.length && !flat.length) {
+    checklistEl.append(
+      text(
+        "p",
+        searching
+          ? "No models match this filter."
+          : "No models available for this source.",
+        "hint",
+      ),
+    );
+    return;
+  }
+  for (const entry of flat) {
+    const row = checkRow(
+      entry.included,
+      false,
+      `${entry.name} (${entry.rowCount})`,
+      `leaf:${entry.id}`,
+      (next) => send("exclude", { id: entry.id, excluded: !next }),
+    );
+    checklistEl.append(row);
+  }
+  for (const family of groups) {
+    const wrap = document.createElement("div");
+    wrap.className = "check-family";
+    const header = document.createElement("div");
+    header.className = "check-header";
+    const expander = document.createElement("button");
+    expander.type = "button";
+    expander.className = "secondary check-toggle";
+    const collapsed = collapsedFamilies.has(family.id);
+    expander.textContent = collapsed ? "▸" : "▾";
+    expander.setAttribute(
+      "aria-label",
+      `${collapsed ? "Expand" : "Collapse"} ${family.name}`,
+    );
+    (expander.dataset as Record<string, string>).checkId =
+      `toggle:${family.id}`;
+    expander.onclick = () => {
+      if (collapsedFamilies.has(family.id)) collapsedFamilies.delete(family.id);
+      else collapsedFamilies.add(family.id);
+      renderChecklist();
+    };
+    const visibleIds = new Set(
+      groupMatches([family], checklistSearch).flatMap((f) =>
+        f.models.flatMap((m) => m.leaves.map((l) => l.id)),
+      ),
+    );
+    const leaves = family.models.flatMap((m) => m.leaves);
+    const visible = leaves.filter((l) => visibleIds.has(l.id));
+    const included = visible.filter((l) => l.included).length;
+    const allIncluded =
+      visible.length > 0 && included === visible.length;
+    const mixed = included > 0 && included < visible.length;
+    const row = checkRow(
+      searching ? allIncluded : family.state === "checked",
+      searching ? mixed : family.state === "mixed",
+      `${family.name} (${searching ? included : family.includedCount}/${searching ? visible.length : family.totalCount})`,
+      `family:${family.id}`,
+      (next) => {
+        const ids = searching
+          ? visible.map((l) => l.id)
+          : family.models.flatMap((m) => m.leaves.map((l) => l.id));
+        if (ids.length === 1)
+          send("exclude", { id: ids[0], excluded: !next });
+        else send("excludeMany", { ids, excluded: !next });
+      },
+    );
+    row.classList.add("check-family-row");
+    header.append(expander, row);
+    wrap.append(header);
+    if (collapsed) {
+      checklistEl.append(wrap);
+      continue;
+    }
+    for (const model of family.models) {
+      const modelVisible = model.leaves.filter((l) => visibleIds.has(l.id));
+      if (!modelVisible.length) continue;
+      const modelWrap = document.createElement("div");
+      modelWrap.className = "check-model";
+      if (model.leaves.length === 1) {
+        const leaf = model.leaves[0];
+        const single = checkRow(
+          leaf.included,
+          false,
+          `${model.name} (${leaf.rowCount})`,
+          `leaf:${leaf.id}`,
+          (next) => send("exclude", { id: leaf.id, excluded: !next }),
+        );
+        single.classList.add("check-leaf-row");
+        modelWrap.append(single);
+        wrap.append(modelWrap);
+        continue;
+      }
+      const modelHeader = document.createElement("div");
+      modelHeader.className = "check-header";
+      const modelToggle = document.createElement("button");
+      modelToggle.type = "button";
+      modelToggle.className = "secondary check-toggle";
+      const modelCollapsed = collapsedModels.has(model.id);
+      modelToggle.textContent = modelCollapsed ? "▸" : "▾";
+      modelToggle.setAttribute(
+        "aria-label",
+        `${modelCollapsed ? "Expand" : "Collapse"} ${model.name}`,
+      );
+      (modelToggle.dataset as Record<string, string>).checkId =
+        `toggle:${model.id}`;
+      modelToggle.onclick = () => {
+        if (collapsedModels.has(model.id)) collapsedModels.delete(model.id);
+        else collapsedModels.add(model.id);
+        renderChecklist();
+      };
+      const modelIncluded = modelVisible.filter((l) => l.included).length;
+      const modelAll =
+        modelVisible.length > 0 && modelIncluded === modelVisible.length;
+      const modelMixed =
+        modelIncluded > 0 && modelIncluded < modelVisible.length;
+      const modelRow = checkRow(
+        searching ? modelAll : model.state === "checked",
+        searching ? modelMixed : model.state === "mixed",
+        `${model.name} (${searching ? modelIncluded : model.includedCount}/${searching ? modelVisible.length : model.totalCount})`,
+        `model:${model.id}`,
+        (next) => {
+          const ids = searching
+            ? modelVisible.map((l) => l.id)
+            : model.leaves.map((l) => l.id);
+          if (ids.length === 1)
+            send("exclude", { id: ids[0], excluded: !next });
+          else send("excludeMany", { ids, excluded: !next });
+        },
+      );
+      modelRow.classList.add("check-model-row");
+      modelHeader.append(modelToggle, modelRow);
+      modelWrap.append(modelHeader);
+      if (!modelCollapsed) {
+        for (const leaf of modelVisible) {
+          const leafRow = checkRow(
+            leaf.included,
+            false,
+            model.leaves.length > 1
+              ? `${leaf.thinking} · ${leaf.name} (${leaf.rowCount})`
+              : `${leaf.name} (${leaf.rowCount})`,
+            `leaf:${leaf.id}`,
+            (next) => send("exclude", { id: leaf.id, excluded: !next }),
+          );
+          leafRow.classList.add("check-leaf-row");
+          modelWrap.append(leafRow);
+        }
+      }
+      wrap.append(modelWrap);
+    }
+    checklistEl.append(wrap);
+  }
+}
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
+  const focusedCheck = (focused?.dataset as Record<string, string> | undefined)
+    ?.checkId;
   const focusedDetail = [
     "benchmark",
     "variant-search",
     "variant-manual",
+    "checklist-search",
   ].includes(focused?.id ?? "")
     ? focused?.id
     : undefined;
@@ -509,20 +760,7 @@ function render(next: ViewState) {
     item.style.color = colorForRow(sample);
     legend.append(item);
   }
-  const checklistEl = el("checklist");
-  checklistEl.replaceChildren();
-  for (const entry of state.checklist) {
-    const label = document.createElement("label");
-    label.className = "checkbox-label";
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = entry.included;
-    box.setAttribute("aria-label", `Include ${entry.name}`);
-    box.onchange = () =>
-      send("exclude", { id: entry.id, excluded: !box.checked });
-    label.append(box, text("span", `${entry.name} (${entry.rowCount})`));
-    checklistEl.append(label);
-  }
+  renderChecklist();
   el("cost-heading").textContent =
     state.options.billing === "credits"
       ? "AI credits"
@@ -575,6 +813,12 @@ function render(next: ViewState) {
     input?.focus();
     if (selectionStart !== null && input?.type === "search")
       input.setSelectionRange(selectionStart, selectionStart);
+  }
+  if (focusedCheck) {
+    const target = document.querySelector<HTMLElement>(
+      `[data-check-id="${focusedCheck}"]`,
+    );
+    (target as HTMLElement | null)?.focus?.();
   }
 }
 function renderProfiles(previousActive: string | undefined) {
@@ -746,8 +990,38 @@ for (const [id, action] of [
 }
 el("refresh").onclick = () => send("refresh");
 el("key").onclick = () => send("key");
-el("include-all").onclick = () => send("excludeAll", { excluded: false });
-el("include-none").onclick = () => send("excludeAll", { excluded: true });
+el("checklist-search").addEventListener("input", () => {
+  checklistSearch = el<HTMLInputElement>("checklist-search").value;
+  renderChecklist();
+  const input = el<HTMLInputElement>("checklist-search");
+  input.focus();
+  const end = input.value.length;
+  try {
+    input.setSelectionRange(end, end);
+  } catch {
+    /* selection is best-effort for search inputs */
+  }
+});
+el("include-all").onclick = () => {
+  if (state && checklistSearch.trim()) {
+    const ids = visibleLeafIds(state.groups ?? [], checklistSearch);
+    if (ids.length) {
+      send("excludeMany", { ids, excluded: false });
+      return;
+    }
+  }
+  send("excludeAll", { excluded: false });
+};
+el("include-none").onclick = () => {
+  if (state && checklistSearch.trim()) {
+    const ids = visibleLeafIds(state.groups ?? [], checklistSearch);
+    if (ids.length) {
+      send("excludeMany", { ids, excluded: true });
+      return;
+    }
+  }
+  send("excludeAll", { excluded: true });
+};
 el("export-csv").onclick = () => send("exportCsv");
 el("export-png").onclick = () => {
   const canvas = el("chart") as HTMLCanvasElement;

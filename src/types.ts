@@ -171,6 +171,7 @@ export type HostMessage =
   | { type: "pin"; id: string; benchmarkId: string }
   | { type: "unpin"; id: string; benchmarkId: string }
   | { type: "exclude"; id: string; excluded: boolean }
+  | { type: "excludeMany"; ids: string[]; excluded: boolean }
   | { type: "excludeAll"; excluded: boolean }
   | { type: "exportCsv" }
   | { type: "exportPng"; png: string }
@@ -190,6 +191,31 @@ export interface ChecklistEntry {
   included: boolean;
   rowCount: number;
 }
+export type ChecklistState = "checked" | "unchecked" | "mixed";
+export interface ChecklistLeaf {
+  id: string;
+  name: string;
+  thinking: string;
+  included: boolean;
+  rowCount: number;
+}
+export interface ChecklistModel {
+  id: string;
+  name: string;
+  provider: string;
+  state: ChecklistState;
+  includedCount: number;
+  totalCount: number;
+  leaves: ChecklistLeaf[];
+}
+export interface ChecklistFamily {
+  id: string;
+  name: string;
+  state: ChecklistState;
+  includedCount: number;
+  totalCount: number;
+  models: ChecklistModel[];
+}
 export interface ViewState {
   source: Source;
   options: Options;
@@ -208,6 +234,7 @@ export interface ViewState {
   profileModified: boolean;
   optionsRevision: number;
   checklist: ChecklistEntry[];
+  groups: ChecklistFamily[];
   freeSpotlight: FreeSpotlight;
   exportNote?: string;
 }

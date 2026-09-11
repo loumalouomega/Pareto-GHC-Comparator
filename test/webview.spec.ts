@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
 import { compare } from "../src/compare";
+import { buildGroups } from "../src/groups";
 import { recommend } from "../src/recommend";
 import { changeProfile, profileModified } from "../src/profiles";
 import type { ProfileStore } from "../src/types";
@@ -89,10 +90,12 @@ for (const theme of ["light", "dark", "high-contrast"])
       profileModified: false,
       optionsRevision: 0,
       checklist: [],
+      groups: [],
       freeSpotlight: { enabled: false, explanation: "" },
     };
     let profiles: ProfileStore = { version: 1, items: [] };
     const mappings: Record<string, string> = {};
+    const excluded = new Set<string>();
     const messages: Record<string, unknown>[] = [];
     await page.exposeBinding("hostMessage", async (_, m) => {
       messages.push(m);
@@ -119,8 +122,35 @@ for (const theme of ["light", "dark", "high-contrast"])
       }
       if (m.type === "select") state.selected = m.id;
       if (m.type === "mapping") mappings[m.id] = m.benchmarkId;
+      if (m.type === "exclude") {
+        if (m.excluded) excluded.add(m.id);
+        else excluded.delete(m.id);
+      }
+      if (m.type === "excludeMany") {
+        for (const id of m.ids) {
+          if (m.excluded) excluded.add(id);
+          else excluded.delete(id);
+        }
+      }
+      if (m.type === "excludeAll") {
+        const listedIds = (
+          state.source === "opencode" ? opencodeAvailable : available
+        ).map((a) => a.id);
+        if (m.excluded) for (const id of listedIds) excluded.add(id);
+        else excluded.clear();
+      }
       const listed = state.source === "opencode" ? opencodeAvailable : available;
-      state.rows = compare(listed, state.models, state.options, mappings);
+      state.rows = compare(listed, state.models, state.options, mappings, undefined, {
+        excluded: [...excluded],
+      });
+      state.checklist = listed.map((a) => ({
+        id: a.id,
+        name: a.name,
+        provider: "Test",
+        included: !excluded.has(a.id),
+        rowCount: state.rows.filter((r) => r.modelId === a.id).length,
+      }));
+      state.groups = buildGroups(listed as never, [...excluded], state.rows);
       state.recommendation = recommend(state.rows, state.options);
       state.profiles = profiles.items.map(({ id, name }) => ({ id, name }));
       state.activeProfileId = profiles.activeId;
@@ -316,12 +346,32 @@ for (const theme of ["light", "dark", "high-contrast"])
       "PARETO / GITHUB COPILOT",
     );
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
-    await page.getByLabel("Filter models").fill("unmapped");
+    // Grouped selection: families contain models; bulk actions use one message.
+    await expect(page.locator("#checklist .check-family")).toHaveCount(5);
+    await expect(
+      page.getByLabel("Filter models for selection"),
+    ).toBeVisible();
+    await page.getByLabel("Filter models for selection").fill("gpt-5.4");
+    await expect(page.locator("#checklist .check-family")).toHaveCount(1);
+    await expect(page.locator("#include-all")).toHaveText("Select matching");
+    await page.getByLabel("Filter models for selection").fill("");
+    await expect(page.locator("#include-all")).toHaveText("Select all");
+    const familyBox = page
+      .locator(".check-family-row input[type=checkbox]")
+      .first();
+    await familyBox.uncheck();
+    expect(
+      messages.some((m) => m.type === "excludeMany" || m.type === "exclude"),
+    ).toBeTruthy();
+    await expect(page.locator("#count")).toHaveText("3 plotted / 4 models");
+    await page.locator("#include-all").click();
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
+    await page.getByLabel("Filter models", { exact: true }).fill("unmapped");
     await expect(page.locator("#count")).toHaveText("0 plotted / 1 models");
     await expect(page.locator("#empty")).toBeVisible();
-    await page.getByLabel("Filter models").fill("no-such-model");
+    await page.getByLabel("Filter models", { exact: true }).fill("no-such-model");
     await expect(page.locator("#rows tr")).toHaveCount(0);
-    await page.getByLabel("Filter models").fill("");
+    await page.getByLabel("Filter models", { exact: true }).fill("");
     await page
       .getByRole("combobox", { name: "Billing", exact: true })
       .selectOption("legacy");

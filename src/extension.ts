@@ -5,6 +5,7 @@ import { catalogDate } from "./catalog";
 import { compare, freeSpotlight, parseOptions, savedOptions } from "./compare";
 import { discoverOpenCode, OpenCodeError } from "./opencode";
 import { staticModels } from "./staticSources";
+import { buildGroups } from "./groups";
 import { defaultBilling } from "./sources";
 import { exportCsv } from "./export";
 import { html } from "./html";
@@ -115,13 +116,15 @@ export function activate(context: vscode.ExtensionContext) {
               : "Free-tier spotlight needs OpenCode USD data with free models.",
         };
     const rowProvider = new Map(rows.map((r) => [r.modelId, r.provider]));
+    const excludedList = excludedFor(options.source);
     const checklist = available.map((m) => ({
       id: m.id,
       name: m.name,
       provider: rowProvider.get(m.id) ?? "Unknown",
-      included: !excludedFor(options.source).includes(m.id),
+      included: !excludedList.includes(m.id),
       rowCount: rows.filter((r) => r.modelId === m.id).length,
     }));
+    const groups = buildGroups(available, excludedList, rows);
     const state: ViewState = {
       source: options.source,
       options,
@@ -140,6 +143,7 @@ export function activate(context: vscode.ExtensionContext) {
       hasKey,
       catalogDate,
       checklist,
+      groups,
       freeSpotlight: freeSpotlightState,
       exportNote: exportNote || undefined,
     };
@@ -427,6 +431,19 @@ export function activate(context: vscode.ExtensionContext) {
               const current = new Set(excludedFor(options.source));
               if (m.excluded) current.add(m.id);
               else current.delete(m.id);
+              excluded = { ...excluded, [options.source]: [...current] };
+              await context.globalState.update("excluded", excluded);
+              render();
+            } else if (m.type === "excludeMany") {
+              const valid = new Set(
+                availableBySource[options.source].map((a) => a.id),
+              );
+              const current = new Set(excludedFor(options.source));
+              for (const id of m.ids) {
+                if (!valid.has(id)) continue;
+                if (m.excluded) current.add(id);
+                else current.delete(id);
+              }
               excluded = { ...excluded, [options.source]: [...current] };
               await context.globalState.update("excluded", excluded);
               render();

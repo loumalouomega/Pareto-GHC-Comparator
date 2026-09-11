@@ -4,6 +4,16 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Grouped model selection (family → model → thinking level) with collapsible checkboxes, partial-selection states, counts, selection search, and single-message bulk updates; per-model exclusion storage is preserved.
+- Refreshed static known-model registries: current Claude Code (Sonnet 4.6, Opus 4.6/4.7, Sonnet 5, Opus 5), Codex (GPT-5.4 mini, GPT-5.5), Gemini CLI (separate Gemini 3.5 Flash), and Cursor/Aider Sonnet 4.6 references, with corrected rates, context limits, and family grouping.
+
+### Fixed
+
+- Gemini 3 Flash no longer aliases the distinct Gemini 3.5 Flash model.
+- Corrected Claude Opus 4.5 illustrative pricing to the current Opus $5/$25 tier.
+
 ## 0.9.0
 
 ### Added

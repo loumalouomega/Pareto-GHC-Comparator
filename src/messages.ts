@@ -44,6 +44,14 @@ export function parseMessage(raw: unknown): HostMessage {
     return { type: "unpin", id: m.id, benchmarkId: m.benchmarkId };
   if (m.type === "exclude" && string(m.id) && typeof m.excluded === "boolean")
     return { type: "exclude", id: m.id, excluded: m.excluded };
+  if (
+    m.type === "excludeMany" &&
+    Array.isArray(m.ids) &&
+    m.ids.length <= 5000 &&
+    m.ids.every((id) => string(id)) &&
+    typeof m.excluded === "boolean"
+  )
+    return { type: "excludeMany", ids: [...(m.ids as string[])], excluded: m.excluded };
   if (m.type === "excludeAll" && typeof m.excluded === "boolean")
     return { type: "excludeAll", excluded: m.excluded };
   if (m.type === "profile" && m.change && typeof m.change === "object") {

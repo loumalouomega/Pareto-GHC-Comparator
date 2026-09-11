@@ -33,6 +33,8 @@ export function html(
   </section>
   <section class="controls" aria-label="Model inclusion">
   <div><strong>Included models</strong> <button id="include-all" class="secondary">Select all</button> <button id="include-none" class="secondary">Select none</button></div>
+  <label class="filter">Filter models for selection<input id="checklist-search" type="search" placeholder="Filter families, models, or thinking levels" maxlength="200"></label>
+  <p class="hint" id="checklist-hint">Families contain models; models with multiple thinking variants expand. Select a family, a model, or an individual thinking level. While filtering, bulk actions apply to matching models.</p>
   <div id="checklist"></div>
   </section>
   <section class="controls" aria-label="Exports">

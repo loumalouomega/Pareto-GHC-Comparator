@@ -342,3 +342,41 @@ a {
   width: auto;
   min-height: 18px;
 }
+#checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.check-family {
+  border: 1px solid var(--vscode-panel-border, #80808044);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.check-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check-toggle {
+  min-height: 26px;
+  padding: 2px 8px;
+  flex: 0 0 auto;
+}
+.check-family-row {
+  font-weight: 600;
+}
+.check-model {
+  margin-left: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+.check-model-row {
+  font-weight: 600;
+}
+.check-leaf-row {
+  margin-left: 26px;
+  font-weight: 400;
+}
