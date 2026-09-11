@@ -10,11 +10,17 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Automatic benchmark-variant rows: when several benchmark variants match one model, each variant becomes its own comparable row with its own thinking-level checkbox instead of blocking on manual choice; models reporting their own thinking level resolve to that same level. The benchmark dropdown still collapses to one manual choice, with automatic matching restored on reset.
 - Claude Fable 5 and 5.1 in the Claude Code, Cursor, Windsurf, and Aider known-model registries (assuming access), grouped under a Claude Fable family with verified USD rates.
 - Refreshed static known-model registries: current Claude Code (Sonnet 4.6, Opus 4.6/4.7, Sonnet 5, Opus 5), Codex (GPT-5.4 mini, GPT-5.5), Gemini CLI (separate Gemini 3.5 Flash), and Cursor/Aider Sonnet 4.6 references, with corrected rates, context limits, and family grouping.
+- Codex registry now tracks GPT-6 Astra and GPT-5.6 Sol/Terra/Luna plus the unpriced GPT-5.3-Codex-Spark preview; Gemini CLI adds Gemini 3.8 Flash; Cursor/Aider/Windsurf track GPT-5.6 Terra; Cursor/Aider add Claude Sonnet 5 at permanent $2/$10 pricing.
 
 ### Fixed
 
 - Gemini 3 Flash no longer aliases the distinct Gemini 3.5 Flash model.
 - Corrected Claude Opus 4.5 illustrative pricing to the current Opus $5/$25 tier.
+- Corrected Gemini 3.5 Flash illustrative pricing to $1.50/$9 per million tokens.
+
+### Removed
+
+- Retired Codex models (GPT-5.4, GPT-5.4 mini, GPT-5.3-Codex, GPT-5.1-Codex-Mini) and end-of-support Claude Opus 4.5. Saved exclusions referencing them are harmless orphans.
 
 ## 0.9.0
 

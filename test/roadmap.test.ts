@@ -229,7 +229,7 @@ test("billing modes are source-scoped", () => {
 });
 
 test("estimate returns a breakdown that multiplies out", () => {
-  const entry = staticEntries("codex").find((e) => e.ids[0] === "codex:gpt-5-4")!;
+  const entry = staticEntries("codex").find((e) => e.ids[0] === "codex:gpt-5-6-terra")!;
   const options = { ...defaults, source: "codex" as const, billing: "usd" as const };
   const price = estimate(entry, options);
   assert.ok(price.cost !== null && price.breakdown);

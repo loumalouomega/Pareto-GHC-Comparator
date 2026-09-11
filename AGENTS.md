@@ -73,7 +73,7 @@ Keep unknown prices/scores null with visible reasons. Filtering occurs before fr
 
 When updating `src/catalog.ts`, verify the sources linked in the README/catalog, update `catalogDate`, and check rates, units, context thresholds, expiries, legacy availability, IDs, and aliases. Preserve missing data rather than inventing values.
 
-When updating `src/staticSources.ts`, verify the provider pricing pages linked in `staticPricingSources`, keep `staticRegistryDate` current, and check rates, units, context limits, IDs, benchmark aliases, and family grouping. Preserve existing identities where valid so saved exclusions survive; never conflate distinct models in one alias (e.g. Gemini 3 Flash versus 3.5 Flash).
+When updating `src/staticSources.ts`, verify the provider pricing pages linked in `staticPricingSources`, keep `staticRegistryDate` current, and check rates, units, context limits, IDs, benchmark aliases, and family grouping. Preserve existing identities where valid so saved exclusions survive; never conflate distinct models in one alias (e.g. Gemini 3 Flash versus 3.5 Flash). Remove models the official docs mark retired, deprecated, or end-of-support (e.g. Codex GPT-5.4/5.4-mini after 2026-08-31, Claude Opus 4.5 after 2026-08-05) instead of keeping stale rows; orphaned saved exclusions are ignored. Current Codex lineup: GPT-6 Astra, GPT-5.6 Sol/Terra/Luna, GPT-5.5, unpriced GPT-5.3-Codex-Spark preview.
 
 ### Recommendations
 

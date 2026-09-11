@@ -287,17 +287,17 @@ test("refreshed static registries keep namespaced identities and fix aliases", (
     write: 3.75,
     output: 15,
   });
-  const mini = staticEntries("codex").find(
-    (e) => e.ids[0] === "codex:gpt-5-4-mini",
+  const terra = staticEntries("codex").find(
+    (e) => e.ids[0] === "codex:gpt-5-6-terra",
   )!;
-  assert.deepEqual(mini.rates, {
-    input: 0.75,
-    read: 0.075,
-    write: null,
-    output: 4.5,
+  assert.deepEqual(terra.rates, {
+    input: 2,
+    read: 0.2,
+    write: 2.5,
+    output: 12,
   });
   // Existing identities survive the refresh.
-  for (const id of ["codex:gpt-5-4", "claude-code:claude-haiku-4-5"]) {
+  for (const id of ["codex:gpt-5-5", "claude-code:claude-haiku-4-5"]) {
     const source = id.split(":")[0] as "codex" | "claude-code";
     assert.ok(
       staticModels(source).some((m) => m.id === id),
@@ -312,4 +312,113 @@ test("refreshed static registries keep namespaced identities and fix aliases", (
   const groups = buildGroups(staticModels("claude-code"), [], []);
   const sonnet = groups.find((g) => g.id === "Claude Sonnet")!;
   assert.ok(sonnet.models.length >= 3);
+});
+
+test("codex registry tracks the current GPT-6/5.6 lineup, not retired models", () => {
+  const entries = staticEntries("codex");
+  const byId = (id: string) => entries.find((e) => e.ids[0] === id)!;
+  assert.deepEqual(byId("codex:gpt-6-astra").rates, {
+    input: 10,
+    read: 1,
+    write: 12.5,
+    output: 50,
+  });
+  assert.deepEqual(byId("codex:gpt-5-6-sol").rates, {
+    input: 4,
+    read: 0.4,
+    write: 5,
+    output: 20,
+  });
+  assert.deepEqual(byId("codex:gpt-5-6-luna").rates, {
+    input: 0.2,
+    read: 0.02,
+    write: 0.25,
+    output: 1.2,
+  });
+  assert.deepEqual(byId("codex:gpt-6-astra").benchmarkFamilies, ["GPT-6 Astra"]);
+  // Retired/deprecated Codex models are gone.
+  for (const id of [
+    "codex:gpt-5-4",
+    "codex:gpt-5-4-mini",
+    "codex:gpt-5-3-codex",
+    "codex:gpt-5-1-codex-mini",
+  ]) {
+    assert.ok(!entries.some((e) => e.ids.includes(id)), id);
+  }
+  // The Pro-only Spark preview is listed without a verifiable rate.
+  const spark = byId("codex:gpt-5-3-codex-spark");
+  assert.equal(spark.rates, undefined);
+  assert.ok(spark.benchmarkFamilies.includes("GPT-5.3-Codex-Spark"));
+  const models = staticModels("codex");
+  const families = new Set(models.map((m) => m.family));
+  assert.ok(families.has("GPT-5.6"));
+  assert.ok(families.has("GPT-6"));
+});
+
+test("sonnet 5 uses permanent $2/$10 pricing and opus 4.5 is retired", () => {
+  const sonnet5 = staticEntries("claude-code").find(
+    (e) => e.ids[0] === "claude-code:claude-sonnet-5",
+  )!;
+  assert.deepEqual(sonnet5.rates, {
+    input: 2,
+    read: 0.2,
+    write: 2.5,
+    output: 10,
+  });
+  assert.ok(
+    !staticEntries("claude-code").some((e) =>
+      e.ids.includes("claude-code:claude-opus-4-5"),
+    ),
+  );
+  for (const source of ["cursor", "aider"] as const) {
+    const sonnet = staticEntries(source).find((e) =>
+      e.ids[0].endsWith("claude-sonnet-5"),
+    )!;
+    assert.deepEqual(sonnet.rates, {
+      input: 2,
+      read: 0.2,
+      write: 2.5,
+      output: 10,
+    });
+  }
+});
+
+test("gemini registry adds 3.8 flash and corrects 3.5 flash", () => {
+  const entries = staticEntries("gemini-cli");
+  const flash35 = entries.find(
+    (e) => e.ids[0] === "gemini-cli:gemini-3-5-flash",
+  )!;
+  assert.deepEqual(flash35.rates, {
+    input: 1.5,
+    read: 0.15,
+    write: null,
+    output: 9,
+  });
+  const flash38 = entries.find(
+    (e) => e.ids[0] === "gemini-cli:gemini-3-8-flash",
+  )!;
+  assert.deepEqual(flash38.rates, {
+    input: 0.75,
+    read: 0.075,
+    write: null,
+    output: 3.75,
+  });
+  assert.equal(flash38.expires, "2026-12-31");
+});
+
+test("cursor, windsurf, and aider track GPT-5.6 Terra", () => {
+  for (const [source, id] of [
+    ["cursor", "cursor-gpt-5-6-terra"],
+    ["windsurf", "windsurf-gpt-5-6-terra"],
+    ["aider", "aider-gpt-5-6-terra"],
+  ] as const) {
+    const entry = staticEntries(source).find((e) => e.ids[0] === `${source}:${id}`)!;
+    assert.deepEqual(entry.rates, {
+      input: 2,
+      read: 0.2,
+      write: 2.5,
+      output: 12,
+    });
+    assert.deepEqual(entry.benchmarkFamilies, ["GPT-5.6 Terra"]);
+  }
 });
