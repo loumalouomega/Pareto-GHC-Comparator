@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Fixed
+
+- README build badge now uses shields.io flat style like the other badges.
+
 ## 0.10.0
 
 ### Added

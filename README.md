@@ -1,6 +1,6 @@
 # Pareto GHC Comparator
 
-[![Build](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml/badge.svg)](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/loumalouomega/Pareto-GHC-Comparator/extension.yml?style=flat&label=build)](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/workflows/extension.yml)
 [![Version](https://img.shields.io/github/v/tag/loumalouomega/Pareto-GHC-Comparator?style=flat&label=version)](https://github.com/loumalouomega/Pareto-GHC-Comparator/releases)
 [![License: MIT](https://img.shields.io/github/license/loumalouomega/Pareto-GHC-Comparator?style=flat)](LICENSE)
 <!-- [![Marketplace version](https://img.shields.io/visual-studio-marketplace/v/kratos-multiphysics.pareto-ghc-comparator?style=flat)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.pareto-ghc-comparator)
