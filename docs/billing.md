@@ -22,4 +22,6 @@ usd = (uncached × input_rate + cache_read × cached_rate
 
 The same disjoint-bucket, cache-write fallback, and whole-workload long-context rules apply. Zen-gateway free-tier models (`opencode`, `opencode-go` providers with all-zero rates) compare at cost 0 with a **Free tier** label. Models billed directly by their provider (e.g. `openai/*`) report zero rates that mean *unpriced*, not free: they stay unresolved with a "Billed by provider; no verified rate" reason. Unrecognized pricing tiers fall back to base rates with a visible note.
 
+**Cost per task** (the default chart view) reuses the formula above with a fixed illustrative mix of 1,000 input and 1,000 output tokens instead of the editable workload, so models stay comparable without depending on workload inputs. It is a documented proxy for the Artificial Analysis "Cost per Intelligence Index Task" concept, not the official evaluation weights. Context-limit exclusion does not apply to the fixed mix; legacy billing shows the same per-interaction multiplier in both views.
+
 These figures describe estimated usage, not your account bill or measured task cost. No inference request is sent by this extension.

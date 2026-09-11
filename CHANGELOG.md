@@ -4,6 +4,11 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Chart views: **Intelligence vs. cost per task** (default, mirroring the Artificial Analysis homepage) and **Quality vs. workload cost** (the previous editable-workload plot). Per-task costs use a fixed illustrative token mix (1,000 input + 1,000 output) with the same catalog rates, so they stay comparable without depending on workload inputs; legacy billing keeps its per-interaction multiplier in both views.
+- Most-attractive-quadrant highlight (toggleable): shades the above-median-score, at-or-below-median-cost region with median guides, like Artificial Analysis.
+
 ### Fixed
 
 - README build badge now uses shields.io flat style like the other badges.

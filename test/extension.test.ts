@@ -147,7 +147,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
   await receiver({ type: "ready" });
   assert.equal(discoveredVendor, "copilot");
   const last = () => (messages.at(-1) as any).state;
-  assert.equal(last().rows[0].score, 40);
+  assert.equal(last().rows[0].score, 30);
   assert.equal(last().rows[0].frontier, true);
   await receiver({ type: "copy", id: "gpt-5-mini" });
   await receiver({ type: "copy", id: "fake" });

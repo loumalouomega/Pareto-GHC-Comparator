@@ -27,7 +27,9 @@ OpenCode reasoning variants appear as one thinking leaf per `#variant` row under
 
 ## Reading the chart
 
-Higher scores and lower costs are preferred. The dotted line connects the Pareto frontier: models for which no displayed model has both an equal or lower cost and an equal or higher score, with at least one strict improvement. Tied models remain on the frontier. Filtering recomputes the comparison for the visible models. Points with missing data are excluded from the chart, with reasons shown in the table.
+Two chart views are available under **Chart display settings**. **Intelligence vs. cost per task** (the default, mirroring the Artificial Analysis homepage) plots the selected index against a workload-independent per-task cost: the same catalog rates applied to a fixed illustrative mix of 1,000 input and 1,000 output tokens. **Quality vs. workload cost** plots against your editable token workload instead. Legacy billing shows the per-interaction multiplier in both views. Token inputs are hidden in the per-task view; budgets and recommendations follow whichever cost is displayed.
+
+Higher scores and lower costs are preferred. The dotted line connects the Pareto frontier: models for which no displayed model has both an equal or lower cost and an equal or higher score, with at least one strict improvement. Tied models remain on the frontier. The shaded **most attractive quadrant** (toggleable) marks models with an above-median score at or below the median cost; median guides divide the plot. Filtering recomputes the comparison for the visible models. Points with missing data are excluded from the chart, with reasons shown in the table.
 
 Positive costs use a logarithmic axis. If any comparable model has zero cost, the chart switches to a linear axis. The table supports keyboard selection and provides the same values as the chart. Light, dark, and high-contrast themes follow VS Code.
 

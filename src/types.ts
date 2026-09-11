@@ -11,10 +11,13 @@ export type Source =
   | "aider"
   | "amazon-q";
 export type CostScale = "auto" | "log" | "linear";
+export type ChartType = "workload" | "task";
 export interface DisplaySettings {
   labels: boolean;
   frontier: boolean;
   scale: CostScale;
+  chart: ChartType;
+  quadrant: boolean;
 }
 export interface Tokens {
   input: number;
@@ -41,7 +44,7 @@ export interface Options {
 }
 export const defaults: Options = {
   source: "copilot",
-  preset: "coding",
+  preset: "general",
   billing: "credits",
   plan: "pro",
   tokens: { input: 1000, read: 0, write: 0, output: 1000 },
@@ -51,7 +54,7 @@ export const defaults: Options = {
     budgets: { credits: 1, legacy: 1, usd: 1 },
     scoreGap: 3,
   },
-  display: { labels: true, frontier: true, scale: "auto" },
+  display: { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true },
   freeOnly: false,
 };
 export interface Benchmark {

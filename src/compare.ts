@@ -78,6 +78,14 @@ export function parseOptions(value: unknown): Options {
     displayRecord.scale === "auto"
       ? displayRecord.scale
       : "auto";
+  const chart =
+    displayRecord.chart === "workload" || displayRecord.chart === "task"
+      ? displayRecord.chart
+      : "task";
+  const quadrant =
+    displayRecord.quadrant === undefined
+      ? true
+      : displayRecord.quadrant === true;
   if (!allowedBilling(v.source).includes(v.billing))
     throw new Error("That billing mode is not available for this source.");
   return {
@@ -95,7 +103,7 @@ export function parseOptions(value: unknown): Options {
       },
       scoreGap: recommendation.scoreGap,
     },
-    display: { labels, frontier, scale },
+    display: { labels, frontier, scale, chart, quadrant },
     freeOnly: v.freeOnly === true,
     tokens: {
       input: v.tokens.input,
@@ -251,6 +259,32 @@ export function estimate(
       unit: "AI credits",
     },
   };
+}
+/**
+ * Fixed illustrative token mix for the "cost per task" chart view, mirroring
+ * the Artificial Analysis "Cost per Intelligence Index Task" concept: a
+ * workload-independent per-task cost derived from the same catalog rates as
+ * the editable workload estimate. Weights are not AA's official evaluation
+ * weights (undisclosed in the Free API); they are a documented proxy so
+ * models stay comparable without depending on the user's token inputs.
+ */
+export const taskMix = { input: 1000, read: 0, write: 0, output: 1000 };
+export function taskCost(
+  entry: CatalogEntry | undefined,
+  options: Options,
+  now = Date.now(),
+): {
+  cost: number | null;
+  tier?: string;
+  reason?: string;
+  breakdown?: CostBreakdown;
+} {
+  if (options.billing === "legacy") return estimate(entry, options, now);
+  return estimate(
+    entry,
+    { ...options, tokens: { ...taskMix } },
+    now,
+  );
 }
 export function resolveBenchmark(
   entry: CatalogEntry | undefined,
@@ -438,14 +472,19 @@ export function compare(
         ids: { pinnedBenchmarkId?: string; expandedBenchmarkId?: string },
         displayName: string,
       ): Row => {
+        const taskView = options.display.chart === "task";
         const price = crossUnit
           ? { cost: null as number | null, reason: crossUnit }
-          : estimate(entry, options);
+          : taskView
+            ? taskCost(entry, options)
+            : estimate(entry, options);
         const score = matched.benchmark?.scores[options.preset] ?? null;
+        const taskTokens = taskView ? taskMix : options.tokens;
         const tooLong =
+          !taskView &&
           (options.billing === "credits" || options.billing === "usd") &&
           m.maxInputTokens > 0 &&
-          options.tokens.input + options.tokens.read + options.tokens.write >
+          taskTokens.input + taskTokens.read + taskTokens.write >
             m.maxInputTokens;
         return {
           id: rowId,

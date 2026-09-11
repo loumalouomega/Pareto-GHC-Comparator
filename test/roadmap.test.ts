@@ -10,6 +10,8 @@ import {
   parseOptions,
   pinRowId,
   savedOptions,
+  taskCost,
+  taskMix,
   thinkingLabelOf,
   variantDisplayName,
 } from "../src/compare";
@@ -210,10 +212,10 @@ test("checklist exclusions hide models before frontier calculation", () => {
 
 test("display settings default, persist, and migrate", () => {
   const parsed = parseOptions({ ...defaults });
-  assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto" });
+  assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true });
   assert.equal(parsed.freeOnly, false);
   const migrated = savedOptions({ source: "copilot", preset: "coding", billing: "credits", plan: "pro", filter: "", tokens: defaults.tokens, recommendation: defaults.recommendation });
-  assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto" });
+  assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true });
   const legacy = migrateOptions({ source: "codex", billing: "credits" }) as Record<string, unknown>;
   assert.equal(legacy.billing, "usd");
 });
@@ -316,7 +318,7 @@ test("free-only filtering and spotlight use latest discovery", () => {
 });
 
 test("workload excludes display settings but keeps source and freeOnly", () => {
-  const w = workload({ ...defaults, display: { labels: false, frontier: false, scale: "linear" }, freeOnly: true });
+  const w = workload({ ...defaults, display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false }, freeOnly: true });
   assert.ok(!("display" in w));
   assert.equal(w.source, "copilot");
   assert.equal(w.freeOnly, true);
@@ -464,14 +466,18 @@ test("coverage: options migration edge cases", () => {
   assert.equal(badBilling.billing, "credits");
   const kept = parseOptions({
     ...defaults,
-    display: { labels: false, frontier: false, scale: "linear" },
+    display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false },
     freeOnly: true,
   });
   assert.equal(kept.display.labels, false);
   assert.equal(kept.display.scale, "linear");
+  assert.equal(kept.display.chart, "workload");
+  assert.equal(kept.display.quadrant, false);
   const fallback = parseOptions({ ...defaults, display: { labels: 1, frontier: 0, scale: "x" } });
   assert.equal(fallback.display.labels, false);
   assert.equal(fallback.display.scale, "auto");
+  assert.equal(fallback.display.chart, "task");
+  assert.equal(fallback.display.quadrant, true);
 });
 
 test("coverage: estimate legacy, free tier, long context, and missing entry", () => {
@@ -559,7 +565,11 @@ test("coverage: cross-unit, context limits, and benchmark resolution", () => {
   const tooLong = compare(
     [{ ...tiny, source: "copilot" }],
     [{ id: "t", slug: "t", name: "Tiny", provider: "P", scores: { general: 1, coding: 1, agentic: 1 } }],
-    { ...defaults, tokens: { input: 11, read: 0, write: 0, output: 0 } },
+    {
+      ...defaults,
+      display: { ...defaults.display, chart: "workload" },
+      tokens: { input: 11, read: 0, write: 0, output: 0 },
+    },
   );
   assert.ok(tooLong.every((r) => r.cost === null));
   assert.match(tooLong[0]?.reasons.join(" ") ?? "", /context limit/);
@@ -657,10 +667,47 @@ test("coverage: recommendations and profiles branches", () => {  const empty = r
   assert.throws(() => changeProfile(invalid, defaults, { action: "apply", id: "missing" }));
 });
 
+test("task chart view uses fixed per-task mix, workload view uses tokens", () => {
+  const entry = staticEntries("codex").find((e) => e.ids[0] === "codex:gpt-5-6-terra")!;
+  const base = { ...defaults, source: "codex" as const, billing: "usd" as const };
+  const small = { ...base, tokens: { input: 10, read: 0, write: 0, output: 10 } };
+  const large = { ...base, tokens: { input: 50000, read: 0, write: 0, output: 50000 } };
+  const price = taskCost(entry, base);
+  assert.ok(price.cost !== null && price.breakdown);
+  assert.deepEqual(
+    { inputTokens: price.breakdown!.inputTokens, outputTokens: price.breakdown!.outputTokens },
+    { inputTokens: taskMix.input, outputTokens: taskMix.output },
+  );
+  // Independent of the user's workload token inputs.
+  assert.equal(taskCost(entry, small).cost, taskCost(entry, large).cost);
+  // Matches a workload estimate run with the fixed mix.
+  assert.equal(
+    taskCost(entry, base).cost,
+    estimate(entry, { ...base, tokens: { ...taskMix } }).cost,
+  );
+  const models: Benchmark[] = [
+    { id: "t", slug: "t", name: "GPT-5.6 Terra", provider: "OpenAI", scores: { general: 70, coding: 70, agentic: 70 } },
+  ];
+  const available: AvailableModel[] = [
+    { id: "codex:gpt-5-6-terra", name: "GPT-5.6 Terra", family: "gpt", maxInputTokens: 400000, source: "codex" },
+  ];
+  const taskRows = compare(available, models, {
+    ...large,
+    display: { ...base.display, chart: "task" },
+  });
+  const workloadRows = compare(available, models, {
+    ...large,
+    display: { ...base.display, chart: "workload" },
+  });
+  assert.equal(taskRows[0].cost, taskCost(entry, base).cost);
+  assert.equal(workloadRows[0].cost, estimate(entry, large).cost);
+  assert.notEqual(taskRows[0].cost, workloadRows[0].cost);
+});
+
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-scale", "free-only", "checklist", "export-csv", "export-png", "spotlight-result"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "free-only", "checklist", "export-csv", "export-png", "spotlight-result"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

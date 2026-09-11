@@ -113,7 +113,8 @@ for (const theme of ["light", "dark", "high-contrast"])
         try {
           const result = changeProfile(profiles, state.options, m.change);
           profiles = result.store;
-          state.options = result.options;
+          // Mirror the host: applying a profile preserves chart display.
+          state.options = { ...result.options, display: state.options.display };
           if (m.change.action === "apply") state.optionsRevision++;
           state.message = "Profile saved.";
         } catch (error) {
@@ -227,6 +228,31 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.goto("https://pareto.test/");
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await expect(page.locator("canvas")).toBeVisible();
+    // Intelligence vs. cost per task is the default chart view.
+    await expect(page.locator("#chart-title")).toHaveText(
+      "Intelligence vs. cost per task",
+    );
+    await expect(page.locator("#cost-heading")).toHaveText("AI credits / task");
+    await expect(page.locator("#tokens")).toBeHidden();
+    await expect(page.locator("#display-chart")).toHaveValue("task");
+    await expect(page.locator("canvas")).toHaveAttribute(
+      "aria-label",
+      /per task/,
+    );
+    // The most-attractive quadrant can be toggled without breaking the chart.
+    await page.locator("#display-quadrant").uncheck();
+    await expect(page.locator("canvas")).toBeVisible();
+    await expect
+      .poll(() =>
+        messages.some(
+          (m) =>
+            m.type === "options" &&
+            (m.options as { display: { quadrant: boolean } }).display
+              .quadrant === false,
+        ),
+      )
+      .toBeTruthy();
+    await page.locator("#display-quadrant").check();
     const model = page.getByRole("button", { name: "GPT-5.4", exact: true });
     await model.focus();
     await page.keyboard.press("Enter");
@@ -256,7 +282,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       "Gemini 3.8 Flash",
     );
     await expect(page.locator("#recommendation-result")).toContainText(
-      "at least 45",
+      "at least 38",
     );
 
     // Multiple matching variants expand automatically into thinking rows with
@@ -324,6 +350,14 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#profile-save").click();
     await expect(page.locator("#status")).toContainText("already exists");
+    // Workload token inputs live in the workload chart view.
+    await page.locator("#display-chart").selectOption("workload");
+    await expect(page.locator("#chart-title")).toHaveText(
+      "Quality vs. usage cost",
+    );
+    await expect(page.locator("#cost-heading")).toHaveText("AI credits");
+    await expect(page.locator("#tokens")).toBeVisible();
+    await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await page.locator("#input").fill("5000");
     await page.locator("#preset").selectOption("agentic");
     await page.locator("#recommendation-mode").selectOption("budget");
@@ -335,7 +369,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#profile-apply").click();
     await expect(page.locator("#profile-apply")).toBeFocused();
     await expect(page.locator("#input")).toHaveValue("1000");
-    await expect(page.locator("#preset")).toHaveValue("coding");
+    await expect(page.locator("#preset")).toHaveValue("general");
     await expect(page.locator("#billing")).toHaveValue("credits");
     await expect(page.locator("#plan")).toHaveValue("pro");
     await expect(page.locator("#recommendation-mode")).toHaveValue("nearBest");
@@ -365,10 +399,14 @@ for (const theme of ["light", "dark", "high-contrast"])
       fullPage: true,
     });
     // Source switching resets billing and relabels every cost surface.
+    await page.locator("#display-chart").selectOption("task");
+    await expect(page.locator("#chart-title")).toHaveText(
+      "Intelligence vs. cost per task",
+    );
     await page.locator("#source").selectOption("opencode");
     await expect(page.locator("#billing")).toHaveValue("usd");
     await expect(page.locator("#eyebrow")).toHaveText("PARETO / OPENCODE");
-    await expect(page.locator("#cost-heading")).toHaveText("USD");
+    await expect(page.locator("#cost-heading")).toHaveText("USD / task");
     await expect(page.locator("#count")).toHaveText("1 plotted / 2 models");
     await expect(page.locator("#recommendation-result")).toContainText(
       "Kimi K2.7 Code",
@@ -387,6 +425,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#eyebrow")).toHaveText(
       "PARETO / GITHUB COPILOT",
     );
+    await expect(page.locator("#cost-heading")).toHaveText("AI credits / task");
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     // Grouped selection: families contain models; bulk actions use one message.
     await expect(page.locator("#checklist .check-family")).toHaveCount(5);
@@ -414,6 +453,8 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.getByLabel("Filter models", { exact: true }).fill("no-such-model");
     await expect(page.locator("#rows tr")).toHaveCount(0);
     await page.getByLabel("Filter models", { exact: true }).fill("");
+    await page.locator("#display-chart").selectOption("workload");
+    await expect(page.locator("#tokens")).toBeVisible();
     await page
       .getByRole("combobox", { name: "Billing", exact: true })
       .selectOption("legacy");

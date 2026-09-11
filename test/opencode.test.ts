@@ -360,6 +360,7 @@ test("variant rows share the base benchmark family and USD context limits apply"
   );
   const rows = compare(models, [benchmark("a", "GPT-5.4 (low)")], {
     ...usdOptions(),
+    display: { ...usdOptions().display, chart: "workload" },
     tokens: { input: 900, read: 200, write: 0, output: 10 },
   });
   assert.equal(rows.length, 2);

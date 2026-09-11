@@ -139,16 +139,20 @@ test("filter recomputes frontier and context limits exclude impossible estimates
     },
     { id: "gpt-5.5", name: "GPT-5.5", family: "gpt-5.5", maxInputTokens: 500 },
   ];
+  const workloadView = {
+    ...defaults,
+    display: { ...defaults.display, chart: "workload" as const },
+  };
   const results = compare(
     available,
     [benchmark("a"), benchmark("b", "GPT-5.5")],
-    defaults,
+    workloadView,
   );
   assert.equal(results[0].frontier, true);
   assert.equal(results[1].cost, null);
   assert.match(results[1].reasons.join(), /context limit/);
   assert.equal(
-    compare(available, [benchmark("a")], { ...defaults, filter: "5.4" }).length,
+    compare(available, [benchmark("a")], { ...workloadView, filter: "5.4" }).length,
     1,
   );
   const subset = markFrontier([row("a", 1, 10), row("b", 2, 9)]).filter(

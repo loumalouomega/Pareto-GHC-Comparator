@@ -138,6 +138,48 @@ const labels: Plugin<"scatter"> = {
 function plotted(): Row[] {
   return state?.rows.filter((r) => r.cost !== null && r.score !== null) ?? [];
 }
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+/** Shaded most-attractive quadrant: above-median score at or below median cost. */
+function quadrantPlug(xMed: number, yMed: number): Plugin<"scatter"> {
+  return {
+    id: "attractiveQuadrant",
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      const x = scales.x,
+        y = scales.y;
+      if (xMed < x.min || xMed > x.max || yMed < y.min || yMed > y.max) return;
+      const left = chartArea.left,
+        right = x.getPixelForValue(xMed),
+        top = chartArea.top,
+        bottom = y.getPixelForValue(yMed);
+      if (!(right > left && bottom > top)) return;
+      ctx.save();
+      ctx.fillStyle = "#22c55e22";
+      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.strokeStyle =
+        getComputedStyle(document.body)
+          .getPropertyValue("--vscode-panel-border")
+          .trim() || "#88888855";
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(right, top);
+      ctx.lineTo(right, chartArea.bottom);
+      ctx.moveTo(left, bottom);
+      ctx.lineTo(chartArea.right, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "11px sans-serif";
+      ctx.fillStyle = getComputedStyle(document.body).color;
+      ctx.fillText("Most attractive quadrant", left + 6, top + 14);
+      ctx.restore();
+    },
+  };
+}
 function drawChart() {
   if (!state) return;
   const rows = plotted(),
@@ -157,9 +199,23 @@ function drawChart() {
       : "logarithmic";
   const scaleNote =
     requested === "log" && hasZero ? " (zero-cost rows require linear)" : "";
+  const taskView = state.options.display.chart === "task";
+  const xNoun =
+    state.options.billing === "credits"
+      ? taskView
+        ? "AI credits per task"
+        : "Estimated AI credits"
+      : state.options.billing === "legacy"
+        ? "Premium requests per interaction"
+        : taskView
+          ? "USD per task"
+          : "Estimated USD";
+  el("chart-title").textContent = taskView
+    ? "Intelligence vs. cost per task"
+    : "Quality vs. usage cost";
   el("chart").setAttribute(
     "aria-label",
-    `${rows.length} models: ${state.options.preset} quality versus ${unitCost(state.options.billing)}, ${scale} cost scale. The table below provides all values and model selection.`,
+    `${rows.length} models: ${state.options.preset} quality versus ${taskView ? `${unitCost(state.options.billing)} per task (fixed illustrative mix)` : unitCost(state.options.billing)}, ${scale} cost scale. The table below provides all values and model selection.`,
   );
   const data: ScatterDataPoint[] = rows.map((r) => ({
     x: r.cost!,
@@ -167,6 +223,19 @@ function drawChart() {
   }));
   chart?.destroy();
   const showFrontier = state.options.display.frontier;
+  const showQuadrant =
+    state.options.display.quadrant && rows.length >= 2;
+  const plugins: Plugin<"scatter">[] = [
+    ...(state.options.display.labels ? [labels] : []),
+    ...(showQuadrant
+      ? [
+          quadrantPlug(
+            median(rows.map((r) => r.cost!)),
+            median(rows.map((r) => r.score!)),
+          ),
+        ]
+      : []),
+  ];
   chart = new Chart(el<HTMLCanvasElement>("chart"), {
     type: "scatter",
     data: {
@@ -207,7 +276,7 @@ function drawChart() {
           : []),
       ],
     },
-    plugins: state.options.display.labels ? [labels] : [],
+    plugins,
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -220,7 +289,7 @@ function drawChart() {
           callbacks: {
             label: (item) => {
               const r = rows[item.dataIndex];
-              return `${r.name}: ${format(r.score)} score · ${format(r.cost)} ${unitNoun(state!.options.billing)}${r.frontier ? " · Pareto frontier" : ""}`;
+              return `${r.name}: ${format(r.score)} score · ${format(r.cost)} ${taskView ? `${unitNoun(state!.options.billing)} per task` : unitNoun(state!.options.billing)}${r.frontier ? " · Pareto frontier" : ""}`;
             },
           },
         },
@@ -230,7 +299,7 @@ function drawChart() {
           type: scale,
           title: {
             display: true,
-            text: `${state.options.billing === "credits" ? "Estimated AI credits" : state.options.billing === "legacy" ? "Premium requests per interaction" : "Estimated USD"} (${scale === "linear" ? "linear" : "log"} scale)${scaleNote}`,
+            text: `${xNoun} (${scale === "linear" ? "linear" : "log"} scale)${scaleNote}`,
             color: foreground,
           },
           ticks: { color: foreground },
@@ -294,6 +363,14 @@ function renderDetails() {
         "hint",
       ),
     );
+    if (state.options.display.chart === "task")
+      target.append(
+        text(
+          "p",
+          "Per-task estimate uses a fixed illustrative token mix, not your workload inputs. Switch the chart view to compare your own workload.",
+          "hint",
+        ),
+      );
   } else if (row.cost === 0) {
     target.append(text("p", "Free tier: no usage cost.", "hint"));
   }
@@ -698,7 +775,9 @@ function render(next: ViewState) {
       el<HTMLInputElement>(key).value = String(state.options.tokens[key]);
     initialized = true;
   }
-  el("tokens").hidden = state.options.billing === "legacy";
+  el("tokens").hidden =
+    state.options.billing === "legacy" ||
+    state.options.display.chart === "task";
   el("legacy-note").hidden = state.options.billing !== "legacy";
   el("plan-label").hidden = state.options.billing !== "legacy";
   const meta = sources[state.options.source];
@@ -712,12 +791,17 @@ function render(next: ViewState) {
   el("subtitle").textContent = meta.subtitle;
   el("budget-label").hidden = state.options.recommendation.mode !== "budget";
   el("gap-label").hidden = state.options.recommendation.mode !== "nearBest";
+  const perTask =
+    state.options.display.chart === "task" &&
+    state.options.billing !== "legacy"
+      ? " per task"
+      : "";
   el("budget-unit").textContent =
     state.options.billing === "credits"
-      ? "Maximum AI credits"
+      ? `Maximum AI credits${perTask}`
       : state.options.billing === "legacy"
         ? "Maximum premium requests"
-        : "Maximum USD";
+        : `Maximum USD${perTask}`;
   el("recommendation-result").textContent = state.recommendation.explanation;
   renderProfiles(previousActive);
   el("status").textContent = state.message;
@@ -742,6 +826,10 @@ function render(next: ViewState) {
     state.options.display.frontier;
   (el("display-scale") as HTMLSelectElement).value =
     state.options.display.scale;
+  (el("display-chart") as HTMLSelectElement).value =
+    state.options.display.chart;
+  (el("display-quadrant") as HTMLInputElement).checked =
+    state.options.display.quadrant;
   (el("free-only-label") as HTMLElement).hidden =
     state.options.source !== "opencode";
   (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
@@ -772,11 +860,17 @@ function render(next: ViewState) {
   }
   renderChecklist();
   el("cost-heading").textContent =
-    state.options.billing === "credits"
-      ? "AI credits"
-      : state.options.billing === "legacy"
-        ? "Requests"
-        : "USD";
+    state.options.display.chart === "task"
+      ? state.options.billing === "credits"
+        ? "AI credits / task"
+        : state.options.billing === "legacy"
+          ? "Requests"
+          : "USD / task"
+      : state.options.billing === "credits"
+        ? "AI credits"
+        : state.options.billing === "legacy"
+          ? "Requests"
+          : "USD";
   const body = el("rows");
   body.replaceChildren();
   for (const row of state.rows) {
@@ -920,6 +1014,8 @@ function sendOptions(): boolean {
       labels: (el("display-labels") as HTMLInputElement).checked,
       frontier: (el("display-frontier") as HTMLInputElement).checked,
       scale: (el("display-scale") as HTMLSelectElement).value as Options["display"]["scale"],
+      chart: (el("display-chart") as HTMLSelectElement).value as Options["display"]["chart"],
+      quadrant: (el("display-quadrant") as HTMLInputElement).checked,
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
   };
@@ -947,6 +1043,8 @@ for (const id of [
   "score-gap",
   "display-labels",
   "display-frontier",
+  "display-chart",
+  "display-quadrant",
   "display-scale",
   "free-only",
 ]) {
