@@ -60,6 +60,12 @@ test("extension discovers Copilot models, serves cached data, validates messages
       }),
     },
     ViewColumn: { One: 1 },
+    RelativePattern: class {
+      constructor(
+        public base: unknown,
+        public pattern: string,
+      ) {}
+    },
     window: {
       createWebviewPanel: () => ({
         webview: {

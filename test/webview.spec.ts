@@ -52,6 +52,42 @@ const available = [
   ["gemini-3.8-flash", "Gemini 3.8 Flash"],
   ["unknown-model", "Unmapped model"],
 ].map(([id, name]) => ({ id, name, family: id, maxInputTokens: 1000000 }));
+const usageFixture = {
+  scannedAt: Date.now(),
+  fileCount: 2,
+  requestCount: 3,
+  promptTokens: 300,
+  outputTokens: 150,
+  premiumEstimate: 6.5,
+  estimatedTokens: 1,
+  unknownModels: ["copilot/mystery"],
+  dateRange: { from: Date.parse("2026-09-01"), to: Date.parse("2026-09-03") },
+  medianPrompt: 150,
+  medianOutput: 75,
+  medianSample: 3,
+  premiumP90: 2,
+  creditP90: 0.5,
+  creditSample: 2,
+  models: [
+    { modelId: "copilot/gpt-5-mini", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 0.66 },
+    { modelId: "copilot/mystery", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1 },
+  ],
+  days: [
+    { date: "2026-09-03", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
+  ],
+  workspaces: [
+    { id: "ws1", path: "/home/user/myrepo", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 5 },
+    { id: "deadbeef", path: "", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1.5 },
+    ...Array.from({ length: 9 }, (_, i) => ({
+      id: `ws-extra-${i}`,
+      path: `/home/user/proj${i}`,
+      requests: 1,
+      promptTokens: 10,
+      outputTokens: 5,
+      premiumEstimate: 0.1,
+    })),
+  ],
+};
 const opencodeAvailable = [
   {
     id: "opencode:opencode-go/kimi-k2.7-code",
@@ -157,6 +193,10 @@ for (const theme of ["light", "dark", "high-contrast"])
         ).map((a) => a.id);
         if (m.excluded) for (const id of listedIds) excluded.add(id);
         else excluded.clear();
+      }
+      if (m.type === "scanUsage") {
+        state.usage = structuredClone(usageFixture);
+        state.usageWatching = true;
       }
       if (m.type === "clearUsage") {
         state.usage = null;
@@ -496,52 +536,6 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
     await page.locator("#usage-scan").click();
     expect(messages.some((m) => m.type === "scanUsage")).toBeTruthy();
-    await page.evaluate(
-      (s) =>
-        window.dispatchEvent(
-          new MessageEvent("message", { data: { type: "state", state: s } }),
-        ),
-      {
-        ...state,
-        usageWatching: true,
-        usage: {
-          scannedAt: Date.now(),
-          fileCount: 2,
-          requestCount: 3,
-          promptTokens: 300,
-          outputTokens: 150,
-          premiumEstimate: 6.5,
-          estimatedTokens: 1,
-          unknownModels: ["copilot/mystery"],
-          dateRange: { from: Date.parse("2026-09-01"), to: Date.parse("2026-09-03") },
-          medianPrompt: 150,
-          medianOutput: 75,
-          medianSample: 3,
-          premiumP90: 2,
-          creditP90: 0.5,
-          creditSample: 2,
-          models: [
-            { modelId: "copilot/gpt-5-mini", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 0.66 },
-            { modelId: "copilot/mystery", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1 },
-          ],
-          days: [
-            { date: "2026-09-03", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
-          ],
-          workspaces: [
-            { id: "ws1", path: "/home/user/myrepo", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 5 },
-            { id: "deadbeef", path: "", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1.5 },
-            ...Array.from({ length: 9 }, (_, i) => ({
-              id: `ws-extra-${i}`,
-              path: `/home/user/proj${i}`,
-              requests: 1,
-              promptTokens: 10,
-              outputTokens: 5,
-              premiumEstimate: 0.1,
-            })),
-          ],
-        },
-      },
-    );
     await expect(page.locator("#usage-summary")).toContainText("3 requests");
     await expect(page.locator("#usage-models")).toContainText("copilot/gpt-5-mini");
     await expect(page.locator("#usage-days")).toContainText("2026-09-03");

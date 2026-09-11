@@ -35,7 +35,10 @@ export function storageCandidates(
   return [join(base, "Code", "User", "workspaceStorage"), join(base, "Code - Insiders", "User", "workspaceStorage")];
 }
 export function uriToPath(uri: string, storageRoot: string): string {
-  if (uri.startsWith("file:///")) return decodeURIComponent(uri.slice("file:///".length));
+  if (uri.startsWith("file://")) {
+    const decoded = decodeURIComponent(uri.slice("file://".length));
+    return decoded.replace(/^\/([a-zA-Z]:)/, "$1");
+  }
   if (uri.startsWith("vscode-userdata:///")) {
     const rel = decodeURIComponent(uri.slice("vscode-userdata:///".length));
     const parts = storageRoot.split(/[/\\]/);

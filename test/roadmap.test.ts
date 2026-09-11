@@ -1,5 +1,8 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   baseModelIdOf,
   compare,
@@ -26,7 +29,9 @@ import { usageMultiplier } from "../src/usageMultipliers";
 import {
   aggregateUsage,
   blankUsageIndex,
+  discoverUsageFiles,
   normalizeUsageModelId,
+  resolveWorkspace,
   parseUsageJsonl,
   parseUsageLegacyJson,
   premiumForRequest,
@@ -236,7 +241,7 @@ test("display settings default, persist, and migrate", () => {
   assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" });
   assert.equal(parsed.freeOnly, false);
   const migrated = savedOptions({ source: "copilot", preset: "coding", billing: "credits", plan: "pro", filter: "", tokens: defaults.tokens, recommendation: defaults.recommendation });
-  assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true });
+  assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" });
   const legacy = migrateOptions({ source: "codex", billing: "credits" }) as Record<string, unknown>;
   assert.equal(legacy.billing, "usd");
 });
@@ -938,10 +943,10 @@ test("usage JSONL parser honors token, model, and timestamp precedence", () => {
         inputState: { selectedModel: { identifier: "copilot/gpt-5-mini" } },
       },
     }),
-    JSON.stringify({ kind: 2, k: ["requests"], v: [{ modelId: "copilot/appended", requestId: "r1", timestamp: 1100 }] }),
+    JSON.stringify({ kind: 2, k: ["requests"], v: [null, { modelId: "copilot/appended", requestId: "r1", timestamp: 1100 }] }),
     JSON.stringify({
       kind: 1,
-      k: ["requests", 0, "result"],
+      k: ["requests", 1, "result"],
       v: {
         metadata: { promptTokens: 10, outputTokens: 5, toolCallRounds: [{}, {}] },
         usage: { promptTokens: 99, completionTokens: 99 },
@@ -950,7 +955,7 @@ test("usage JSONL parser honors token, model, and timestamp precedence", () => {
     }),
     JSON.stringify({
       kind: 1,
-      k: ["requests", 1, "result"],
+      k: ["requests", 2, "result"],
       v: { metadata: { resolvedModel: "claude-opus-4-7" }, usage: {} },
     }),
     "not json",
@@ -1021,7 +1026,7 @@ test("usage file index selects changed files and reports deletions", () => {
   assert.deepEqual(changed.map((c) => c.filePath), ["/b.jsonl"]);
   assert.deepEqual(deleted, ["/gone.jsonl"]);
   index.files["/a.jsonl"] = { size: 11, mtime: 100, parser: 1 };
-  assert.equal(selectChangedFiles([cand("/a.jsonl", 11, 100)], index).changed.length, 1);
+  assert.equal(selectChangedFiles([cand("/a.jsonl", 12, 100)], index).changed.length, 1);
   index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: 0 };
   assert.equal(selectChangedFiles([cand("/a.jsonl", 10, 100)], index).changed.length, 1);
 });
@@ -1076,6 +1081,41 @@ test("usage aggregation totals requests with per-event premium eras", () => {
   assert.ok(validUsageFile({ version: 1, scannedAt: 1, index: blankUsageIndex(), files: {} }));
   assert.equal(validUsageFile({ version: 2 }), false);
   assert.equal(validUsageFile(null), false);
+});
+
+test("usage budget suggestions handle empty and unpriced windows", () => {
+  const req = (modelId: string | null) => ({
+    sessionId: "s", workspaceId: "w", requestIndex: 0, modelId,
+    timestampMs: null as number | null, promptTokens: 100, outputTokens: 50,
+    toolCallRounds: 0, tokensEstimated: false,
+  });
+  const free = aggregateUsage([
+    { workspaceId: "w", workspacePath: "/r", requests: [req("copilot/auto"), req("copilot/auto")] },
+  ]);
+  assert.equal(free.medianSample, 2);
+  assert.equal(free.premiumP90, null);
+  assert.equal(free.dateRange, null);
+  const legacyNote = suggestBudget(free, "legacy");
+  assert.equal(legacyNote?.value, null);
+  assert.match(legacyNote?.note ?? "", /No priced legacy/);
+  const mystery = aggregateUsage([
+    { workspaceId: "w", workspacePath: "/r", requests: [req("copilot/mystery")] },
+  ]);
+  const creditNote = suggestBudget(mystery, "credits");
+  assert.equal(creditNote?.value, null);
+  assert.match(creditNote?.note ?? "", /No priced credit/);
+  const tied = aggregateUsage([
+    { workspaceId: "b", workspacePath: "/b", requests: [req("copilot/gpt-5.4")] },
+    { workspaceId: "a", workspacePath: "/a", requests: [req("copilot/gpt-5-mini")] },
+  ]);
+  assert.deepEqual(
+    tied.workspaces.map((w) => w.id),
+    ["a", "b"],
+  );
+  assert.deepEqual(
+    tied.models.map((m) => m.modelId),
+    ["copilot/gpt-5-mini", "copilot/gpt-5.4"],
+  );
 });
 
 test("usage messages validate scan and clear actions", () => {
@@ -1143,6 +1183,143 @@ test("only-my-models filters before the frontier with preserved exclusions", () 
   assert.equal(parseOptions({ ...defaults, onlyMine: true }).onlyMine, true);
 });
 
+test("usage discovery resolves workspaces across storage roots", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pareto-ws-"));
+  const repo = join(root, "myrepo");
+  mkdirSync(join(root, "ws1", "chatSessions"), { recursive: true });
+  mkdirSync(join(root, "ws2", "chatSessions"), { recursive: true });
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(
+    join(root, "ws1", "workspace.json"),
+    JSON.stringify({ folder: `file://${repo}` }),
+  );
+  const line = JSON.stringify({
+    kind: 1,
+    k: ["requests", 0, "result"],
+    v: { metadata: { promptTokens: 3, outputTokens: 1 }, usage: {} },
+  });
+  writeFileSync(join(root, "ws1", "chatSessions", "a.jsonl"), `${line}\n`);
+  writeFileSync(
+    join(root, "ws1", "chatSessions", "b.json"),
+    JSON.stringify({ sessionId: "old", requests: [] }),
+  );
+  writeFileSync(join(root, "ws1", "chatSessions", "notes.txt"), "ignore me");
+  writeFileSync(join(root, "ws2", "chatSessions", "c.jsonl"), "\n");
+  const found = await discoverUsageFiles([root, join(root, "missing")]);
+  assert.equal(found.length, 3);
+  const byFile = new Map(found.map((c) => [c.filePath.split("/").pop(), c]));
+  assert.equal(byFile.get("a.jsonl")?.workspacePath, repo);
+  assert.equal(byFile.get("a.jsonl")?.legacy, false);
+  assert.equal(byFile.get("b.json")?.legacy, true);
+  assert.equal(byFile.get("c.jsonl")?.workspacePath, "");
+  assert.ok((byFile.get("a.jsonl")?.size ?? 0) > 0);
+  const single = await resolveWorkspace(join(root, "ws1"), root);
+  assert.deepEqual(single, { id: "ws1", path: repo });
+  const multiRoot = join(root, "ws3");
+  mkdirSync(join(multiRoot, "chatSessions"), { recursive: true });
+  writeFileSync(
+    join(multiRoot, "workspace.json"),
+    JSON.stringify({ workspace: `file://${join(root, "w.code-workspace")}` }),
+  );
+  writeFileSync(
+    join(root, "w.code-workspace"),
+    JSON.stringify({ folders: [{ uri: `file://${repo}` }, { path: "rel" }] }),
+  );
+  const multi = await resolveWorkspace(multiRoot, root);
+  assert.equal(multi.path, `${repo}; ${root}/rel`);
+  const missing = await resolveWorkspace(join(root, "nope"), root);
+  assert.deepEqual(missing, { id: "nope", path: "" });
+});
+
+test("usage resolution tolerates malformed workspace metadata", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pareto-ws-edge-"));
+  const dir = join(root, "edge");
+  mkdirSync(join(dir, "chatSessions"), { recursive: true });
+  mkdirSync(join(root, "bare", "chatSessions"), { recursive: true });
+  mkdirSync(join(root, "plain"), { recursive: true });
+  writeFileSync(join(dir, "workspace.json"), JSON.stringify({ folder: 42, workspace: `file://${join(root, "ghost.code-workspace")}` }));
+  writeFileSync(join(root, "wsArray.json"), "{}");
+  const ghost = await resolveWorkspace(dir, root);
+  assert.ok(ghost.path.endsWith("ghost.code-workspace"));
+  const empty = await resolveWorkspace(join(root, "bare"), root);
+  assert.deepEqual(empty, { id: "bare", path: "" });
+  writeFileSync(join(dir, "workspace.json"), JSON.stringify({ workspace: `file://${join(root, "flat.code-workspace")}` }));
+  writeFileSync(join(root, "flat.code-workspace"), JSON.stringify({ folders: [null, {}, { uri: "" }, { path: "r" }] }));
+  const flat = await resolveWorkspace(dir, root);
+  assert.ok(flat.path.endsWith("r"));
+  writeFileSync(join(root, "flat.code-workspace"), JSON.stringify({ folders: "nope" }));
+  const fallback = await resolveWorkspace(dir, root);
+  assert.ok(fallback.path.endsWith("flat.code-workspace"));
+  mkdirSync(join(root, "plain", "chatSessions", "d.jsonl"), { recursive: true });
+  mkdirSync(join(root, "nochats"));
+  const found = await discoverUsageFiles([root, root]);
+  const names = found.map((c) => c.filePath.split("/").pop());
+  assert.ok(!names.includes("d.jsonl"));
+  assert.ok(storageCandidates("win32", {}).some((p) => p.includes("AppData")));
+  assert.ok(uriToPath("vscode-userdata:///Code/x", "").startsWith("/"));
+  assert.ok(!validUsageFile({ version: 1, scannedAt: NaN, index: blankUsageIndex(), files: {} }));
+  assert.ok(!validUsageFile({
+    version: 1,
+    scannedAt: 1,
+    index: { version: 1, files: { f: { size: "x", mtime: 1, parser: 1 } } },
+    files: {},
+  }));
+});
+
+test("usage legacy array responses estimate from joined text", () => {
+  const text = JSON.stringify({
+    sessionId: "arr",
+    requests: [
+      {
+        message: { text: "do the thing" },
+        response: [{ value: "first part " }, { content: "second part" }],
+      },
+    ],
+  });
+  const parsed = parseUsageLegacyJson(text, "w", "stem");
+  assert.equal(parsed.requests.length, 1);
+  assert.equal(parsed.requests[0].tokensEstimated, true);
+  assert.ok(parsed.requests[0].outputTokens > 0);
+  assert.ok(!validUsageFile({ version: 1, scannedAt: 1, index: blankUsageIndex(), files: { bad: 1 } }));
+  assert.ok(!validUsageFile({
+    version: 1,
+    scannedAt: 1,
+    index: blankUsageIndex(),
+    files: { f: { workspaceId: "w", workspacePath: "", requests: [{ promptTokens: "x" }] } },
+  }));
+});
+
+test("BYOK rejects non-object entries and oversized tables", () => {
+  assert.throws(() => parseByokStore({ "opencode:openai/x": 5 }));
+  const big: Record<string, unknown> = {};
+  for (let i = 0; i < 1001; i++) big[`opencode:p/m${i}`] = { rates: { input: 1, read: 1, write: null, output: 1 } };
+  assert.throws(() => parseByokStore(big));
+});
+
+test("efficiency ties break deterministically by name then id", () => {
+  const mk = (id: string, name: string) => ({
+    id,
+    modelId: id,
+    baseModelId: id,
+    name,
+    provider: "P",
+    score: null as number | null,
+    cost: 1,
+    frontier: false,
+    reasons: [] as string[],
+    mappingStatus: "exact" as const,
+    candidateIds: [] as string[],
+    dominatedBy: [] as string[],
+  });
+  const sorted = sortRowsByEfficiency([mk("b", "same"), mk("a", "same")]);
+  assert.deepEqual(sorted.map((r) => r.id), ["a", "b"]);
+  const priced = (id: string) => ({ ...mk(id, "same"), score: 10 as number | null, cost: 10 as number | null });
+  assert.deepEqual(
+    sortRowsByEfficiency([priced("b"), priced("a")]).map((r) => r.id),
+    ["a", "b"],
+  );
+});
+
 test("workspace labels shorten paths and explain unmapped storage", () => {
   assert.equal(workspaceLabel("/home/user/repo", "abc123", false), "repo");
   assert.equal(workspaceLabel("C:\\Users\\me\\proj", "abc123", false), "proj");
@@ -1150,6 +1327,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
   assert.equal(workspaceLabel("/home/user/repo", "abc123", true), "/home/user/repo");
   assert.equal(workspaceLabel("", "abc123", false), "abc123 · unmapped workspace (no readable workspace.json)");
   assert.equal(workspaceLabel("", "abc123", true), "abc123 · unmapped workspace (no readable workspace.json)");
+  assert.equal(workspaceLabel(";", "abc123", false), "abc123");
 });
 
 test("coverage: webview shell exposes new controls and CSP", async () => {
