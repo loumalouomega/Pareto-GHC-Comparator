@@ -135,6 +135,48 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - The gap indicator names the best free model, its score, and how many index points it trails the best overall model.
 - Fixture tests cover free-only filtering, gap math, and a model transitioning from free to paid between discoveries (latest discovery wins).
 
+### Tier 2 — Additional assistant sources via static known-model registries
+
+**Admission criterion:** Add comparison coverage for agentic coding assistants beyond Copilot and OpenCode (Claude Code, Codex, Gemini CLI, and similar) without live account discovery, CLI spawning, inference requests, or model switching.
+
+**Outcome:** Users compare a priori known company models for Claude Code (Anthropic), Codex (OpenAI), Gemini CLI/Code Assist (Google), and similar assistants against the same Artificial Analysis benchmark snapshot and illustrative workloads. No sign-in, binary, or provider connection is required to view these registries.
+
+**Current gap:** Only Copilot (live `vscode.lm` discovery plus dated pricing catalog) and OpenCode (live `opencode models --verbose` discovery plus live USD rates) are comparable. Other assistants have no source, even though their model names and public pricing are a priori known.
+
+#### Static registries for Claude Code, Codex, and Gemini CLI
+
+**Effort:** M. **Dependencies:** None; reuses existing benchmark snapshot, `benchmarkFamilies` alias mechanism, filtering, frontier, and recommendation machinery unchanged.
+
+**Deliverables:**
+
+- One static, versioned registry per assistant (initial scope: Claude Code, Codex, Gemini CLI or its Code Assist backing models), each entry holding an explicit stable ID, display name, vendor, backing company model, and source namespace (e.g. `claude-code:<model>`, `codex:<model>`, `gemini-cli:<model>`) so identical base names cannot collide across sources.
+- No live discovery for these sources: the registry is the available set, clearly labeled as "known models, not your account availability" (catalog membership alone does not imply access). Copilot and OpenCode live discovery stay as-is.
+- Benchmark matching reuses `resolveBenchmark` and the alias tables (extended with per-source family aliases where needed). One candidate resolves automatically; multiple candidates require user selection; a disappeared override mapping stays unresolved until replaced or reset — never silently substituted.
+- Pricing comes from authoritative provider pricing pages linked in the catalog source comments, stored as USD-per-million-token rates in the existing `Rates` shape with a per-registry date stamp. Unverified or missing rates stay null with a visible reason; never inferred from similar display names. Expired promotional rates stay unresolved.
+- Cost-unit separation preserved: static-registry rows compare in USD only and never share a frontier, chart axis, budget, or recommendation with Copilot credit/legacy rows (same rule as OpenCode USD today).
+- Source-scoped budgets, workload profiles, and mappings: applying a profile can switch to a static source; pre-source saved state migrates without loss. Copying a model name for manual selection stays the only action.
+
+**Acceptance criteria:**
+
+- Selecting a static source lists its known models with distinct namespaced identities, benchmark scores from the shared snapshot, and USD costs or explicit unpriced reasons.
+- Removing or renaming a registry entry fails closed (unresolved mapping with reason); live Copilot/OpenCode behavior is unchanged.
+- Fixture tests cover registry loading, namespaced identity, benchmark alias resolution, USD estimates, missing-price reasons, migration of pre-source state, and stale-source guards on source switches.
+- Documentation records each registry's model list, pricing source URLs, and refresh date; updating a registry follows the existing catalog rules (verify sources, update date, preserve missing data).
+
+#### Additional static assistant registries
+
+**Effort:** S per assistant. **Dependencies:** Static-registry machinery above.
+
+**Deliverables:**
+
+- Follow-up registries for similar assistants (e.g. Cursor, Windsurf, Aider-backed provider models, Amazon Q Developer) added one at a time using the same namespaced static-registry shape, verified pricing sources, and benchmark aliases. Each addition is an independent reviewable change.
+- Registries never spawn processes, read config/auth files, or send inference requests.
+
+**Acceptance criteria:**
+
+- Each new source appears in the source selector with its known models, USD-only comparison, and documented pricing sources/dates.
+- Unit tests cover the new registry entries, alias mappings, and unpriced fallback states.
+
 ## Non-goals / known constraints
 
 ### Product boundaries
