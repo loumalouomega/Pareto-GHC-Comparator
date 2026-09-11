@@ -19,6 +19,8 @@ import {
 } from "../src/compare";
 import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
 import { freshnessAlert } from "../src/freshness";
+import { driftOf, selectPrevSnapshot } from "../src/drift";
+import { loadByokStore, parseByokStore } from "../src/byok";
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
 import { defaults, type AvailableModel, type Benchmark } from "../src/types";
@@ -789,10 +791,117 @@ test("snapshot and badge exports reflect displayed rows", () => {
   assert.deepEqual(parseMessage({ type: "exportBadge" }), { type: "exportBadge" });
 });
 
+test("drift computes per-preset deltas with unknown, not zero, for gaps", () => {
+  const prev = {
+    version: "4.2",
+    fetchedAt: 1000,
+    models: [
+      { id: "a", slug: "a", name: "A", provider: "P", scores: { general: 70, coding: 60, agentic: 50 } },
+      { id: "b", slug: "b", name: "B", provider: "P", scores: { general: null, coding: 60, agentic: 50 } },
+      { id: "gone", slug: "gone", name: "Gone", provider: "P", scores: { general: 10, coding: 10, agentic: 10 } },
+    ],
+  };
+  const curr = [
+    { id: "a", slug: "a", name: "A", provider: "P", scores: { general: 74, coding: 60, agentic: 50 } },
+    { id: "b", slug: "b", name: "B", provider: "P", scores: { general: 80, coding: 61, agentic: 50 } },
+    { id: "new", slug: "new", name: "New", provider: "P", scores: { general: 90, coding: 90, agentic: 90 } },
+  ];
+  const drift = driftOf(prev, curr, "general");
+  assert.equal(drift.a.delta, 4);
+  assert.equal(drift.a.prevScore, 70);
+  assert.equal(drift.b.delta, null);
+  assert.equal(drift.b.prevScore, null);
+  assert.equal(drift.new.delta, null);
+  assert.equal(drift.new.prevScore, null);
+  assert.ok(!("gone" in drift));
+  const coding = driftOf(prev, curr, "coding");
+  assert.equal(coding.a.delta, 0);
+  assert.equal(coding.b.delta, 1);
+  assert.deepEqual(driftOf(undefined, curr, "general"), {});
+});
+
+test("previous snapshots validate, stay older, and never equal current", () => {
+  const curr = { version: "4.3", fetchedAt: 2000, models: [] };
+  const older = { version: "4.2", fetchedAt: 1000, models: [] };
+  assert.deepEqual(selectPrevSnapshot(older, curr), older);
+  assert.equal(selectPrevSnapshot({ ...older, fetchedAt: 2000 }, curr), undefined);
+  assert.equal(selectPrevSnapshot({ ...older, fetchedAt: 3000 }, curr), undefined);
+  assert.equal(selectPrevSnapshot({ version: "x", fetchedAt: 1000, models: [] }, curr), undefined);
+  assert.equal(selectPrevSnapshot(null, curr), undefined);
+});
+
+test("BYOK store validates ids, rates, and thresholds", () => {
+  const good = parseByokStore({
+    "opencode:openai/gpt-5.4": { rates: { input: 1, read: 0.5, write: null, output: 4 } },
+    "opencode:openai/gpt-5.4#low": {
+      rates: { input: 1, read: 1, write: 2, output: 3 },
+      long: { threshold: 100, rates: { input: 2, read: 2, write: null, output: 5 } },
+    },
+  });
+  assert.equal(good["opencode:openai/gpt-5.4"].rates.write, null);
+  assert.equal(good["opencode:openai/gpt-5.4#low"].long?.threshold, 100);
+  assert.deepEqual(loadByokStore("garbage"), {});
+  assert.throws(() => parseByokStore(null));
+  assert.throws(() => parseByokStore({ "not-an-id": { rates: { input: 1, read: 1, write: null, output: 1 } } }));
+  assert.throws(() =>
+    parseByokStore({ "opencode:openai/x": { rates: { input: -1, read: 1, write: null, output: 1 } } })
+  );
+  assert.throws(() =>
+    parseByokStore({ "opencode:openai/x": { rates: { input: 1, read: 1, write: null, output: NaN } } })
+  );
+  assert.throws(() =>
+    parseByokStore({
+      "opencode:openai/x": {
+        rates: { input: 1, read: 1, write: null, output: 1 },
+        long: { threshold: 0, rates: { input: 1, read: 1, write: null, output: 1 } },
+      },
+    }),
+  );
+  assert.throws(() => parseMessage({ type: "byok", rates: { "bad id": {} } }));
+  assert.deepEqual(parseMessage({ type: "byok", rates: {} }), { type: "byok", rates: {} });
+});
+
+test("BYOK rates price provider-billed models without touching free tier or CLI rates", () => {
+  const unpriced: AvailableModel = {
+    id: "opencode:openai/gpt-5.4",
+    name: "GPT-5.4",
+    family: "gpt",
+    maxInputTokens: 400000,
+    source: "opencode",
+  };
+  const usd = { ...defaults, source: "opencode" as const, billing: "usd" as const };
+  const plain = compare([unpriced], benchmarks, usd);
+  assert.ok(plain.length > 0 && plain.every((r) => r.cost === null));
+  const byok = { "opencode:openai/gpt-5.4": { rates: { input: 2, read: 1, write: null, output: 8 } } };
+  const priced = compare([unpriced], benchmarks, usd, {}, undefined, { byok });
+  assert.ok(priced.length > 0 && priced.every((r) => r.cost !== null));
+  assert.ok(priced.every((r) => (r.tier ?? "").includes("BYOK")));
+  assert.ok(priced.every((r) => r.reasons.some((x) => /BYOK/.test(x))));
+  const free: AvailableModel = {
+    ...unpriced,
+    id: "opencode:opencode/free",
+    name: "Free",
+    freeTier: true,
+    rates: { input: 0, read: 0, write: null, output: 0 },
+  };
+  const freeRows = compare([free], benchmarks, usd, {}, undefined, {
+    byok: { "opencode:opencode/free": { rates: { input: 9, read: 9, write: null, output: 9 } } },
+  });
+  assert.ok(freeRows.every((r) => r.cost === 0 && r.tier === "Free tier"));
+  const cliPriced: AvailableModel = {
+    ...unpriced,
+    rates: { input: 1, read: 1, write: null, output: 1 },
+  };
+  const cliRows = compare([cliPriced], benchmarks, usd, {}, undefined, { byok });
+  assert.ok(cliRows.every((r) => !(r.tier ?? "").includes("BYOK")));
+  const cross = compare([unpriced], benchmarks, { ...usd, billing: "credits" as never }, {}, undefined, { byok });
+  assert.ok(cross.every((r) => r.cost === null && r.reasons.some((x) => /USD billing/.test(x))));
+});
+
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

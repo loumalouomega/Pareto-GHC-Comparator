@@ -85,6 +85,10 @@ let variantSearch = "",
   showOtherVariants = false,
   detailsModelId: string | undefined;
 let checklistSearch = "";
+let byokDraft: Record<
+  string,
+  { input: string; read: string; write: string; output: string }
+> = {};
 const collapsedFamilies = new Set<string>();
 const collapsedModels = new Set<string>();
 const mappingLabels = {
@@ -408,6 +412,18 @@ function renderDetails() {
         `Selected index score: ${format(row.score)} · version ${state.version ?? "unknown"}`,
       ),
     );
+    const drift = row.benchmark ? state.drift[row.benchmark.id] : undefined;
+    if (state.prevVersion && drift) {
+      target.append(
+        text(
+          "p",
+          drift.delta === null
+            ? `Score change unknown: previous snapshot v${state.prevVersion} has no comparable score.`
+            : `Score change since v${state.prevVersion} (retrieved ${state.prevFetchedAt ? new Date(state.prevFetchedAt).toLocaleString() : "unknown date"}): ${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)} (was ${format(drift.prevScore)}).`,
+          "hint",
+        ),
+      );
+    }
   }
   target.append(text("p", mappingLabels[row.mappingStatus], "mapping-status"));
   if (state.recommendation.modelIds.includes(row.id))
@@ -739,6 +755,71 @@ function renderChecklist() {
     checklistEl.append(wrap);
   }
 }
+function renderByok() {
+  const card = el("byok-card") as HTMLElement;
+  const show = !!state && state.options.source === "opencode";
+  card.hidden = !show;
+  if (!show || !state) return;
+  const table = el("byok-table");
+  table.replaceChildren();
+  const seen = new Set<string>();
+  const models = state.rows.filter((r) => {
+    if (
+      !r.modelId.startsWith("opencode:") ||
+      r.cost !== null ||
+      seen.has(r.modelId) ||
+      !r.reasons.some((reason) => /Billed by provider/.test(reason))
+    )
+      return false;
+    seen.add(r.modelId);
+    return true;
+  });
+  if (!models.length) {
+    table.append(
+      text(
+        "p",
+        "No provider-billed models need rates right now.",
+        "hint",
+      ),
+    );
+    return;
+  }
+  for (const m of models) {
+    const stored = state.byok[m.modelId];
+    const draft = (byokDraft[m.modelId] ??= {
+      input: stored ? String(stored.rates.input) : "",
+      read: stored ? String(stored.rates.read) : "",
+      write:
+        stored?.rates.write === null || stored?.rates.write === undefined
+          ? ""
+          : String(stored.rates.write),
+      output: stored ? String(stored.rates.output) : "",
+    });
+    const wrap = document.createElement("div");
+    wrap.append(text("strong", m.name));
+    for (const field of ["input", "read", "write", "output"] as const) {
+      const label = document.createElement("label");
+      label.append(
+        text(
+          "span",
+          field === "input" ? "Input" : field === "read" ? "Cache read" : field === "write" ? "Cache write (blank = input)" : "Output",
+        ),
+      );
+      const box = document.createElement("input");
+      box.type = "number";
+      box.min = "0";
+      box.step = "any";
+      box.value = draft[field];
+      box.setAttribute("aria-label", `${m.name} ${field} USD per million tokens`);
+      box.addEventListener("input", () => {
+        draft[field] = box.value;
+      });
+      label.append(box);
+      wrap.append(label);
+    }
+    table.append(wrap);
+  }
+}
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
@@ -847,6 +928,7 @@ function render(next: ViewState) {
   (el("spotlight-card") as HTMLElement).hidden =
     state.options.source !== "opencode";
   el("export-note").textContent = state.exportNote ?? "";
+  renderByok();
   el("provenance").textContent = state.fetchedAt
     ? `Index v${state.version} · retrieved ${new Date(state.fetchedAt).toLocaleString()}${Date.now() - state.fetchedAt > 86400000 ? " · older than 24 hours" : ""}`
     : "No benchmark snapshot loaded";
@@ -898,9 +980,15 @@ function render(next: ViewState) {
     );
     if (state.recommendation.modelIds.includes(row.id))
       name.append(text("span", "★ Recommended", "recommended"));
+    const drift = row.benchmark ? state.drift[row.benchmark.id] : undefined;
+    const scoreText =
+      format(row.score) +
+      (drift && drift.delta !== null
+        ? ` (${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)})`
+        : "");
     tr.append(
       name,
-      text("td", format(row.score)),
+      text("td", scoreText),
       text("td", format(row.cost)),
       text("td", format(efficiencyOf(row))),
       text(
@@ -1146,6 +1234,43 @@ el("include-none").onclick = () => {
 el("export-csv").onclick = () => send("exportCsv");
 el("export-snapshot").onclick = () => send("exportSnapshot");
 el("export-badge").onclick = () => send("exportBadge");
+el("byok-save").onclick = () => {
+  if (!state) return;
+  const next: Record<string, unknown> = { ...state.byok };
+  for (const [id, d] of Object.entries(byokDraft)) {
+    const raw = { input: d.input.trim(), read: d.read.trim(), write: d.write.trim(), output: d.output.trim() };
+    if (!raw.input && !raw.read && !raw.write && !raw.output) {
+      delete next[id];
+      delete byokDraft[id];
+      continue;
+    }
+    const num = (s: string): number | undefined =>
+      s === "" ? undefined : Number(s);
+    const input = num(raw.input),
+      read = num(raw.read),
+      output = num(raw.output),
+      write = raw.write === "" ? null : num(raw.write);
+    if (
+      input === undefined ||
+      read === undefined ||
+      output === undefined ||
+      write === undefined ||
+      ![input, read, output].every((n) => Number.isFinite(n) && n >= 0) ||
+      !(write === null || (Number.isFinite(write) && write >= 0))
+    ) {
+      el("status").textContent =
+        "BYOK rates need nonnegative numbers for input, cache read, and output (cache write may be blank).";
+      return;
+    }
+    next[id] = { rates: { input, read, write, output } };
+    delete byokDraft[id];
+  }
+  send("byok", { rates: next });
+};
+el("byok-clear").onclick = () => {
+  byokDraft = {};
+  renderByok();
+};
 el("export-png").onclick = () => {
   const canvas = el("chart") as HTMLCanvasElement;
   const exportCanvas = document.createElement("canvas");

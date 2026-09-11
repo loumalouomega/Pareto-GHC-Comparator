@@ -86,6 +86,8 @@ for (const theme of ["light", "dark", "high-contrast"])
       fetchedAt: Date.now(),
       catalogDate: "2026-09-10",
       staticRegistryDate: "2026-09-11",
+      drift: {},
+      byok: {},
       recommendation: { modelIds: [], explanation: "" },
       profiles: [],
       profileModified: false,

@@ -1,3 +1,4 @@
+import { parseByokStore } from "./byok";
 import { parseOptions } from "./compare";
 import type { HostMessage, ProfileAction, Source } from "./types";
 const validSources: Source[] = [
@@ -21,6 +22,7 @@ export function parseMessage(raw: unknown): HostMessage {
   if (m.type === "exportCsv") return { type: "exportCsv" };
   if (m.type === "exportSnapshot") return { type: "exportSnapshot" };
   if (m.type === "exportBadge") return { type: "exportBadge" };
+  if (m.type === "byok") return { type: "byok", rates: parseByokStore(m.rates) };
   if (
     m.type === "exportPng" &&
     typeof m.png === "string" &&

@@ -9,6 +9,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Cost-per-quality table sort: an optional **Cost per quality** ordering (cost per index point, unpriced or unscored rows last with reasons) in chart display settings, with a matching table column; existing discovery order remains the default and saved settings migrate without losing user choices.
 - Shareable exports: snapshot JSON (displayed rows plus source, task, billing, catalog/registry dates, and benchmark version with an illustrative-figures disclaimer) and shields-compatible badge JSON (highest-scoring displayed model), alongside the existing CSV/PNG exports via the save dialog.
 - Pricing-freshness alert: the footer shows both the pricing catalog and static registry dates and nudges toward `docs/catalog.md` when either is older than 90 days, without blocking the comparison.
+- Benchmark drift: the previous validated snapshot is retained locally on each successful refresh, and the table shows per-model score changes with the model-details panel citing both snapshot versions and retrieval dates; models without a comparable previous score show unknown, never zero.
+- OpenCode BYOK rates: an explicit per-model rate table (USD per million tokens, webview form under the OpenCode source) prices provider-billed models the CLI leaves unpriced, saved locally with a visible BYOK provenance label; free-tier zero costs are never overridden and invalid entries keep the model unpriced.
 
 ## 0.11.0
 

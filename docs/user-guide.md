@@ -35,6 +35,10 @@ Positive costs use a logarithmic axis. If any comparable model has zero cost, th
 
 The footer shows the pricing catalog and registry dates. When either is older than 90 days, a stale-pricing nudge appears with a pointer to `docs/catalog.md`; it never blocks the comparison.
 
+Each successful benchmark refresh retains the previous validated snapshot locally. The table annotates scores with their change since that snapshot (for example `48 (+1.0)`), and model details cite both snapshot versions and retrieval dates. Models without a comparable previous score show unknown rather than zero.
+
+Under the OpenCode source, the **Provider-billed (BYOK) rates** table lists models the CLI reports as provider-billed with fields for input, cache-read, cache-write (blank means input rate), and output USD rates per million tokens. **Save BYOK rates** stores the table locally and prices those models with a visible BYOK label; empty rows remove the entry, and invalid entries keep the model unpriced. Free-tier models are never overridden.
+
 ## Exports
 
 **Export CSV** writes the displayed rows with recommendation markers. **Export snapshot JSON** writes the same rows plus the source, task, billing mode, catalog and registry dates, and benchmark snapshot version, with a note that figures are illustrative rather than measured cost or a bill. **Export badge JSON** writes a shields-compatible payload naming the highest-scoring displayed model. **Export chart PNG** saves the current chart image. All exports go through the save dialog and reflect the current filter, exclusions, and sort.

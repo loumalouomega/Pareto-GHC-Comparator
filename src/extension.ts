@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
-import { BenchmarkService, ApiError, cacheTtl } from "./api";
+import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
+import { driftOf, selectPrevSnapshot } from "./drift";
 import { catalogDate } from "./catalog";
 import {
   compare,
@@ -18,37 +19,77 @@ import { html } from "./html";
 import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
 import { parseMessage } from "./messages";
-import type { AvailableModel, Snapshot, Source, ViewState } from "./types";
+import { loadByokStore } from "./byok";
+import type {
+  AvailableModel,
+  ByokStore,
+  Snapshot,
+  Source,
+  ViewState,
+} from "./types";
 const secretName = "artificialAnalysis.apiKey";
 export function activate(context: vscode.ExtensionContext) {
   const cacheUri = vscode.Uri.joinPath(
     context.globalStorageUri,
     "benchmarks.json",
   );
+  const prevCacheUri = vscode.Uri.joinPath(
+    context.globalStorageUri,
+    "benchmarks.prev.json",
+  );
+  const writeSnapshotFile = async (
+    uri: ReturnType<typeof vscode.Uri.joinPath>,
+    value: Snapshot,
+  ) => {
+    await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+    const temporary = vscode.Uri.joinPath(
+      context.globalStorageUri,
+      "benchmarks.tmp.json",
+    );
+    await vscode.workspace.fs.writeFile(
+      temporary,
+      Buffer.from(JSON.stringify(value)),
+    );
+    await vscode.workspace.fs.rename(temporary, uri, { overwrite: true });
+  };
   const service = new BenchmarkService({
     read: async () =>
       JSON.parse(
         Buffer.from(await vscode.workspace.fs.readFile(cacheUri)).toString(),
       ),
     write: async (value) => {
-      await vscode.workspace.fs.createDirectory(context.globalStorageUri);
-      const temporary = vscode.Uri.joinPath(
-        context.globalStorageUri,
-        "benchmarks.tmp.json",
-      );
-      await vscode.workspace.fs.writeFile(
-        temporary,
-        Buffer.from(JSON.stringify(value)),
-      );
-      await vscode.workspace.fs.rename(temporary, cacheUri, {
-        overwrite: true,
-      });
+      // Rotate only on validated download success: the previous cache becomes
+      // the drift baseline. Failures never reach this writer.
+      try {
+        const raw = JSON.parse(
+          Buffer.from(await vscode.workspace.fs.readFile(cacheUri)).toString(),
+        );
+        if (validSnapshot(raw) && raw.fetchedAt !== value.fetchedAt)
+          await writeSnapshotFile(prevCacheUri, raw);
+      } catch {
+        // No previous cache yet; nothing to retain.
+      }
+      await writeSnapshotFile(cacheUri, value);
     },
   });
   service.retryAt = context.globalState.get<number>("retryAt", 0);
   let panel: vscode.WebviewPanel | undefined,
     snapshot: Snapshot | undefined,
+    prevSnapshot: Snapshot | undefined,
     options = savedOptions(context.globalState.get("options"));
+  const readPrevSnapshot = async (): Promise<Snapshot | undefined> => {
+    if (!snapshot) return undefined;
+    try {
+      const raw = JSON.parse(
+        Buffer.from(
+          await vscode.workspace.fs.readFile(prevCacheUri),
+        ).toString(),
+      );
+      return selectPrevSnapshot(raw, snapshot);
+    } catch {
+      return undefined;
+    }
+  };
   const availableBySource: Record<Source, AvailableModel[]> = {
     copilot: [],
     opencode: [],
@@ -72,6 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
       "excluded",
       {},
     ),
+    byok: ByokStore = loadByokStore(context.globalState.get("byokRates")),
     selected: string | undefined,
     loading = false,
     message = "",
@@ -106,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
       options,
       overrides,
       undefined,
-      { pins, excluded: excludedFor(options.source) },
+      { pins, excluded: excludedFor(options.source), byok },
     );
     const rows =
       options.display.sort === "efficiency"
@@ -118,7 +160,7 @@ export function activate(context: vscode.ExtensionContext) {
       options,
       overrides,
       undefined,
-      { pins, excluded: excludedFor(options.source) },
+      { pins, excluded: excludedFor(options.source), byok },
     );
     const comparable = rows.filter(
       (r) => r.cost !== null && r.score !== null,
@@ -165,6 +207,10 @@ export function activate(context: vscode.ExtensionContext) {
       selected,
       version: snapshot?.version,
       fetchedAt: snapshot?.fetchedAt,
+      prevVersion: prevSnapshot?.version,
+      prevFetchedAt: prevSnapshot?.fetchedAt,
+      drift: driftOf(prevSnapshot, snapshot?.models ?? [], options.preset),
+      byok,
       loading,
       message: [message, discoveryError].filter(Boolean).join(" "),
       hasKey,
@@ -245,6 +291,7 @@ export function activate(context: vscode.ExtensionContext) {
       const key = await context.secrets.get(secretName);
       hasKey = !!key;
       snapshot = await service.load(key, force);
+      prevSnapshot = await readPrevSnapshot();
       message =
         Date.now() - snapshot.fetchedAt >= cacheTtl
           ? "Using a cached snapshot older than 24 hours. Refresh data to update."
@@ -467,6 +514,14 @@ export function activate(context: vscode.ExtensionContext) {
                 if (selected === `${modelId}::${bench}`) selected = modelId;
                 render();
               }
+            } else if (m.type === "byok") {
+              byok = m.rates;
+              await context.globalState.update("byokRates", byok);
+              message =
+                Object.keys(byok).length === 0
+                  ? "BYOK rates cleared."
+                  : `Saved ${Object.keys(byok).length} BYOK rate${Object.keys(byok).length === 1 ? "" : "s"} for provider-billed OpenCode models.`;
+              render();
             } else if (m.type === "exclude") {
               if (lastStructureIds.has(m.id)) {
                 const current = new Set(excludedFor(options.source));
@@ -509,7 +564,7 @@ export function activate(context: vscode.ExtensionContext) {
                   options,
                   overrides,
                   undefined,
-                  { pins, excluded: excludedFor(options.source) },
+                  { pins, excluded: excludedFor(options.source), byok },
                 );
                 const rows =
                   options.display.sort === "efficiency"

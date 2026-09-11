@@ -47,6 +47,11 @@ export function html(
   <button id="export-png" class="secondary">Export chart PNG</button>
   <span id="export-note" role="status"></span>
   </section>
+  <section class="controls" aria-label="BYOK rates" id="byok-card" hidden>
+  <div><strong>Provider-billed (BYOK) rates</strong> <button id="byok-save" class="secondary">Save BYOK rates</button> <button id="byok-clear" class="secondary">Clear fields</button></div>
+  <p class="hint">USD per million tokens for OpenCode models billed directly by their provider. Saved locally; free-tier models are never overridden and invalid entries keep the model unpriced.</p>
+  <div id="byok-table"></div>
+  </section>
   <section class="recommendation-card" aria-labelledby="spotlight-title" id="spotlight-card">
   <h2 id="spotlight-title">Free-tier spotlight</h2><p id="spotlight-result" role="status" aria-live="polite"></p></section>
  <section class="recommendation-card" aria-labelledby="recommendation-title">

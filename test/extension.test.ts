@@ -27,6 +27,20 @@ test("extension discovers Copilot models, serves cached data, validates messages
     ],
   };
   assert.ok(validSnapshot(cache));
+  const prevCache = {
+    version: "4.2",
+    fetchedAt: cache.fetchedAt - 100000,
+    models: [
+      {
+        id: "aa",
+        slug: "gpt-5-mini",
+        name: "GPT-5 mini",
+        provider: "OpenAI",
+        scores: { general: 28, coding: 40, agentic: 20 },
+      },
+    ],
+  };
+  assert.ok(validSnapshot(prevCache));
   const mock = {
     commands: {
       registerCommand: (id: string, fn: () => unknown) => {
@@ -62,7 +76,10 @@ test("extension discovers Copilot models, serves cached data, validates messages
     },
     workspace: {
       fs: {
-        readFile: async () => Buffer.from(JSON.stringify(cache)),
+        readFile: async (uri: { path: string }) =>
+          Buffer.from(
+            JSON.stringify(uri.path.includes("prev") ? prevCache : cache),
+          ),
         createDirectory: async () => {},
         writeFile: async () => {},
         rename: async () => {},
@@ -149,6 +166,9 @@ test("extension discovers Copilot models, serves cached data, validates messages
   const last = () => (messages.at(-1) as any).state;
   assert.equal(last().rows[0].score, 30);
   assert.equal(last().rows[0].frontier, true);
+  assert.equal(last().prevVersion, "4.2");
+  assert.equal(last().drift.aa.delta, 2);
+  assert.equal(last().drift.aa.prevScore, 28);
   await receiver({ type: "copy", id: "gpt-5-mini" });
   await receiver({ type: "copy", id: "fake" });
   assert.deepEqual(copied, ["GPT-5 mini"]);
@@ -156,6 +176,17 @@ test("extension discovers Copilot models, serves cached data, validates messages
   assert.match(last().message, /Could not apply/);
   await receiver({ type: "mapping", id: "gpt-5-mini", benchmarkId: "aa" });
   assert.deepEqual(state.get("mappings"), { "gpt-5-mini": "aa" });
+  const byokRates = {
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 1, read: 1, write: null, output: 1 },
+    },
+  };
+  await receiver({ type: "byok", rates: byokRates });
+  assert.deepEqual(state.get("byokRates"), byokRates);
+  assert.deepEqual(last().byok, byokRates);
+  assert.match(last().message, /BYOK rate/);
+  await receiver({ type: "byok", rates: { "bad id": {} } });
+  assert.match(last().message, /Could not apply/);
   await receiver({
     type: "profile",
     change: { action: "saveAs", name: "Debugging" },

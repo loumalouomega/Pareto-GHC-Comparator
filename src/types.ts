@@ -66,6 +66,15 @@ export interface Benchmark {
   provider: string;
   scores: Record<Preset, number | null>;
 }
+export interface ScoreDrift {
+  prevScore: number | null;
+  delta: number | null;
+}
+export interface ByokEntry {
+  rates: Rates;
+  long?: { threshold: number; rates: Rates };
+}
+export type ByokStore = Record<string, ByokEntry>;
 export interface Snapshot {
   version: string;
   fetchedAt: number;
@@ -183,6 +192,7 @@ export type HostMessage =
   | { type: "exportCsv" }
   | { type: "exportSnapshot" }
   | { type: "exportBadge" }
+  | { type: "byok"; rates: ByokStore }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -233,6 +243,10 @@ export interface ViewState {
   selected?: string;
   version?: string;
   fetchedAt?: number;
+  prevVersion?: string;
+  prevFetchedAt?: number;
+  drift: Record<string, ScoreDrift>;
+  byok: ByokStore;
   loading: boolean;
   message: string;
   hasKey: boolean;

@@ -6,6 +6,7 @@ import {
   defaults,
   type AvailableModel,
   type Benchmark,
+  type ByokStore,
   type CatalogEntry,
   type CostBreakdown,
   type Options,
@@ -413,10 +414,12 @@ export function compare(
   extra: {
     pins?: Record<string, string[]>;
     excluded?: string[];
+    byok?: ByokStore;
   } = {},
 ): Row[] {
   const pins = extra.pins ?? {};
   const excluded = new Set(extra.excluded ?? []);
+  const byok = extra.byok ?? {};
   const byId = new Map(benchmarks.map((b) => [b.id, b]));
   const rows = available
     .filter((m) => !excluded.has(m.id))
@@ -433,6 +436,7 @@ export function compare(
       const source = m.source ?? "copilot";
       let entry: CatalogEntry | undefined;
       let crossUnit: string | undefined;
+      let byokNote: string | undefined;
       if (source === "opencode") {
         // Dynamic pricing: rates ride on the discovered model; only the
         // benchmark-family aliases are static.
@@ -453,6 +457,18 @@ export function compare(
               }
             : {}),
         };
+        // Explicit user-supplied fallback for provider-billed models the CLI
+        // leaves unpriced. Free-tier zero costs are never overridden.
+        const byokEntry =
+          !m.freeTier && !m.rates ? byok[m.id] : undefined;
+        if (byokEntry) {
+          entry = {
+            ...entry,
+            rates: byokEntry.rates,
+            ...(byokEntry.long ? { long: byokEntry.long } : {}),
+          };
+          byokNote = "User-supplied BYOK rate; not verified by CLI.";
+        }
         if (options.billing !== "usd")
           crossUnit = "OpenCode models compare in USD billing.";
       } else if (isStaticSource(source)) {
@@ -509,7 +525,8 @@ export function compare(
           ...(ids.expandedBenchmarkId
             ? { expandedBenchmarkId: ids.expandedBenchmarkId }
             : {}),
-          tier: price.tier,
+          tier:
+            byokNote && price.tier ? `${price.tier} · BYOK` : price.tier,
           breakdown: tooLong ? undefined : price.breakdown,
           reasons: [
             matched.reason,
@@ -517,6 +534,7 @@ export function compare(
               ? "Selected benchmark has no score for this preset."
               : undefined,
             price.reason,
+            byokNote,
             ...(m.pricingNotes ?? []),
             tooLong ? "Input exceeds the model context limit." : undefined,
           ].filter((r): r is string => !!r),
@@ -603,7 +621,11 @@ export function freeSpotlight(
   options: Options,
   overrides: Record<string, string> = {},
   entries = catalog,
-  extra: { pins?: Record<string, string[]>; excluded?: string[] } = {},
+  extra: {
+    pins?: Record<string, string[]>;
+    excluded?: string[];
+    byok?: ByokStore;
+  } = {},
 ): {
   bestFree?: { id: string; name: string; score: number };
   bestOverall?: { id: string; name: string; score: number };
