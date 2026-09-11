@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { migrateOptions, parseOptions } from "./compare";
 import type { Options, ProfileAction, ProfileStore, Workload } from "./types";
 export function workload(options: Options): Workload {
-  const { filter: _, ...values } = parseOptions(options);
+  const { filter: _, display: _display, ...values } = parseOptions(options);
   return values;
 }
 export function profileModified(

@@ -1,6 +1,7 @@
 import Chart from "chart.js/auto";
 import type { Plugin, ScatterDataPoint } from "chart.js";
 import type { Billing, Options, Row, ViewState, HostMessage } from "../src/types";
+import { sources } from "../src/sources";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -28,6 +29,30 @@ const colors: Record<string, string> = {
   "opencode-go": "#f0abfc",
   openai: "#679fff",
   Unknown: "#9ba3b4",
+};
+function hashHue(key: string): number {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+const colorForRow = (row: Row): string => {
+  const light =
+    document.body.classList.contains("vscode-light") ||
+    document.body.classList.contains("vscode-high-contrast-light");
+  const known = light ? lightColors[row.provider] : colors[row.provider];
+  // Provider palette wins when the base model maps 1:1; collisions across
+  // different base models sharing a provider fall back to a hashed hue so two
+  // models never share an exact color in the same view.
+  void known;
+  const hue = hashHue(row.baseModelId || row.modelId || row.id);
+  const base = `hsl(${hue} 65% ${light ? "38%" : "68%"})`;
+  return base;
+};
+const color = (provider: string): string => {
+  const light =
+    document.body.classList.contains("vscode-light") ||
+    document.body.classList.contains("vscode-high-contrast-light");
+  return light ? (lightColors[provider] ?? lightColors.Unknown) : (colors[provider] ?? colors.Unknown);
 };
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
@@ -68,11 +93,6 @@ const lightColors: Record<string, string> = {
   openai: "#2468cb",
   Unknown: "#637084",
 };
-const color = (provider: string) =>
-  document.body.classList.contains("vscode-light") ||
-  document.body.classList.contains("vscode-high-contrast-light")
-    ? (lightColors[provider] ?? lightColors.Unknown)
-    : (colors[provider] ?? colors.Unknown);
 const labels: Plugin<"scatter"> = {
   id: "modelLabels",
   afterDatasetsDraw(chart) {
@@ -119,7 +139,14 @@ function drawChart() {
   const frontier = rows
     .filter((r) => r.frontier)
     .sort((a, b) => a.cost! - b.cost! || a.score! - b.score!);
-  const scale = rows.some((r) => r.cost === 0) ? "linear" : "logarithmic";
+  const requested = state.options.display.scale;
+  const hasZero = rows.some((r) => r.cost === 0);
+  const scale =
+    requested === "linear" || (requested === "auto" && hasZero)
+      ? "linear"
+      : "logarithmic";
+  const scaleNote =
+    requested === "log" && hasZero ? " (zero-cost rows require linear)" : "";
   el("chart").setAttribute(
     "aria-label",
     `${rows.length} models: ${state.options.preset} quality versus ${unitCost(state.options.billing)}, ${scale} cost scale. The table below provides all values and model selection.`,
@@ -129,6 +156,7 @@ function drawChart() {
     y: r.score!,
   }));
   chart?.destroy();
+  const showFrontier = state.options.display.frontier;
   chart = new Chart(el<HTMLCanvasElement>("chart"), {
     type: "scatter",
     data: {
@@ -136,9 +164,9 @@ function drawChart() {
         {
           label: "Models",
           data,
-          backgroundColor: rows.map((r) => color(r.provider)),
+          backgroundColor: rows.map((r) => colorForRow(r)),
           borderColor: rows.map((r) =>
-            r.id === state!.selected ? foreground : color(r.provider),
+            r.id === state!.selected ? foreground : colorForRow(r),
           ),
           borderWidth: rows.map((r) => (r.id === state!.selected ? 3 : 1)),
           pointRadius: rows.map((r) =>
@@ -153,19 +181,23 @@ function drawChart() {
             state!.recommendation.modelIds.includes(r.id) ? "star" : "circle",
           ),
         },
-        {
-          label: "Pareto frontier",
-          data: frontier.map((r) => ({ x: r.cost!, y: r.score! })),
-          showLine: true,
-          borderColor: foreground,
-          borderDash: [3, 5],
-          borderWidth: 2,
-          pointRadius: 0,
-          pointHitRadius: 0,
-        },
+        ...(showFrontier
+          ? [
+              {
+                label: "Pareto frontier" as const,
+                data: frontier.map((r) => ({ x: r.cost!, y: r.score! })),
+                showLine: true,
+                borderColor: foreground,
+                borderDash: [3, 5] as number[],
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHitRadius: 0,
+              },
+            ]
+          : []),
       ],
     },
-    plugins: [labels],
+    plugins: state.options.display.labels ? [labels] : [],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -188,7 +220,7 @@ function drawChart() {
           type: scale,
           title: {
             display: true,
-            text: `${state.options.billing === "credits" ? "Estimated AI credits" : state.options.billing === "legacy" ? "Premium requests per interaction" : "Estimated USD"} (${scale === "linear" ? "linear" : "log"} scale)`,
+            text: `${state.options.billing === "credits" ? "Estimated AI credits" : state.options.billing === "legacy" ? "Premium requests per interaction" : "Estimated USD"} (${scale === "linear" ? "linear" : "log"} scale)${scaleNote}`,
             color: foreground,
           },
           ticks: { color: foreground },
@@ -242,6 +274,31 @@ function renderDetails() {
       `${format(row.cost)} ${unitCost(state.options.billing)}${row.tier ? ` · ${row.tier}` : ""}`,
     ),
   );
+  if (row.breakdown) {
+    const b = row.breakdown;
+    const writeRate = b.rates.write ?? b.rates.input;
+    target.append(
+      text(
+        "p",
+        `Breakdown (${b.unit}): ${b.inputTokens}×${b.rates.input} + ${b.readTokens}×${b.rates.read} + ${b.writeTokens}×${writeRate} + ${b.outputTokens}×${b.rates.output}, ÷${b.divisor}${b.tier ? ` · ${b.tier}` : ""}.`,
+        "hint",
+      ),
+    );
+  } else if (row.cost === 0) {
+    target.append(text("p", "Free tier: no usage cost.", "hint"));
+  }
+  const pinButton = text(
+    "button",
+    row.pinnedBenchmarkId ? "Unpin this variant" : "Pin as separate row",
+  ) as HTMLButtonElement;
+  pinButton.onclick = () => {
+    if (row.pinnedBenchmarkId)
+      send("unpin", { id: row.modelId, benchmarkId: row.pinnedBenchmarkId });
+    else if (row.benchmark)
+      send("pin", { id: row.modelId, benchmarkId: row.benchmark.id });
+  };
+  pinButton.disabled = !row.benchmark;
+  target.append(pinButton);
   for (const reason of row.reasons) target.append(text("p", reason, "notice"));
   if (row.benchmark) {
     target.append(
@@ -383,22 +440,15 @@ function render(next: ViewState) {
   el("tokens").hidden = state.options.billing === "legacy";
   el("legacy-note").hidden = state.options.billing !== "legacy";
   el("plan-label").hidden = state.options.billing !== "legacy";
-  // Billing modes are source-specific: credits/legacy for Copilot, USD for OpenCode.
+  const meta = sources[state.options.source];
+  const allowed = meta.billing;
   for (const option of Array.from(
     el<HTMLSelectElement>("billing").options,
   )) {
-    if (option.value === "usd")
-      option.hidden = state.options.source !== "opencode";
-    else option.hidden = state.options.source !== "copilot";
+    option.hidden = !(allowed as string[]).includes(option.value);
   }
-  el("eyebrow").textContent =
-    state.options.source === "opencode"
-      ? "PARETO / OPENCODE"
-      : "PARETO / GITHUB COPILOT";
-  el("subtitle").textContent =
-    state.options.source === "opencode"
-      ? "Compare benchmark quality with estimated OpenCode USD cost. Better value is toward the upper left."
-      : "Compare benchmark quality with estimated Copilot usage. Better value is toward the upper left.";
+  el("eyebrow").textContent = meta.eyebrow;
+  el("subtitle").textContent = meta.subtitle;
   el("budget-label").hidden = state.options.recommendation.mode !== "budget";
   el("gap-label").hidden = state.options.recommendation.mode !== "nearBest";
   el("budget-unit").textContent =
@@ -414,33 +464,30 @@ function render(next: ViewState) {
   el<HTMLButtonElement>("key").disabled = state.loading;
   el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
   el("catalog").textContent = `Catalog dated ${state.catalogDate}`;
-  if (state.options.source === "opencode") {
-    el("pricing-line").replaceChildren(
-      text("span", "OpenCode pricing: "),
-      (() => {
-        const a = document.createElement("a");
-        a.href = "https://opencode.ai/docs/zen";
-        a.textContent = "Zen pricing";
-        return a;
-      })(),
-      text("span", " · live CLI rates"),
-    );
-    el("pricing-note").textContent =
-      "Benchmark results describe the tested variant, not guaranteed performance with OpenCode's configuration. USD rates come from OpenCode CLI discovery.";
-  } else {
-    el("pricing-line").replaceChildren(
-      text("span", "Copilot pricing: "),
-      (() => {
-        const a = document.createElement("a");
-        a.href =
-          "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing";
-        a.textContent = "GitHub Docs";
-        return a;
-      })(),
-    );
-    el("pricing-note").textContent =
-      "Benchmark results describe the tested variant, not guaranteed performance in Copilot. Pricing updates ship with extension releases.";
-  }
+  el("pricing-line").replaceChildren(
+    text("span", `${meta.pricingLabel.split(":")[0]}: `),
+    (() => {
+      const a = document.createElement("a");
+      a.href = meta.pricingUrl;
+      a.textContent = meta.pricingLabel.split(": ")[1] ?? meta.pricingLabel;
+      return a;
+    })(),
+    text("span", meta.live ? " · live rates" : " · known-model registry"),
+  );
+  el("pricing-note").textContent = `${meta.pricingNote} ${meta.availabilityNote}`;
+  (el("display-labels") as HTMLInputElement).checked =
+    state.options.display.labels;
+  (el("display-frontier") as HTMLInputElement).checked =
+    state.options.display.frontier;
+  (el("display-scale") as HTMLSelectElement).value =
+    state.options.display.scale;
+  (el("free-only-label") as HTMLElement).hidden =
+    state.options.source !== "opencode";
+  (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
+  el("spotlight-result").textContent = state.freeSpotlight.explanation;
+  (el("spotlight-card") as HTMLElement).hidden =
+    state.options.source !== "opencode";
+  el("export-note").textContent = state.exportNote ?? "";
   el("provenance").textContent = state.fetchedAt
     ? `Index v${state.version} · retrieved ${new Date(state.fetchedAt).toLocaleString()}${Date.now() - state.fetchedAt > 86400000 ? " · older than 24 hours" : ""}`
     : "No benchmark snapshot loaded";
@@ -457,9 +504,24 @@ function render(next: ViewState) {
   const legend = el("legend");
   legend.replaceChildren();
   for (const provider of new Set(rows.map((r) => r.provider))) {
+    const sample = rows.find((r) => r.provider === provider)!;
     const item = text("span", `● ${provider}`);
-    item.style.color = color(provider);
+    item.style.color = colorForRow(sample);
     legend.append(item);
+  }
+  const checklistEl = el("checklist");
+  checklistEl.replaceChildren();
+  for (const entry of state.checklist) {
+    const label = document.createElement("label");
+    label.className = "checkbox-label";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = entry.included;
+    box.setAttribute("aria-label", `Include ${entry.name}`);
+    box.onchange = () =>
+      send("exclude", { id: entry.id, excluded: !box.checked });
+    label.append(box, text("span", `${entry.name} (${entry.rowCount})`));
+    checklistEl.append(label);
   }
   el("cost-heading").textContent =
     state.options.billing === "credits"
@@ -600,6 +662,12 @@ function sendOptions(): boolean {
       budgets: { ...budgetDraft },
       scoreGap,
     },
+    display: {
+      labels: (el("display-labels") as HTMLInputElement).checked,
+      frontier: (el("display-frontier") as HTMLInputElement).checked,
+      scale: (el("display-scale") as HTMLSelectElement).value as Options["display"]["scale"],
+    },
+    freeOnly: (el("free-only") as HTMLInputElement).checked,
   };
   send("options", { options });
   return true;
@@ -623,6 +691,10 @@ for (const id of [
   "recommendation-mode",
   "budget",
   "score-gap",
+  "display-labels",
+  "display-frontier",
+  "display-scale",
+  "free-only",
 ]) {
   el(id).addEventListener("input", () => {
     if (id === "billing") {
@@ -674,6 +746,21 @@ for (const [id, action] of [
 }
 el("refresh").onclick = () => send("refresh");
 el("key").onclick = () => send("key");
+el("include-all").onclick = () => send("excludeAll", { excluded: false });
+el("include-none").onclick = () => send("excludeAll", { excluded: true });
+el("export-csv").onclick = () => send("exportCsv");
+el("export-png").onclick = () => {
+  const canvas = el("chart") as HTMLCanvasElement;
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = 1600;
+  exportCanvas.height = 900;
+  const ctx = exportCanvas.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
+  ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+  send("exportPng", { png: exportCanvas.toDataURL("image/png") });
+};
 window.addEventListener("message", (event) => {
   if (event.data?.type === "state") render(event.data.state);
 });

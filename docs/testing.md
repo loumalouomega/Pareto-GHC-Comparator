@@ -25,9 +25,9 @@ npx vitest run test/selection.test.ts -t "budget recommendation"
 
 ## Coverage
 
-`npm run test:coverage` prints a per-file table to the terminal and writes `coverage/lcov.info` (gitignored; uploaded from CI on every build run). Global thresholds in `vitest.config.mts` are ratcheted at measured coverage (lines 65, functions 75, branches 73, statements 63): any drop fails with an actionable message, e.g. `Coverage for lines (64.1%) does not meet global threshold (65%)`. When a change legitimately raises coverage, bump the corresponding threshold in the same commit; never lower one to make a failing check pass without investigation.
+`npm run test:coverage` prints a per-file table to the terminal and writes `coverage/lcov.info` (gitignored; uploaded from CI on every build run). Global thresholds in `vitest.config.mts` are ratcheted at measured coverage (lines 95, functions 98, branches 89, statements 93, with `src/extension.ts` excluded as unmeasured): any drop fails with an actionable message, e.g. `Coverage for lines (94.1%) does not meet global threshold (95%)`. When a change legitimately raises coverage, bump the corresponding threshold in the same commit; never lower one to make a failing check pass without investigation.
 
-Known gap: `test/extension.test.ts` bundles `src/extension.ts` through esbuild and imports the bundle via a data URL, so the v8 provider reports 0% for `extension.ts` even though the mocked host test exercises it. Treat that row as unmeasured rather than uncovered.
+Known gap: `test/extension.test.ts` bundles `src/extension.ts` through esbuild and imports the bundle via a data URL, so the v8 provider reports 0% for `extension.ts` even though the mocked host test exercises it. That file is excluded from coverage thresholds and treated as unmeasured rather than uncovered.
 
 Existing test files use `node:assert/strict` under the Vitest runner; new tests may use either that or `vitest`'s `expect` — keep the file's existing style.
 

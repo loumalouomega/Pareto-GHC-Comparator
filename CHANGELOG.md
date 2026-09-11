@@ -4,6 +4,16 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Multiple benchmark variants per model as separate comparable rows via pins, with independent costs and fail-closed stale pins.
+- Model inclusion checklist with select-all/none, persisted per source and combined with the text filter before frontier and recommendations.
+- Chart display settings (model labels, Pareto frontier line, auto/logarithmic/linear cost scale with linear fallback for zero-cost rows) and deterministic base-model colors across light, dark, and high-contrast themes.
+- Per-bucket cost breakdown in model details for credit and USD estimates, with explicit free-tier and unpriced states.
+- Free-tier Zen comparison spotlight for OpenCode with best-free versus best-overall gap and cheapest paid model reaching the top score.
+- One-click comparison CSV export and chart PNG export via the save dialog; exports reflect the displayed rows and chart.
+- Static known-model registries needing no connection for Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Aider references, and Amazon Q Developer references, with namespaced identities, shared benchmark matching, illustrative USD estimates, and source-scoped budgets, profiles, and mappings.
+
 ## 0.8.0
 
 ### Added

@@ -88,6 +88,8 @@ for (const theme of ["light", "dark", "high-contrast"])
       profiles: [],
       profileModified: false,
       optionsRevision: 0,
+      checklist: [],
+      freeSpotlight: { enabled: false, explanation: "" },
     };
     let profiles: ProfileStore = { version: 1, items: [] };
     const mappings: Record<string, string> = {};

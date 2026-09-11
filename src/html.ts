@@ -15,7 +15,7 @@ export function html(
  <span id="profile-state" role="status"></span>
  </section>
   <section class="controls" aria-label="Comparison controls">
-  <label>Source<select id="source"><option value="copilot">GitHub Copilot</option><option value="opencode">OpenCode</option></select></label>
+  <label>Source<select id="source"><option value="copilot">GitHub Copilot</option><option value="opencode">OpenCode</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="gemini-cli">Gemini CLI</option><option value="cursor">Cursor</option><option value="windsurf">Windsurf</option><option value="aider">Aider</option><option value="amazon-q">Amazon Q Developer</option></select></label>
   <label>Task<select id="preset"><option value="coding">Coding</option><option value="general">General</option><option value="agentic">Agentic</option></select></label>
   <label>Billing<select id="billing"><option value="credits">AI credits</option><option value="legacy">Legacy premium requests</option><option value="usd">USD</option></select></label>
  <label id="plan-label" hidden>Annual plan<select id="plan"><option value="pro">Copilot Pro</option><option value="proPlus">Copilot Pro+</option></select></label>
@@ -24,7 +24,24 @@ export function html(
  <fieldset id="tokens"><legend>Illustrative token workload · editable estimate</legend><div class="token-grid">
  <label>Uncached input<input id="input" type="number" required min="0" max="100000000" step="1" value="1000"></label><label>Cache read<input id="read" type="number" required min="0" max="100000000" step="1" value="0"></label><label>Cache write<input id="write" type="number" required min="0" max="100000000" step="1" value="0"></label><label>Output (including reasoning)<input id="output" type="number" required min="0" max="100000000" step="1" value="1000"></label></div>
  <p class="hint">Input buckets are disjoint. Cache-write tokens use the write rate when listed, otherwise the normal input rate. This is not measured task cost or your account bill.</p></fieldset>
- <p id="legacy-note" class="hint" hidden>For existing annual Pro / Pro+ plans using legacy billing. Manual model selection, per interaction; Auto discounts and code review are not included.</p>
+  <p id="legacy-note" class="hint" hidden>For existing annual Pro / Pro+ plans using legacy billing. Manual model selection, per interaction; Auto discounts and code review are not included.</p>
+  <section class="controls" aria-label="Chart display settings">
+  <label class="checkbox-label"><input id="display-labels" type="checkbox" checked>Model labels</label>
+  <label class="checkbox-label"><input id="display-frontier" type="checkbox" checked>Pareto frontier line</label>
+  <label>Cost scale<select id="display-scale"><option value="auto">Auto</option><option value="log">Logarithmic</option><option value="linear">Linear</option></select></label>
+  <label class="checkbox-label" id="free-only-label" hidden><input id="free-only" type="checkbox">Free tier only</label>
+  </section>
+  <section class="controls" aria-label="Model inclusion">
+  <div><strong>Included models</strong> <button id="include-all" class="secondary">Select all</button> <button id="include-none" class="secondary">Select none</button></div>
+  <div id="checklist"></div>
+  </section>
+  <section class="controls" aria-label="Exports">
+  <button id="export-csv" class="secondary">Export CSV</button>
+  <button id="export-png" class="secondary">Export chart PNG</button>
+  <span id="export-note" role="status"></span>
+  </section>
+  <section class="recommendation-card" aria-labelledby="spotlight-title" id="spotlight-card">
+  <h2 id="spotlight-title">Free-tier spotlight</h2><p id="spotlight-result" role="status" aria-live="polite"></p></section>
  <section class="recommendation-card" aria-labelledby="recommendation-title">
  <h2 id="recommendation-title">Find a model</h2><div class="controls">
  <label>Recommendation mode<select id="recommendation-mode"><option value="budget">Best under budget</option><option value="nearBest">Cheapest near best</option></select></label>

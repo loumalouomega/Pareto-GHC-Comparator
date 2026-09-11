@@ -403,6 +403,8 @@ test("source and USD recommendation messages validate", () => {
       [
         {
           id: "a",
+          modelId: "a",
+          baseModelId: "a",
           name: "a",
           provider: "opencode-go",
           cost: 0.5,

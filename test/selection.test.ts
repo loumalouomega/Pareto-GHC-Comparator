@@ -13,6 +13,8 @@ import { parseMessage } from "../src/messages";
 import { catalog } from "../src/catalog";
 const row = (id: string, cost: number | null, score: number | null): Row => ({
   id,
+  modelId: id,
+  baseModelId: id,
   name: id,
   cost,
   score,

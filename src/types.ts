@@ -1,6 +1,21 @@
 export type Preset = "general" | "coding" | "agentic";
 export type Billing = "credits" | "legacy" | "usd";
-export type Source = "copilot" | "opencode";
+export type Source =
+  | "copilot"
+  | "opencode"
+  | "claude-code"
+  | "codex"
+  | "gemini-cli"
+  | "cursor"
+  | "windsurf"
+  | "aider"
+  | "amazon-q";
+export type CostScale = "auto" | "log" | "linear";
+export interface DisplaySettings {
+  labels: boolean;
+  frontier: boolean;
+  scale: CostScale;
+}
 export interface Tokens {
   input: number;
   read: number;
@@ -21,6 +36,8 @@ export interface Options {
   tokens: Tokens;
   filter: string;
   recommendation: RecommendationSettings;
+  display: DisplaySettings;
+  freeOnly: boolean;
 }
 export const defaults: Options = {
   source: "copilot",
@@ -34,6 +51,8 @@ export const defaults: Options = {
     budgets: { credits: 1, legacy: 1, usd: 1 },
     scoreGap: 3,
   },
+  display: { labels: true, frontier: true, scale: "auto" },
+  freeOnly: false,
 };
 export interface Benchmark {
   id: string;
@@ -68,6 +87,16 @@ export interface Rates {
   write: number | null;
   output: number;
 }
+export interface CostBreakdown {
+  inputTokens: number;
+  readTokens: number;
+  writeTokens: number;
+  outputTokens: number;
+  rates: Rates;
+  divisor: number;
+  tier?: string;
+  unit: string;
+}
 export interface CatalogEntry {
   ids: string[];
   name: string;
@@ -89,6 +118,10 @@ export interface MappingResult {
 }
 export interface Row {
   id: string;
+  /** Original discovered/static model id (pins share this). */
+  modelId: string;
+  /** Base model identity used for color grouping (variant suffix stripped). */
+  baseModelId: string;
   name: string;
   provider: string;
   score: number | null;
@@ -97,17 +130,19 @@ export interface Row {
   reasons: string[];
   benchmark?: Benchmark;
   tier?: string;
+  breakdown?: CostBreakdown;
   dominatedBy: string[];
   mappingStatus: MappingStatus;
   candidateIds: string[];
   selectedBenchmarkId?: string;
+  pinnedBenchmarkId?: string;
 }
 export interface RecommendationResult {
   modelIds: string[];
   explanation: string;
   threshold?: number;
 }
-export type Workload = Omit<Options, "filter">;
+export type Workload = Omit<Options, "filter" | "display">;
 export interface WorkloadProfile {
   id: string;
   name: string;
@@ -133,7 +168,28 @@ export type HostMessage =
   | { type: "options"; options: Options }
   | { type: "select" | "copy"; id: string }
   | { type: "mapping"; id: string; benchmarkId: string }
+  | { type: "pin"; id: string; benchmarkId: string }
+  | { type: "unpin"; id: string; benchmarkId: string }
+  | { type: "exclude"; id: string; excluded: boolean }
+  | { type: "excludeAll"; excluded: boolean }
+  | { type: "exportCsv" }
+  | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
+export interface FreeSpotlight {
+  enabled: boolean;
+  bestFree?: { id: string; name: string; score: number };
+  bestOverall?: { id: string; name: string; score: number };
+  gapPoints?: number;
+  cheapestToBest?: { id: string; name: string; cost: number };
+  explanation: string;
+}
+export interface ChecklistEntry {
+  id: string;
+  name: string;
+  provider: string;
+  included: boolean;
+  rowCount: number;
+}
 export interface ViewState {
   source: Source;
   options: Options;
@@ -151,4 +207,7 @@ export interface ViewState {
   activeProfileId?: string;
   profileModified: boolean;
   optionsRevision: number;
+  checklist: ChecklistEntry[];
+  freeSpotlight: FreeSpotlight;
+  exportNote?: string;
 }

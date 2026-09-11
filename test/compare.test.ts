@@ -11,6 +11,8 @@ import { catalog } from "../src/catalog";
 import { defaults, type Benchmark, type Row } from "../src/types";
 const row = (id: string, cost: number | null, score: number | null): Row => ({
   id,
+  modelId: id,
+  baseModelId: id,
   name: id,
   provider: "Test",
   cost,

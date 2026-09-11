@@ -10,12 +10,15 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
+      // src/extension.ts is exercised through a bundled mocked-host test and
+      // reports 0% under v8; it stays excluded as unmeasured (see docs/testing.md).
+      exclude: ["src/extension.ts", "node_modules", "dist"],
       // Ratcheted at measured coverage: any drop fails `npm run test:coverage`.
       thresholds: {
-        lines: 65,
-        functions: 75,
-        branches: 73,
-        statements: 63,
+        lines: 95,
+        functions: 98,
+        branches: 89,
+        statements: 93,
       },
     },
   },

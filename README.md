@@ -10,7 +10,9 @@
 
 <img src="media/icon.png" alt="Pareto GHC Comparator logo" width="128" />
 
-A desktop VS Code extension for comparing GitHub Copilot and OpenCode models. Pick a task and compare benchmark quality against estimated usage cost on a Pareto chart.
+A desktop VS Code extension for comparing coding-assistant models. Pick a task and compare benchmark quality against estimated usage cost on a Pareto chart.
+
+Sources: GitHub Copilot (live discovery), OpenCode (live CLI discovery with Zen USD pricing), plus known-model registries that need no connection — Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Aider references, and Amazon Q Developer references. Static registries show a priori known company models with illustrative API-equivalent USD estimates, never account availability.
 
 ## Preview
 
@@ -24,7 +26,7 @@ Requires VS Code 1.100 or newer with GitHub Copilot Chat. See [Getting started](
 
 1. Install `pareto-ghc-comparator.vsix` via **Extensions: Install from VSIX…**.
 2. Run **Pareto GHC: Open Model Comparison** and set your [Artificial Analysis Free API key](https://artificialanalysis.ai/data-api).
-3. Pick a source (Copilot or OpenCode), task, billing mode, and token workload, then select a chart point or table row to inspect the tradeoff.
+3. Pick a source (Copilot, OpenCode, Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Aider, or Amazon Q), task, billing mode, and token workload, then select a chart point or table row to inspect the tradeoff. Use the model checklist, chart display settings, cost breakdown, CSV/PNG exports, and (for OpenCode) the free-tier spotlight.
 
 ## Guides
 
