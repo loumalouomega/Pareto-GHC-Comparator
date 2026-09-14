@@ -32,10 +32,14 @@ jobs:
       - run: npx vitest run test/opencode-platform.test.ts
 
   # Real OpenCode CLI discovery without credentials (free-tier listing only).
-  # Not a release gate: it depends on external downloads and the OpenCode catalog.
+  # Not a release gate: it depends on external downloads and the OpenCode
+  # catalog, so continue-on-error keeps a flaky opencode.ai outage from
+  # failing the run; it is deliberately excluded from required status checks
+  # and from the `release`/`publish` jobs' `needs`.
   opencode-smoke:
     name: OpenCode smoke (${{ matrix.os }}, ${{ matrix.method }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -59,13 +63,27 @@ jobs:
       - run: npm ci
       - name: Install OpenCode (npm)
         if: matrix.method == 'npm'
+        id: install-npm
         run: |
           npm install -g opencode-ai@1.18.30
           echo "OPENCODE_SOURCE=$(npm root -g)/opencode-ai/bin/opencode.exe" >> "$GITHUB_ENV"
       - name: Install OpenCode (install script)
         if: matrix.method == 'script'
+        id: install-script
         run: |
-          curl -fsSL https://opencode.ai/install | bash
+          # opencode.ai's install script occasionally fails to reach its own
+          # version endpoint; retry a few times before giving up.
+          for attempt in 1 2 3; do
+            if curl -fsSL https://opencode.ai/install | bash; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::OpenCode install script failed after 3 attempts (likely an opencode.ai outage)."
+              exit 1
+            fi
+            echo "Install script failed (attempt $attempt/3); retrying in 10s..."
+            sleep 10
+          done
           echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
           echo "OPENCODE_SOURCE=$HOME/.opencode/bin/opencode" >> "$GITHUB_ENV"
       - name: Discovery smoke (credential-free home)
@@ -80,7 +98,9 @@ jobs:
           mkdir -p "$HOME"
           npx tsx scripts/opencode-smoke.ts --method ${{ matrix.method }} --expect-free
       - name: Discovery smoke (executable path with spaces)
-        if: ${{ !cancelled() }}
+        # Only run once an install step actually produced an executable;
+        # otherwise this fails too with an unrelated, confusing ENOENT.
+        if: ${{ !cancelled() && (steps.install-npm.outcome == 'success' || steps.install-script.outcome == 'success') }}
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/oc-home/config
           XDG_DATA_HOME: ${{ runner.temp }}/oc-home/data
