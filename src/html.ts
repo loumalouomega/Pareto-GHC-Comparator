@@ -82,6 +82,8 @@ export function html(
   <button id="usage-scan" class="secondary">Scan local usage</button>
   <button id="usage-pause" class="secondary" hidden>Pause watching</button>
   <button id="usage-clear" class="secondary">Erase local usage</button>
+  <button id="usage-show" class="secondary">Show stored usage data</button>
+  <label>Keep history (days)<input id="usage-retention" type="number" min="0" max="3650" step="1" placeholder="Unlimited"></label>
   <label class="checkbox-label"><input id="usage-full-paths" type="checkbox">Show full paths</label>
   <span id="usage-watching" role="status"></span>
   </div><p id="usage-diagnostics" role="status"></p><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>

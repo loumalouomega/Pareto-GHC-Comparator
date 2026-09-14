@@ -47,6 +47,8 @@ import {
   normalizeUsageModelId,
   parseUsageJsonl,
   parseUsageLegacyJson,
+  parseUsageRetentionDays,
+  purgeUsageRetention,
   selectChangedFiles,
   storageCandidates,
   suggestBudget,
@@ -149,6 +151,15 @@ export function activate(context: vscode.ExtensionContext) {
   let usageStatusItem: vscode.StatusBarItem | undefined;
   const isUsagePaused = () =>
     context.globalState.get("usagePaused", false);
+  const retentionDays = (): number | undefined => {
+    try {
+      return parseUsageRetentionDays(
+        context.globalState.get("usageRetentionDays"),
+      );
+    } catch {
+      return undefined;
+    }
+  };
   const updateUsageStatus = () => {
     if (!usageStatusItem) return;
     if (!context.globalState.get("usageConsent", false)) {
@@ -185,6 +196,19 @@ export function activate(context: vscode.ExtensionContext) {
       return undefined;
     }
   };
+  if (
+    typeof vscode.workspace.registerTextDocumentContentProvider === "function"
+  ) {
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider("pareto-usage", {
+        provideTextDocumentContent: async () => {
+          const stored = await readStoredUsage();
+          if (!stored) return "No stored Copilot usage data on this machine.";
+          return JSON.stringify(stored, null, 2);
+        },
+      }),
+    );
+  }
   const setupUsageWatchers = () => {
     if (
       !context.globalState.get("usageConsent", false) ||
@@ -337,18 +361,38 @@ export function activate(context: vscode.ExtensionContext) {
         }
         if (!current()) return;
         const scannedAt = Date.now();
-        usage = aggregateUsage(Object.values(files), scannedAt);
+        const retention = retentionDays();
+        let storedFiles = files,
+          storedIndex = index,
+          purgedRequests = 0,
+          purgedFiles = 0;
+        if (retention !== undefined) {
+          const purged = purgeUsageRetention(
+            files,
+            index,
+            retention,
+            scannedAt,
+          );
+          storedFiles = purged.files;
+          storedIndex = purged.index;
+          purgedRequests = purged.purgedRequests;
+          purgedFiles = purged.purgedFiles;
+        }
+        usage = aggregateUsage(Object.values(storedFiles), scannedAt);
         await writeSnapshotFile(usageSummaryUri, {
           version: 2,
           scannedAt,
-          index,
-          files,
+          index: storedIndex,
+          files: storedFiles,
         });
         if (!current()) return;
         setupUsageWatchers();
         message =
           `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
-          "Local estimates only, not a bill.";
+          "Local estimates only, not a bill." +
+          (retention !== undefined
+            ? ` Retention (${retention} days): purged ${purgedRequests} requests from ${purgedFiles} sessions.`
+            : "");
       } catch {
         if (current())
           message =
@@ -542,6 +586,7 @@ export function activate(context: vscode.ExtensionContext) {
       usage,
       usageWatching: usageWatchers.length > 0,
       usagePaused: isUsagePaused(),
+      usageRetentionDays: retentionDays(),
       budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
       message: [message, discoveryErrors[options.source]]
@@ -770,6 +815,18 @@ export function activate(context: vscode.ExtensionContext) {
     message = "Watching for new sessions.";
     render();
   };
+  const showStoredUsageData = async () => {
+    try {
+      const doc = await vscode.workspace.openTextDocument(
+        vscode.Uri.parse("pareto-usage:/usage.json"),
+      );
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch {
+      message =
+        "No stored usage data is available. Scan local usage first, then show it again.";
+      render();
+    }
+  };
   const openPanel = () => {
     if (panel) panel.reveal();
     else void vscode.commands.executeCommand("paretoGhc.open");
@@ -798,6 +855,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("paretoGhc.resumeUsage", async () => {
       openPanel();
       await resumeUsageWatching();
+    }),
+    vscode.commands.registerCommand("paretoGhc.showUsageData", async () => {
+      await showStoredUsageData();
     }),
     vscode.commands.registerCommand("paretoGhc.open", () => {
       if (panel) {
@@ -892,6 +952,16 @@ export function activate(context: vscode.ExtensionContext) {
               await pauseUsageWatching();
             } else if (m.type === "resumeUsage") {
               await resumeUsageWatching();
+            } else if (m.type === "setUsageRetention") {
+              await context.globalState.update(
+                "usageRetentionDays",
+                m.days === 0 ? undefined : m.days,
+              );
+              if (context.globalState.get("usageConsent", false))
+                await runUsageScan();
+              else render();
+            } else if (m.type === "showUsageData") {
+              await showStoredUsageData();
             } else if (m.type === "key") await setKey();
             else if (m.type === "source") {
               if (m.source !== options.source) {

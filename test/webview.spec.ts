@@ -359,6 +359,9 @@ for (const theme of ["light", "dark", "high-contrast"])
         state.usagePaused = false;
         state.usageWatching = true;
       }
+      if (m.type === "setUsageRetention") {
+        state.usageRetentionDays = m.days === 0 ? undefined : m.days;
+      }
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
       }
@@ -974,6 +977,26 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#usage-pause").click();
     expect(messages.some((m) => m.type === "resumeUsage")).toBeTruthy();
     await expect(page.locator("#usage-pause")).toHaveText("Pause watching");
+    await expect(page.locator("#usage-retention")).toHaveValue("");
+    await page.locator("#usage-retention").fill("30");
+    // The retention input applies on change (blur), not per keystroke, since
+    // applying it triggers a rescan.
+    await page.locator("#usage-title").click();
+    expect(
+      messages.some(
+        (m) => m.type === "setUsageRetention" && (m as any).days === 30,
+      ),
+    ).toBeTruthy();
+    await page.locator("#usage-show").click();
+    expect(messages.some((m) => m.type === "showUsageData")).toBeTruthy();
+    await expect(page.locator("#usage-retention")).toHaveValue("30");
+    await page.locator("#usage-retention").fill("");
+    await page.locator("#usage-title").click();
+    expect(
+      messages.some(
+        (m) => m.type === "setUsageRetention" && (m as any).days === 0,
+      ),
+    ).toBeTruthy();
     await expect(page.locator("#usage-diagnostics")).toContainText(
       "1 malformed records",
     );

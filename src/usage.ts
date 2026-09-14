@@ -172,6 +172,71 @@ export interface UsageIndex {
 export function blankUsageIndex(): UsageIndex {
   return { version: 1, files: {} };
 }
+export const maxUsageRetentionDays = 3650;
+export function parseUsageRetentionDays(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" && typeof value !== "string")
+    throw new Error("Invalid usage retention.");
+  const text = typeof value === "string" ? value.trim() : value;
+  if (text === "") return undefined;
+  const days = typeof text === "number" ? text : Number(text);
+  if (
+    typeof days !== "number" ||
+    !Number.isSafeInteger(days) ||
+    days < 0 ||
+    days > maxUsageRetentionDays
+  )
+    throw new Error("Invalid usage retention.");
+  return days === 0 ? undefined : days;
+}
+export interface UsageRetentionPurge {
+  files: StoredUsageFile["files"];
+  index: UsageIndex;
+  purgedRequests: number;
+  purgedFiles: number;
+}
+export function purgeUsageRetention(
+  files: StoredUsageFile["files"],
+  index: UsageIndex,
+  retentionDays: number | undefined,
+  now: number = Date.now(),
+): UsageRetentionPurge {
+  const nextFiles: StoredUsageFile["files"] = {};
+  const nextIndex: UsageIndex = { version: 1, files: { ...index.files } };
+  let purgedRequests = 0,
+    purgedFiles = 0;
+  if (
+    retentionDays === undefined ||
+    !Number.isSafeInteger(retentionDays) ||
+    retentionDays <= 0 ||
+    typeof now !== "number" ||
+    !Number.isFinite(now)
+  )
+    return {
+      files: { ...files },
+      index: nextIndex,
+      purgedRequests,
+      purgedFiles,
+    };
+  const cutoff = now - retentionDays * 86400000;
+  for (const [path, file] of Object.entries(files)) {
+    const kept = file.requests.filter(
+      (r) => typeof r.timestampMs !== "number" || !(r.timestampMs < cutoff),
+    );
+    purgedRequests += file.requests.length - kept.length;
+    if (kept.length === file.requests.length) {
+      nextFiles[path] = file;
+      continue;
+    }
+    if (kept.length > 0) {
+      nextFiles[path] = { ...file, requests: kept };
+      continue;
+    }
+    purgedFiles++;
+    delete nextIndex.files[path];
+  }
+  return { files: nextFiles, index: nextIndex, purgedRequests, purgedFiles };
+}
 export interface StoredUsageFile {
   version: 2;
   scannedAt: number;

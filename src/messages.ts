@@ -1,5 +1,6 @@
 import { parseByokFormStore } from "./byok";
 import { parseOptions } from "./compare";
+import { parseUsageRetentionDays } from "./usage";
 import type { HostMessage, ProfileAction, Source } from "./types";
 const validSources: Source[] = [
   "copilot",
@@ -74,6 +75,14 @@ export function parseMessage(raw: unknown): HostMessage {
   if (m.type === "clearUsage") return { type: "clearUsage" };
   if (m.type === "pauseUsage") return { type: "pauseUsage" };
   if (m.type === "resumeUsage") return { type: "resumeUsage" };
+  if (m.type === "showUsageData") return { type: "showUsageData" };
+  if (m.type === "setUsageRetention") {
+    if (typeof m.days !== "number") throw new Error("Invalid usage retention.");
+    return {
+      type: "setUsageRetention",
+      days: parseUsageRetentionDays(m.days) ?? 0,
+    };
+  }
   if (
     m.type === "exportPng" &&
     typeof m.png === "string" &&

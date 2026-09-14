@@ -50,6 +50,10 @@
       {
         "command": "paretoGhc.resumeUsage",
         "title": "Pareto GHC: Resume Copilot Usage Watching"
+      },
+      {
+        "command": "paretoGhc.showUsageData",
+        "title": "Pareto GHC: Show Stored Copilot Usage Data"
       }
     ]
   },

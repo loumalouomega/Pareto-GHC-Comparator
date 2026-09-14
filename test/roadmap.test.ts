@@ -1415,6 +1415,25 @@ test("usage messages validate scan and clear actions", () => {
   assert.deepEqual(parseMessage({ type: "clearUsage" }), { type: "clearUsage" });
   assert.deepEqual(parseMessage({ type: "pauseUsage" }), { type: "pauseUsage" });
   assert.deepEqual(parseMessage({ type: "resumeUsage" }), { type: "resumeUsage" });
+  assert.deepEqual(parseMessage({ type: "showUsageData" }), {
+    type: "showUsageData",
+  });
+  assert.deepEqual(parseMessage({ type: "setUsageRetention", days: 30 }), {
+    type: "setUsageRetention",
+    days: 30,
+  });
+  assert.deepEqual(parseMessage({ type: "setUsageRetention", days: 0 }), {
+    type: "setUsageRetention",
+    days: 0,
+  });
+  assert.throws(
+    () => parseMessage({ type: "setUsageRetention", days: -1 }),
+    /Invalid usage retention/,
+  );
+  assert.throws(
+    () => parseMessage({ type: "setUsageRetention" }),
+    /Invalid usage retention/,
+  );
 });
 
 test("usage medians and p90s summarize priced requests", () => {

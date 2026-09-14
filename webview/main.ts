@@ -1243,6 +1243,12 @@ function renderUsage() {
   pauseBtn.textContent = state.usagePaused
     ? "Resume watching"
     : "Pause watching";
+  const retentionInput = el<HTMLInputElement>("usage-retention");
+  if (document.activeElement !== retentionInput)
+    retentionInput.value =
+      state.usageRetentionDays === undefined
+        ? ""
+        : String(state.usageRetentionDays);
   const summary = el("usage-summary");
   const modelsEl = el("usage-models"),
     daysEl = el("usage-days"),
@@ -2405,6 +2411,26 @@ el("usage-scan").onclick = () => send("scanUsage");
 el("usage-pause").onclick = () =>
   send(state?.usagePaused ? "resumeUsage" : "pauseUsage");
 el("usage-clear").onclick = () => send("clearUsage");
+el("usage-show").onclick = () => send("showUsageData");
+el("usage-retention").addEventListener("change", () => {
+  const input = el<HTMLInputElement>("usage-retention");
+  const raw = input.value.trim();
+  if (raw === "") {
+    send("setUsageRetention", { days: 0 });
+    return;
+  }
+  const days = Number(raw);
+  // Mirrors the host-side 0–3650 range (src/usage.ts); invalid edits revert
+  // to the stored value instead of sending a message the host must reject.
+  if (!Number.isSafeInteger(days) || days < 0 || days > 3650) {
+    input.value =
+      state?.usageRetentionDays === undefined
+        ? ""
+        : String(state.usageRetentionDays);
+    return;
+  }
+  send("setUsageRetention", { days });
+});
 el("usage-full-paths").addEventListener("input", () => {
   usageFullPaths = el<HTMLInputElement>("usage-full-paths").checked;
   renderUsage();

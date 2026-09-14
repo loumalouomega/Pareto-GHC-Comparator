@@ -39,6 +39,11 @@ test("extension discovers Copilot models, serves cached data, validates messages
   const kicks: (() => void)[] = [];
   const writes: string[] = [];
   const exports: string[] = [];
+  const textProviders = new Map<
+    string,
+    { provideTextDocumentContent: (uri: unknown) => Promise<string> | string }
+  >();
+  const shownDocs: { content: string }[] = [];
   const storageFiles = new Map<string, Uint8Array>();
   let pauseWrite: (() => Promise<void>) | undefined;
   let deleted = false;
@@ -103,6 +108,12 @@ test("extension discovers Copilot models, serves cached data, validates messages
           return this.path;
         },
       }),
+      parse: (value: string) => ({
+        path: value,
+        toString() {
+          return value;
+        },
+      }),
     },
     ViewColumn: { One: 1 },
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -130,6 +141,10 @@ test("extension discovers Copilot models, serves cached data, validates messages
       showInputBox: async () => secret,
       showSaveDialog: async () => ({ path: "/exports/data" }),
       showInformationMessage: async () => "Scan locally",
+      showTextDocument: async (doc: { content: string }) => {
+        shownDocs.push(doc);
+        return doc;
+      },
       createStatusBarItem: () => {
         const item = {
           text: "",
@@ -149,6 +164,20 @@ test("extension discovers Copilot models, serves cached data, validates messages
       },
     },
     workspace: {
+      registerTextDocumentContentProvider: (
+        scheme: string,
+        provider: {
+          provideTextDocumentContent: (uri: unknown) => Promise<string> | string;
+        },
+      ) => {
+        textProviders.set(scheme, provider);
+        return disposable;
+      },
+      openTextDocument: async (uri: { path: string }) => {
+        const provider = textProviders.get(String(uri.path).split(":")[0]);
+        if (!provider) throw new Error("No text provider");
+        return { uri, content: await provider.provideTextDocumentContent(uri) };
+      },
       createFileSystemWatcher: () => ({
         onDidChange: (fn: () => void) => {
           kicks.push(fn);
@@ -619,6 +648,81 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(state.get("usagePaused"), false);
     assert.equal(last().usageWatching, true);
 
+    // Retention is unlimited by default: stored history survives scans untouched.
+    assert.equal(last().usageRetentionDays, undefined);
+    const oldPath = join(sessionDir, "old.jsonl");
+    const recentPath = join(sessionDir, "recent.jsonl");
+    const resultLine = (index: number) =>
+      JSON.stringify({
+        kind: 1,
+        k: ["requests", index, "result"],
+        v: {
+          metadata: {
+            modelId: "copilot/gpt-5-mini",
+            promptTokens: 5,
+            outputTokens: 5,
+          },
+        },
+      });
+    writeFileSync(
+      oldPath,
+      [
+        JSON.stringify({
+          kind: 0,
+          v: {
+            sessionId: "old",
+            creationDate: Date.now() - 60 * 86400000,
+          },
+        }),
+        resultLine(0),
+      ].join("\n"),
+    );
+    writeFileSync(
+      recentPath,
+      [
+        JSON.stringify({
+          kind: 0,
+          v: { sessionId: "recent", creationDate: Date.now() },
+        }),
+        resultLine(0),
+      ].join("\n"),
+    );
+    await receiver({ type: "setUsageRetention", days: 30 });
+    assert.equal(state.get("usageRetentionDays"), 30);
+    assert.equal(last().usageRetentionDays, 30);
+    assert.equal(last().usage.requestCount, 1);
+    assert.equal(last().usage.fileCount, 1);
+    assert.match(
+      last().message,
+      /Retention \(30 days\): purged 1 requests from 1 sessions/,
+    );
+    // The stored snapshot served to the inspection view reflects the purge.
+    assert.ok(commands.has("paretoGhc.showUsageData"));
+    await (commands.get("paretoGhc.showUsageData")!() as Promise<void>);
+    assert.equal(shownDocs.length, 1);
+    const stored = JSON.parse(shownDocs[0].content);
+    assert.equal(stored.version, 2);
+    assert.ok(
+      Object.keys(stored.files).some((p: string) => p.endsWith("recent.jsonl")),
+    );
+    assert.ok(
+      Object.keys(stored.files).every((p: string) => !p.endsWith("old.jsonl")),
+    );
+    await receiver({ type: "showUsageData" });
+    assert.equal(shownDocs.length, 2);
+    // Back to unlimited: the purge stops applying on the next scan.
+    unlinkSync(oldPath);
+    await receiver({ type: "setUsageRetention", days: 0 });
+    assert.equal(state.get("usageRetentionDays"), undefined);
+    assert.equal(last().usageRetentionDays, undefined);
+    assert.equal(last().usage.requestCount, 1);
+    assert.doesNotMatch(last().message, /Retention/);
+    // Invalid retention values are rejected without changing stored state.
+    await receiver({ type: "setUsageRetention", days: -3 });
+    assert.match(last().message, /Could not apply/);
+    assert.equal(state.get("usageRetentionDays"), undefined);
+    unlinkSync(recentPath);
+
     assert.ok(
       writes.every((path) => /usage.json\.[a-f0-9]+\.tmp.json$/.test(path)),
     );
@@ -661,6 +765,10 @@ test("extension discovers Copilot models, serves cached data, validates messages
     await receiver({ type: "clearUsage" });
     assert.match(last().message, /could not be erased/);
     assert.equal(state.get("usageConsent"), false);
+    // With no stored snapshot, the inspection view explains instead of failing.
+    storageFiles.delete("/cache/usage.json");
+    await (commands.get("paretoGhc.showUsageData")!() as Promise<void>);
+    assert.match(shownDocs.at(-1)!.content, /No stored Copilot usage data/);
   } finally {
     vi.useRealTimers();
     if (home === undefined) delete process.env.HOME;

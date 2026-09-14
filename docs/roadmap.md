@@ -21,13 +21,6 @@ Below, Tier 1 turns each "Requirements across future work" principle into scoped
 
 Admission criterion: current shipped behavior falls short of one of the requirements below; close the gap without expanding scope beyond it.
 
-### Local usage retention and inspection — M
-
-- **Gap:** stored usage history has no age limit and accumulates indefinitely; there is no way to see what is actually stored short of erasing it.
-- **Deliverables:** an optional retention window (e.g. "keep N days") applied on scan, purging older per-session records with the purge result reported to the user; a **Show stored usage data** command that opens the stored summary read-only (e.g. in an editor tab) for inspection.
-- **Dependencies:** the versioned usage store in `src/usage.ts`.
-- **Acceptance:** retention is off (unlimited) by default — no silent deletion of history a user hasn't asked to limit. When enabled, the purge is logged and reported, and it never removes data outside the configured window.
-
 ### Explicit unknowns for name-derived mappings and multipliers — M
 
 - **Gap:** several places quietly convert an absence of evidence into a confident-looking answer:
@@ -65,7 +58,7 @@ Admission criterion: new user value that meets every "Requirements across future
 
 - **Gap:** the extension contributes no `contributes.configuration` in `package.json`; watching defaults, retention, and chart defaults live only in `globalState`/`workspaceState` with no user-facing settings UI.
 - **Deliverables:** add a `paretoGhc.*` settings section (watch-on-scan default, retention window from the task above, default chart view/task) that mirrors and can override the existing stored state, migrating existing `globalState` values on first read.
-- **Dependencies:** none beyond current state storage; this is a prerequisite for the retention and status tasks above if they aren't already done.
+- **Dependencies:** none beyond current state storage; the retention setting (`usageRetentionDays` in global state, shipped) is ready to mirror alongside the watching default and chart defaults.
 - **Acceptance:** settings changes take effect without reload where feasible; existing users' current behavior is unchanged until they touch a setting.
 
 ### Per-row pricing age — S

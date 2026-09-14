@@ -477,6 +477,8 @@ export type HostMessage =
   | { type: "clearUsage" }
   | { type: "pauseUsage" }
   | { type: "resumeUsage" }
+  | { type: "setUsageRetention"; days: number }
+  | { type: "showUsageData" }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -545,6 +547,7 @@ export interface ViewState {
   usage: UsageSummary | null;
   usageWatching: boolean;
   usagePaused: boolean;
+  usageRetentionDays?: number;
   budgetSuggestion: BudgetSuggestion | null;
   loading: boolean;
   message: string;
