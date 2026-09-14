@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Changed
+
+- Simpler default layout: the panel is now split into **Compare**, **Plan & budget**, **Usage**, and **Settings** tabs. Compare keeps the everyday workflow — source, task, billing, chart view, and filter in one row, a compact **Find a model** strip, then the chart, table, and model details. Side-by-side options, saved workloads, and the monthly spending scenario move to Plan & budget; local usage, BYOK rates, and the free-tier spotlight to Usage; chart display, included models, and exports to Settings. Model details show the essentials and put cost breakdowns, pricing sources, pinning, and benchmark mapping behind **More details**, which opens automatically for a model with a missing benchmark or an unresolved price. The last open tab is restored when the panel reloads. Features, saved data, and exports are unchanged.
+
 ## 1.0.0
 
 ### Added

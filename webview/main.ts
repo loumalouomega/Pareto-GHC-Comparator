@@ -15,7 +15,11 @@ import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert } from "../src/freshness";
 import { plansFor } from "../src/plans";
-declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
+declare function acquireVsCodeApi(): {
+  postMessage(message: unknown): void;
+  getState?(): unknown;
+  setState?(state: unknown): void;
+};
 const vscode = acquireVsCodeApi();
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -98,7 +102,8 @@ const unitCost = (billing: Billing) =>
 let variantSearch = "",
   showOtherVariants = false,
   detailsModelId: string | undefined,
-  pendingBenchmark: string | undefined;
+  pendingBenchmark: string | undefined,
+  detailsMoreOpen = false;
 let checklistSearch = "";
 let byokDraft: Record<
   string,
@@ -359,6 +364,24 @@ function renderDetails() {
     target.append(text("p", "Select a model in the chart or table."));
     return;
   }
+  if (detailsModelId !== row.id) {
+    detailsModelId = row.id;
+    variantSearch = "";
+    showOtherVariants = false;
+    pendingBenchmark = undefined;
+    // Open the extra details for a model that needs the user's action.
+    if (
+      row.mapping ||
+      row.pricing?.suggestion ||
+      row.pricing?.byok?.stale ||
+      row.pricing?.status === "unresolved"
+    )
+      detailsMoreOpen = true;
+  }
+  // Essentials go straight into the panel; the rest sits behind "More details".
+  const more = document.createElement("details");
+  more.className = "more-details";
+  more.append(text("summary", "More details"));
   target.append(text("h3", row.name), text("p", row.id, "hint"));
   const copy = text(
     "button",
@@ -392,7 +415,7 @@ function renderDetails() {
   if (row.breakdown) {
     const b = row.breakdown;
     const writeRate = b.rates.write ?? b.rates.input;
-    target.append(
+    more.append(
       text(
         "p",
         `Breakdown (${b.unit}): ${b.inputTokens}×${b.rates.input} + ${b.readTokens}×${b.rates.read} + ${b.writeTokens}×${writeRate} + ${b.outputTokens}×${b.rates.output}, ÷${b.divisor}${b.tier ? ` · ${b.tier}` : ""}.`,
@@ -400,7 +423,7 @@ function renderDetails() {
       ),
     );
     if (state.options.display.chart === "task")
-      target.append(
+      more.append(
         text(
           "p",
           "Per-task estimate uses a fixed illustrative token mix, not your workload inputs. Switch the chart view to compare your own workload.",
@@ -408,10 +431,10 @@ function renderDetails() {
         ),
       );
   } else if (row.cost === 0) {
-    target.append(text("p", "Free tier: no usage cost.", "hint"));
+    more.append(text("p", "Free tier: no usage cost.", "hint"));
   }
   if (row.expandedBenchmarkId) {
-    target.append(
+    more.append(
       text(
         "p",
         "Shown automatically once per matching benchmark variant. Use the benchmark dropdown below to keep only one.",
@@ -432,9 +455,9 @@ function renderDetails() {
     // Unpinning a stale pin (no resolved benchmark) must stay available;
     // only *creating* a new pin needs a resolved benchmark to pin.
     pinButton.disabled = !row.pinnedBenchmarkId && !row.benchmark;
-    target.append(pinButton);
+    more.append(pinButton);
   }
-  renderPricingDetail(target, row);
+  renderPricingDetail(more, row);
   const skip = new Set(
     [row.mapping?.reason, row.pricing?.reason].filter((r): r is string => !!r),
   );
@@ -443,12 +466,12 @@ function renderDetails() {
   if (row.benchmark) {
     target.append(
       text("p", `Tested variant: ${row.benchmark.name}`),
-      text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"),
       text(
         "p",
         `Selected index score: ${format(row.score)} · version ${state.version ?? "unknown"}`,
       ),
     );
+    more.append(text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"));
     if ((row.requests ?? 0) > 0)
       target.append(
         text(
@@ -459,7 +482,7 @@ function renderDetails() {
       );
     const drift = row.benchmark ? state.drift[row.benchmark.id] : undefined;
     if (state.prevVersion && drift) {
-      target.append(
+      more.append(
         text(
           "p",
           drift.delta === null
@@ -473,9 +496,9 @@ function renderDetails() {
   target.append(text("p", mappingLabels[row.mappingStatus], "mapping-status"));
   if (row.mapping) {
     if (row.mapping.reason)
-      target.append(text("p", row.mapping.reason, "notice"));
+      more.append(text("p", row.mapping.reason, "notice"));
     if (row.mapping.aliases.length)
-      target.append(
+      more.append(
         text(
           "p",
           `Aliases tried: ${row.mapping.aliases.join(", ")}.`,
@@ -483,7 +506,7 @@ function renderDetails() {
         ),
       );
     if (row.mapping.issue === "override-stale" || row.mapping.issue === "pin-stale") {
-      target.append(
+      more.append(
         text(
           "p",
           `Previously selected benchmark "${row.mapping.staleBenchmarkId}" is no longer available. It was never silently replaced.`,
@@ -495,10 +518,10 @@ function renderDetails() {
         select.focus();
         select.scrollIntoView({ block: "nearest" });
       };
-      target.append(chooseBtn);
+      more.append(chooseBtn);
     }
     if (row.mapping.suggestions.length) {
-      target.append(
+      more.append(
         text(
           "p",
           "Suggested (identifier match — unverified):",
@@ -516,8 +539,8 @@ function renderDetails() {
         item.append(applyBtn);
         list.append(item);
       }
-      target.append(list);
-      target.append(
+      more.append(list);
+      more.append(
         text(
           "p",
           "Applying a suggestion selects a benchmark only; it never sets a price.",
@@ -530,19 +553,13 @@ function renderDetails() {
     target.append(
       text("p", state.recommendation.explanation, "recommendation-detail"),
     );
-  if (detailsModelId !== row.id) {
-    detailsModelId = row.id;
-    variantSearch = "";
-    showOtherVariants = false;
-    pendingBenchmark = undefined;
-  }
   const searchLabel = text("label", "Search benchmark variants");
   const search = document.createElement("input");
   search.id = "variant-search";
   search.type = "search";
   search.value = variantSearch;
   searchLabel.append(search);
-  target.append(searchLabel);
+  more.append(searchLabel);
   const manualLabel = text("label", "Show other benchmarks for manual mapping");
   manualLabel.className = "checkbox-label";
   const manual = document.createElement("input");
@@ -550,7 +567,7 @@ function renderDetails() {
   manual.type = "checkbox";
   manual.checked = showOtherVariants;
   manualLabel.prepend(manual);
-  target.append(manualLabel);
+  more.append(manualLabel);
   const label = text("label", "Benchmark variant");
   const select = document.createElement("select");
   select.id = "benchmark";
@@ -640,8 +657,8 @@ function renderDetails() {
   };
   populate();
   label.append(select);
-  target.append(label, applyBtn, resetBtn, pendingNote);
-  target.append(
+  more.append(label, applyBtn, resetBtn, pendingNote);
+  more.append(
     text(
       "p",
       state.options.source === "opencode"
@@ -650,6 +667,11 @@ function renderDetails() {
       "hint",
     ),
   );
+  more.open = detailsMoreOpen;
+  more.ontoggle = () => {
+    detailsMoreOpen = more.open;
+  };
+  target.append(more);
 }
 /**
  * Pricing provenance and, for an unresolved provider-billed OpenCode model, a
@@ -694,8 +716,10 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
     );
   if (p.status === "byok") {
     const editBtn = text("button", "Edit in BYOK rates") as HTMLButtonElement;
-    editBtn.onclick = () =>
+    editBtn.onclick = () => {
+      showTab("usage");
       el("byok-card").scrollIntoView({ block: "nearest" });
+    };
     const removeBtn = text("button", "Remove BYOK rate") as HTMLButtonElement;
     removeBtn.onclick = () => send("byokReset", { ids: [row.modelId] });
     target.append(editBtn, removeBtn);
@@ -2187,33 +2211,51 @@ el("byok-clear").onclick = () => {
   renderByok();
 };
 el("export-png").onclick = () => {
-  const canvas = el("chart") as HTMLCanvasElement;
-  const exportCanvas = document.createElement("canvas");
-  exportCanvas.width = 1600;
-  exportCanvas.height = 900;
-  const ctx = exportCanvas.getContext("2d");
-  if (!ctx) return;
-  ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
-  ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-  if (state?.comparison) {
-    for (const [index, side] of (["A", "B"] as const).entries()) {
-      ctx.fillStyle = getComputedStyle(document.body).color;
-      ctx.font = "20px sans-serif";
-      ctx.fillText(
-        `${side}: ${state.comparison.sides[side].name} · ${state.comparison.sides[side].options.billing}`,
-        index * 800 + 20,
-        35,
-      );
-      ctx.drawImage(
-        el<HTMLCanvasElement>(`comparison-chart-${side}`),
-        index * 800,
-        60,
-        800,
-        800,
-      );
+  // Export lives on the Settings tab, and charts drawn while the Compare tab
+  // is hidden have no size: lay that panel out off-screen and redraw first.
+  const panel = el("panel-compare");
+  const offscreen = panel.hidden;
+  if (offscreen) {
+    panel.classList.add("offscreen");
+    panel.hidden = false;
+    drawChart();
+    renderComparison();
+  }
+  try {
+    const canvas = el("chart") as HTMLCanvasElement;
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = 1600;
+    exportCanvas.height = 900;
+    const ctx = exportCanvas.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle =
+      getComputedStyle(document.body).backgroundColor || "#ffffff";
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    if (state?.comparison) {
+      for (const [index, side] of (["A", "B"] as const).entries()) {
+        ctx.fillStyle = getComputedStyle(document.body).color;
+        ctx.font = "20px sans-serif";
+        ctx.fillText(
+          `${side}: ${state.comparison.sides[side].name} · ${state.comparison.sides[side].options.billing}`,
+          index * 800 + 20,
+          35,
+        );
+        ctx.drawImage(
+          el<HTMLCanvasElement>(`comparison-chart-${side}`),
+          index * 800,
+          60,
+          800,
+          800,
+        );
+      }
+    } else ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+    send("exportPng", { png: exportCanvas.toDataURL("image/png") });
+  } finally {
+    if (offscreen) {
+      panel.hidden = true;
+      panel.classList.remove("offscreen");
     }
-  } else ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
-  send("exportPng", { png: exportCanvas.toDataURL("image/png") });
+  }
 };
 window.addEventListener("message", (event) => {
   if (event.data?.type === "state") render(event.data.state);
@@ -2225,4 +2267,49 @@ new MutationObserver(() => {
   attributes: true,
   attributeFilter: ["class", "style"],
 });
+const sectionTabs = ["compare", "plan", "usage", "settings"] as const;
+type SectionTab = (typeof sectionTabs)[number];
+function showTab(tab: SectionTab, focus = false) {
+  for (const id of sectionTabs) {
+    const button = el<HTMLButtonElement>(`tab-${id}`);
+    const active = id === tab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+    el(`panel-${id}`).hidden = !active;
+    if (active && focus) button.focus();
+  }
+  // Remember the open tab across webview reloads.
+  vscode.setState?.({ tab });
+  // Charts laid out while their panel was hidden have no size; redraw them.
+  if (tab === "compare" && state) {
+    drawChart();
+    renderComparison();
+  }
+}
+sectionTabs.forEach((id, index) => {
+  const button = el<HTMLButtonElement>(`tab-${id}`);
+  button.onclick = () => showTab(id);
+  button.onkeydown = (event) => {
+    const count = sectionTabs.length;
+    const next =
+      event.key === "ArrowRight"
+        ? sectionTabs[(index + 1) % count]
+        : event.key === "ArrowLeft"
+          ? sectionTabs[(index + count - 1) % count]
+          : event.key === "Home"
+            ? sectionTabs[0]
+            : event.key === "End"
+              ? sectionTabs[count - 1]
+              : undefined;
+    if (!next) return;
+    event.preventDefault();
+    showTab(next, true);
+  };
+});
+const savedTab = (vscode.getState?.() as { tab?: unknown } | undefined)?.tab;
+showTab(
+  sectionTabs.includes(savedTab as SectionTab)
+    ? (savedTab as SectionTab)
+    : "compare",
+);
 send("ready");

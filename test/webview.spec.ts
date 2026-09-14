@@ -391,6 +391,26 @@ for (const theme of ["light", "dark", "high-contrast"])
         });
     });
     await page.goto("https://pareto.test/");
+    // Secondary features live on other tabs; a control must be visible to use.
+    const openTab = (name: string) =>
+      page.getByRole("tab", { name, exact: true }).click();
+    // Tabs follow the ARIA pattern: one panel visible, arrow/Home/End keys move.
+    await expect(page.getByRole("tab", { name: "Compare" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.locator("#panel-settings")).toBeHidden();
+    await page.getByRole("tab", { name: "Compare" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByRole("tab", { name: "Plan & budget" }),
+    ).toBeFocused();
+    await expect(page.locator("#panel-plan")).toBeVisible();
+    await expect(page.locator("#panel-compare")).toBeHidden();
+    await page.keyboard.press("End");
+    await expect(page.locator("#panel-settings")).toBeVisible();
+    await page.keyboard.press("Home");
+    await expect(page.locator("#panel-compare")).toBeVisible();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await expect(page.locator("canvas")).toBeVisible();
     // Intelligence vs. cost per task is the default chart view.
@@ -405,7 +425,9 @@ for (const theme of ["light", "dark", "high-contrast"])
       /per task/,
     );
     // The most-attractive quadrant can be toggled without breaking the chart.
+    await openTab("Settings");
     await page.locator("#display-quadrant").uncheck();
+    await openTab("Compare");
     await expect(page.locator("canvas")).toBeVisible();
     await expect
       .poll(() =>
@@ -417,7 +439,9 @@ for (const theme of ["light", "dark", "high-contrast"])
         ),
       )
       .toBeTruthy();
+    await openTab("Settings");
     await page.locator("#display-quadrant").check();
+    await openTab("Compare");
     const model = page.getByRole("button", { name: "GPT-5.4", exact: true });
     await model.focus();
     await page.keyboard.press("Enter");
@@ -475,6 +499,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     const mediumLeaf = page
       .locator(".check-leaf-row", { hasText: "(medium)" })
       .locator("input");
+    await openTab("Settings");
     await mediumLeaf.uncheck();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     expect(
@@ -483,10 +508,17 @@ for (const theme of ["light", "dark", "high-contrast"])
       ),
     ).toBeTruthy();
     await mediumLeaf.check();
+    await openTab("Compare");
     await expect(page.locator("#count")).toHaveText("5 plotted / 6 models");
     // The benchmark dropdown stages a choice; nothing applies until the
     // explicit Apply mapping button is clicked.
     await mediumRow.click();
+    // Mapping controls sit behind "More details", which then stays open.
+    await expect(page.locator("#details .more-details")).not.toHaveAttribute(
+      "open",
+      "",
+    );
+    await page.locator("#details summary").click();
     await page.locator("#variant-search").fill("medium");
     await page.locator("#benchmark").focus();
     await page.locator("#benchmark").selectOption("gpt-medium");
@@ -519,6 +551,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#benchmark optgroup")).toHaveCount(2);
     await page.locator("#variant-manual").uncheck();
 
+    await openTab("Plan & budget");
     await page.locator("#profile-name").fill("Debugging");
     await page.locator("#profile-save").click();
     await expect(page.locator("#profile-state")).toHaveText(
@@ -526,6 +559,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#profile-save").click();
     await expect(page.locator("#status")).toContainText("already exists");
+    await openTab("Compare");
     // Workload token inputs live in the workload chart view.
     await page.locator("#display-chart").selectOption("workload");
     await expect(page.locator("#chart-title")).toHaveText(
@@ -542,6 +576,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#budget").fill("7");
     await expect(page.locator("#profile-state")).toContainText("Modified");
     await page.locator("#filter").fill("gpt");
+    await openTab("Plan & budget");
     await page.locator("#profile-apply").click();
     await expect(page.locator("#profile-apply")).toBeFocused();
     await expect(page.locator("#input")).toHaveValue("1000");
@@ -555,8 +590,10 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#profile-state")).toHaveText(
       "Debugging · Saved",
     );
+    await openTab("Compare");
     await page.locator("#filter").fill("");
     await page.locator("#score-gap").fill("5");
+    await openTab("Plan & budget");
     await expect(page.locator("#profile-update")).toBeEnabled();
     await page.locator("#profile-update").click();
     await expect(page.locator("#profile-state")).toHaveText(
@@ -570,6 +607,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#profile-delete").click();
     await expect(page.locator("#profile-state")).toHaveText("Custom workload");
     await expect(page.locator("#score-gap")).toHaveValue("5");
+    await openTab("Compare");
     await page.screenshot({
       path: testInfo.outputPath(`${theme}.png`),
       fullPage: true,
@@ -657,6 +695,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#cost-heading")).toHaveText("AI credits / task");
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     // Grouped selection: families contain models; bulk actions use one message.
+    await openTab("Settings");
     await expect(page.locator("#checklist .check-family")).toHaveCount(5);
     await expect(
       page.getByLabel("Filter models for selection"),
@@ -676,6 +715,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#count")).toHaveText("3 plotted / 4 models");
     await page.locator("#include-all").click();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
+    await openTab("Compare");
     await page.getByLabel("Filter models", { exact: true }).fill("unmapped");
     await expect(page.locator("#count")).toHaveText("0 plotted / 1 models");
     await expect(page.locator("#empty")).toBeVisible();
@@ -732,6 +772,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     // Local usage section: empty state, scan message, and rendered aggregates.
     await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
+    await openTab("Usage");
     await page.locator("#usage-scan").click();
     expect(messages.some((m) => m.type === "scanUsage")).toBeTruthy();
     await expect(page.locator("#usage-summary")).toContainText("3 requests");
@@ -752,6 +793,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Only-my-models filter, workload prefill, and budget suggestion.
     await expect(page.locator("#usage-prefill-note")).toContainText("Median 150 prompt + 75 output");
     const selectionLeaves = await page.locator(".check-leaf-row").allTextContents();
+    await openTab("Settings");
     await page.locator("#only-mine").check();
     await expect(page.locator("#count")).toHaveText("1 plotted / 1 models");
     await expect(page.locator("#rows")).toContainText("2 used");
@@ -759,6 +801,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#only-mine").uncheck();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
 
+    await openTab("Compare");
     // Monthly spending scenario: plan-aware what-if projection, kept
     // separate from local history and per-task/workload estimates.
     await page
@@ -767,6 +810,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(
       page.locator('#scenario-plan option[value="copilot-free"]'),
     ).toHaveJSProperty("disabled", true);
+    await openTab("Plan & budget");
     await page.locator("#scenario-plan").selectOption("copilot-pro");
     await page.locator("#scenario-requests-low").fill("100");
     await page.locator("#scenario-requests-high").fill("400");
@@ -811,20 +855,24 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#scenario-plan").selectOption("none");
 
+    await openTab("Compare");
     await page.locator("#usage-prefill").click();
     await expect(page.locator("#input")).toHaveValue("150");
     await expect(page.locator("#output")).toHaveValue("75");
     await expect(page.locator("#budget-suggestion")).toContainText("0.5");
     await page.locator("#budget-apply").click();
     await expect(page.locator("#budget")).toHaveValue("0.5");
+    await openTab("Usage");
     await page.locator("#usage-clear").click();
     expect(messages.some((m) => m.type === "clearUsage")).toBeTruthy();
     await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
+    await openTab("Plan & budget");
     await page.locator('#comparison-enabled').check();
     await expect(page.locator('.comparison-panel')).toHaveCount(2);
     await page.locator('#comparison-active').selectOption('B');
     await page.locator('#comparison-name').fill('Other provider');
     await page.locator('#comparison-name').press('Tab');
+    await openTab("Compare");
     await page.locator('#source').selectOption('opencode');
     await expect(page.locator('.comparison-panel').nth(1)).toContainText('Other provider');
     await expect(page.locator('#comparison-delta')).toContainText('Different billing units');
@@ -832,6 +880,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Optional USD equivalents: off by default, and only meaningful text
     // (rate, allowance treatment, native/unavailable) once toggled on.
     await expect(page.locator('.comparison-panel').first()).not.toContainText('$0.01/AI credit');
+    await openTab("Plan & budget");
     await page.locator('#comparison-normalize').check();
     await expect(page.locator('#comparison-delta')).toContainText('USD equivalent Δ');
     await expect(page.locator('.comparison-panel').first()).toContainText('$0.01/AI credit');
@@ -853,8 +902,10 @@ for (const theme of ["light", "dark", "high-contrast"])
     // timeout) before the comparison-enabled toggle below, so a late state
     // update can't land between that click and Playwright's next sample.
     await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: off');
+    await openTab("Settings");
     await page.locator('#export-png').click();
     expect(messages.some(m=>m.type==='target' && (m.action as any)?.type==='exportPng')).toBeTruthy();
+    await openTab("Compare");
     await page.setViewportSize({width:700,height:1000});
     const a=await page.locator('.comparison-panel').first().boundingBox(),b=await page.locator('.comparison-panel').nth(1).boundingBox();
     expect(b!.y).toBeGreaterThan(a!.y+a!.height);
@@ -864,6 +915,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // render against this click (selectOption dispatches change events
     // even for a same-value reselect, unlike a real user re-picking it).
     await expect(page.locator('#source')).toHaveValue('copilot');
+    await openTab("Plan & budget");
     await page.locator('#comparison-enabled').uncheck();
     await expect(page.locator('#comparison-panels')).toBeHidden();
     expect(errors).toEqual([]);

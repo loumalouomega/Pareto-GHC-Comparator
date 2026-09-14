@@ -2,6 +2,17 @@
 
 How recommendations, saved workloads, and the Pareto chart work.
 
+## Layout
+
+The panel has four tabs; the status line above them reports messages from any tab.
+
+- **Compare** — source, task, billing, chart view, and model filter; the token workload (in the workload chart view); **Find a model**; the chart, table, and model details. Model details show the essentials first; **More details** holds the cost breakdown, pricing source and BYOK actions, pinning, and benchmark mapping, and opens by itself when a model has a missing benchmark or an unresolved price.
+- **Plan & budget** — side-by-side options (Compare options), saved workload profiles, and the monthly spending scenario.
+- **Usage** — local Copilot usage, OpenCode BYOK rates, and the free-tier spotlight (the last two for OpenCode only).
+- **Settings** — chart display (labels, frontier line, quadrant, cost scale, table sort, free tier only), included models, and exports.
+
+The last open tab is restored when the panel reloads. Use the arrow keys, Home, and End to move between tabs from the keyboard.
+
 ## Recommendations
 
 The **Find a model** panel offers two modes using the currently filtered, available, comparable models:
