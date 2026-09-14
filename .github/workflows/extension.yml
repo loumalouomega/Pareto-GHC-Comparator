@@ -72,21 +72,29 @@ jobs:
         id: install-script
         run: |
           # opencode.ai's install script occasionally fails to reach its own
-          # version endpoint; retry a few times before giving up.
+          # version endpoint. Retry a few times; if it's still unreachable,
+          # skip the rest of this job instead of failing it — this smoke
+          # test depends on an external service outside our control.
+          ok=false
           for attempt in 1 2 3; do
             if curl -fsSL https://opencode.ai/install | bash; then
+              ok=true
               break
             fi
-            if [ "$attempt" = 3 ]; then
-              echo "::error::OpenCode install script failed after 3 attempts (likely an opencode.ai outage)."
-              exit 1
+            if [ "$attempt" != 3 ]; then
+              echo "Install script failed (attempt $attempt/3); retrying in 10s..."
+              sleep 10
             fi
-            echo "Install script failed (attempt $attempt/3); retrying in 10s..."
-            sleep 10
           done
-          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
-          echo "OPENCODE_SOURCE=$HOME/.opencode/bin/opencode" >> "$GITHUB_ENV"
+          if [ "$ok" = true ]; then
+            echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+            echo "OPENCODE_SOURCE=$HOME/.opencode/bin/opencode" >> "$GITHUB_ENV"
+          else
+            echo "::warning::OpenCode install script failed after 3 attempts (opencode.ai looks unreachable); skipping this smoke test instead of failing the job."
+          fi
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
       - name: Discovery smoke (credential-free home)
+        if: ${{ success() && (steps.install-npm.outcome == 'success' || steps.install-script.outputs.ok == 'true') }}
         env:
           HOME: ${{ runner.temp }}/oc-home
           USERPROFILE: ${{ runner.temp }}/oc-home
@@ -100,7 +108,7 @@ jobs:
       - name: Discovery smoke (executable path with spaces)
         # Only run once an install step actually produced an executable;
         # otherwise this fails too with an unrelated, confusing ENOENT.
-        if: ${{ !cancelled() && (steps.install-npm.outcome == 'success' || steps.install-script.outcome == 'success') }}
+        if: ${{ success() && (steps.install-npm.outcome == 'success' || steps.install-script.outputs.ok == 'true') }}
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/oc-home/config
           XDG_DATA_HOME: ${{ runner.temp }}/oc-home/data
