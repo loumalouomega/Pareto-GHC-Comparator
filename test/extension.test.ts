@@ -419,6 +419,48 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(rowA.length, header.length);
     assert.equal(rowB.length, header.length);
   }
+  // USD-equivalent normalization: off by default, and once toggled on, each
+  // side's selected cost and a comparison-wide delta appear in both exports.
+  // Side A has 0 rows (excludeAll above), side B is priced in USD (codex).
+  assert.equal(last().comparison.normalize, false);
+  await receiver({ type: "comparison", normalize: true });
+  assert.equal(last().comparison.normalize, true);
+  await receiver({
+    type: "target",
+    side: "B",
+    action: { type: "exportSnapshot" },
+  });
+  const normalizedSnapshot = JSON.parse(exports.at(-1)!);
+  // Side A has no rows (excludeAll) and side B's rows have no benchmark
+  // mapping in this fixture, so neither side has a *selected* row; the
+  // selected-cost normalization is unavailable on both, but individual rows
+  // (asserted via CSV below) still convert independently of selection.
+  assert.equal(normalizedSnapshot.options[0].costNormalization.status, "unavailable");
+  assert.equal(normalizedSnapshot.options[1].costNormalization.status, "unavailable");
+  assert.match(
+    normalizedSnapshot.usdCostDelta.reason,
+    /A not converted: Cost unavailable/,
+  );
+  assert.equal(normalizedSnapshot.usdCostDelta.delta, null);
+  await receiver({ type: "target", side: "B", action: { type: "exportCsv" } });
+  const normalizedCsv = exports.at(-1)!;
+  assert.match(normalizedCsv, /^option,assumptions,usd_equivalent,usd_conversion,/);
+  {
+    const csvLines = normalizedCsv.trim().split("\n");
+    const header = splitCsvLine(csvLines[0]);
+    const rowA = splitCsvLine(csvLines.find((l) => l.startsWith("A,"))!);
+    const rowB = splitCsvLine(csvLines.find((l) => l.startsWith("B,"))!);
+    assert.equal(rowA.length, header.length);
+    assert.equal(rowB.length, header.length);
+    assert.equal(rowB[3], "native");
+  }
+  await receiver({ type: "comparison", normalize: false });
+  await receiver({ type: "target", side: "B", action: { type: "exportCsv" } });
+  {
+    const csvLines = exports.at(-1)!.trim().split("\n");
+    const rowB = splitCsvLine(csvLines.find((l) => l.startsWith("B,"))!);
+    assert.equal(rowB[3], "off");
+  }
   await receiver({
     type: "target",
     side: "B",

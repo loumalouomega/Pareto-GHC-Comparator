@@ -11,6 +11,7 @@ export function html(
  <label><input id="comparison-enabled" type="checkbox">Compare options</label>
  <label>Editing<select id="comparison-active"><option value="A">A</option><option value="B">B</option></select></label>
  <label>Option name<input id="comparison-name" maxlength="60"></label>
+ <label><input id="comparison-normalize" type="checkbox" disabled>Show USD equivalents</label>
  </section><section id="comparison-panels" class="comparison-panels" hidden aria-label="Comparison results"></section><p id="comparison-delta" role="status" hidden></p>
  <section class="profile-bar" aria-label="Workload profiles">
  <label>Saved workload<select id="profile"><option value="">Custom</option></select></label>

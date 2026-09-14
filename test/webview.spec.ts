@@ -175,12 +175,13 @@ for (const theme of ["light", "dark", "high-contrast"])
         saveActive();
         if(m.enabled===true) {
           single=structuredClone(state);
-          comparison ??= {version:1,enabled:true,active:'A',sides:{A:{name:'Option A',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}},B:{name:'Option B',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}}}};
+          comparison ??= {version:1,enabled:true,active:'A',normalize:false,sides:{A:{name:'Option A',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}},B:{name:'Option B',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}}}};
           comparison.enabled=true;useActive();
         }
         if(m.enabled===false && comparison) {comparison.enabled=false;state=structuredClone(single);state.optionsRevision++;}
         if(comparison?.enabled && m.active) {comparison.active=m.active;useActive();}
         if(comparison?.enabled && m.name) comparison.sides[comparison.active].name=m.name;
+        if(comparison?.enabled && m.normalize!==undefined) comparison.normalize=m.normalize;
       }
       if(m.type==='target' && comparison?.enabled){saveActive();comparison.active=m.side;useActive();m=m.action;}
 
@@ -335,7 +336,7 @@ for (const theme of ["light", "dark", "high-contrast"])
         saveActive();
         for(const side of ['A','B'] as const){comparison.sides[side].options.preset=state.options.preset;comparison.sides[side].options.display.chart=state.options.display.chart;}
         const calc=(side:'A'|'B')=>optionResult(comparison!.sides[side],comparison!.sides[side].options.source==='opencode'?opencodeAvailable:available,state.models,{},usedCounts);
-        const sides={A:calc('A'),B:calc('B')};state.comparison={active:comparison.active,sides,delta:comparisonDelta(sides.A,sides.B)};
+        const sides={A:calc('A'),B:calc('B')};state.comparison={active:comparison.active,normalize:comparison.normalize,sides,delta:comparisonDelta(sides.A,sides.B,comparison.normalize)};
       } else delete state.comparison;
       await page.evaluate(
         (s) =>
@@ -814,6 +815,15 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator('.comparison-panel').nth(1)).toContainText('Other provider');
     await expect(page.locator('#comparison-delta')).toContainText('Different billing units');
     await expect(page.locator('.comparison-panel').first()).toContainText('GitHub Copilot');
+    // Optional USD equivalents: off by default, and only meaningful text
+    // (rate, allowance treatment, native/unavailable) once toggled on.
+    await expect(page.locator('.comparison-panel').first()).not.toContainText('$0.01/AI credit');
+    await page.locator('#comparison-normalize').check();
+    await expect(page.locator('#comparison-delta')).toContainText('USD equivalent Δ');
+    await expect(page.locator('.comparison-panel').first()).toContainText('$0.01/AI credit');
+    await expect(page.locator('.comparison-panel').nth(1)).toContainText('native, no conversion');
+    await page.locator('#comparison-normalize').uncheck();
+    await expect(page.locator('.comparison-panel').first()).not.toContainText('$0.01/AI credit');
     // Each comparison option carries its own spending scenario, shown per
     // panel, with a separate delta sentence that never bounds the difference.
     await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: off');

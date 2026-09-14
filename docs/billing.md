@@ -1,6 +1,6 @@
 # Billing estimates
 
-How AI-credit, legacy premium-request, and OpenCode USD costs are estimated for an illustrative token workload. Cost units never mix: Copilot models compare in AI credits or legacy billing, OpenCode models in USD. There is no cross-unit frontier.
+How AI-credit, legacy premium-request, and OpenCode USD costs are estimated for an illustrative token workload. Cost units never mix: Copilot models compare in AI credits or legacy billing, OpenCode models in USD. There is no cross-unit frontier; comparison mode can optionally show a USD equivalent alongside the native cost (see below).
 
 **AI credits** estimates usage from GitHub's per-million-token USD rates, with 1 credit equal to $0.01. The default example has 1,000 uncached input and 1,000 output tokens, with no caching. Input buckets are disjoint: count each input token once as uncached, cache-read, or cache-write. Output includes reasoning tokens.
 
@@ -65,3 +65,15 @@ Every quantity is rounded to 1e-6 before a boundary comparison, so floating-poin
 **Comparison mode**: each A/B option keeps its own plan and requests, so switching one option's source or billing can make its scenario unavailable (never silently converted). The delta between options is a separate sentence from the selected-row cost delta, comparing only the range ends (low−low, high−high) and only when both options project the same unit with a documented fee — otherwise it names the reason (off, unavailable, different units, or an undocumented fee) instead of a number. Scenarios are saved with workload profiles like every other workload setting.
 
 **Exports.** CSV and snapshot exports include the plan registry date and a `scenario` block labelled "Estimated monthly spending scenario (projection, not a bill)", with the same field-by-field provenance shown in the UI (provider-verified with its date and sources, your own input, observed history with its window, or a displayed estimate).
+
+## USD equivalents (comparison mode)
+
+Compare options has an optional **Show USD equivalents** toggle (off by default) that converts AI-credit costs to USD alongside the native value, so a cost delta is still shown — as a labelled equivalent, never a silent universal exchange rate — when the two options bill in different units.
+
+- **Rate**: AI credits convert at the documented pay-as-you-go/overage rate of **$0.01 per credit** (GitHub's models-and-pricing documentation, dated with the plan registry). USD passes through unchanged (shown as "native"). **Legacy premium requests are never converted**: a per-interaction multiplier isn't a token-workload cost, so there's no meaningful per-unit USD rate for it.
+- **Allowance treatment**: the conversion is a flat pay-as-you-go rate. It does not count a plan's included allowance or monthly fee — those depend on the plan and are already modeled separately by the monthly spending scenario. A converted figure and a scenario total can legitimately disagree; each is labelled with what it does and doesn't include.
+- **Rounding**: values are rounded to $0.000001; the original value keeps full precision.
+- **Cost basis**: a converted value only appears for a row with a valid cost (finite, non-negative); zero (e.g. a free-tier row) converts to $0.
+- **The comparison delta**: a USD-equivalent B − A delta appears only when the toggle is on, both sides convert (neither legacy nor an unpriced selection), and the same cost basis and workload apply — the same requirements the native cost delta already uses. Otherwise the delta names why (which side didn't convert, or which basis/workload mismatch), never a silent number.
+- **Scope**: this only affects comparison-mode panels, the delta sentence, and exports. It never changes single-view costs, charts, frontiers, or the recommendation — cost units still never mix within a chart or frontier.
+- **Exports**: CSV rows gain `usd_equivalent` and `usd_conversion` columns per row (status `native`, `converted`, `unavailable`, or `off` when the toggle isn't set), alongside the existing `cost`/`cost_unit` columns; the pair snapshot's `options[]` entries gain `costNormalization` (the selected row's conversion) and the top level gains `usdCostDelta`.

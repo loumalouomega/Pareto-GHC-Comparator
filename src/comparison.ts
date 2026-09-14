@@ -3,6 +3,7 @@ import { buildGroups } from "./groups";
 import { recommend } from "./recommend";
 import { catalogDate } from "./catalog";
 import { projectScenario, scenarioDelta } from "./plans";
+import { normalizeCost, type NormalizedCost } from "./normalize";
 import type {
   Options,
   AvailableModel,
@@ -23,6 +24,8 @@ export interface ComparisonStore {
   version: 1;
   enabled: boolean;
   active: Side;
+  /** Show each side's selected cost as a USD equivalent; off by default. */
+  normalize: boolean;
   sides: Record<Side, ComparisonOption>;
 }
 export function loadComparison(raw: unknown): ComparisonStore | undefined {
@@ -80,7 +83,13 @@ export function loadComparison(raw: unknown): ComparisonStore | undefined {
     }
     sides.B.options.preset = sides.A.options.preset;
     sides.B.options.display.chart = sides.A.options.display.chart;
-    return { version: 1, enabled: v.enabled, active: v.active, sides };
+    return {
+      version: 1,
+      enabled: v.enabled,
+      active: v.active,
+      normalize: v.normalize === true,
+      sides,
+    };
   } catch {
     return;
   }
@@ -152,22 +161,72 @@ export function optionResult(
 export type OptionResult = ReturnType<typeof optionResult> & {
   discoveryError?: string;
 };
-export function comparisonDelta(a: OptionResult, b: OptionResult) {
-  const x = a.rows.find((r) => r.id === a.selected),
-    y = b.rows.find((r) => r.id === b.selected);
-  let reason = "";
-  if (a.options.billing !== b.options.billing)
-    reason = "Different billing units.";
-  else if (a.options.display.chart !== b.options.display.chart)
-    reason = "Different cost bases.";
-  else if (a.options.billing === "legacy" && a.options.plan !== b.options.plan)
-    reason = "Different legacy plans.";
-  else if (
+/** The selected row's cost as a USD equivalent, for panels and exports. */
+export function selectedCost(result: OptionResult): NormalizedCost {
+  const row = result.rows.find((r) => r.id === result.selected);
+  return normalizeCost(row?.cost, result.options.billing, result.options.display.chart);
+}
+/**
+ * Why a cost basis or workload difference blocks a native cost delta between
+ * two same-billing options. Shared by the native delta and the USD delta, so
+ * a converted comparison still requires matching basis/workload.
+ */
+function basisReason(a: OptionResult, b: OptionResult): string {
+  if (a.options.display.chart !== b.options.display.chart)
+    return "Different cost bases.";
+  if (
+    a.options.billing === "legacy" &&
+    b.options.billing === "legacy" &&
+    a.options.plan !== b.options.plan
+  )
+    return "Different legacy plans.";
+  if (
     a.options.display.chart === "workload" &&
     a.options.billing !== "legacy" &&
+    b.options.billing !== "legacy" &&
     JSON.stringify(a.options.tokens) !== JSON.stringify(b.options.tokens)
   )
-    reason = "Different workloads: scenario estimates, not a cost delta.";
+    return "Different workloads: scenario estimates, not a cost delta.";
+  return "";
+}
+const round = (x: number) => Math.round(x * 1e10) / 1e10;
+/**
+ * Optional B minus A of each side's USD-equivalent selected cost. Only
+ * computed when `normalize` is set; still requires the same cost basis and
+ * (for workload view) the same tokens as the native delta, since converting
+ * units doesn't make different workloads comparable.
+ */
+function usdDelta(a: OptionResult, b: OptionResult) {
+  const A = selectedCost(a),
+    B = selectedCost(b);
+  const reason =
+    a.options.billing === b.options.billing
+      ? "Same billing unit: see the cost delta."
+      : A.status === "unavailable"
+        ? `A not converted: ${A.reason}`
+        : B.status === "unavailable"
+          ? `B not converted: ${B.reason}`
+          : basisReason(a, b);
+  return {
+    A,
+    B,
+    delta: reason ? null : round((B as { usd: number }).usd - (A as { usd: number }).usd),
+    reason:
+      reason ||
+      "USD equivalent at the documented pay-as-you-go AI-credit rate; included allowance and plan fee not counted.",
+  };
+}
+export function comparisonDelta(
+  a: OptionResult,
+  b: OptionResult,
+  normalize = false,
+) {
+  const x = a.rows.find((r) => r.id === a.selected),
+    y = b.rows.find((r) => r.id === b.selected);
+  const reason =
+    a.options.billing !== b.options.billing
+      ? "Different billing units."
+      : basisReason(a, b);
   const delta = (x: number | null | undefined, y: number | null | undefined) =>
     typeof x === "number" && typeof y === "number" ? y - x : null;
   return {
@@ -180,5 +239,8 @@ export function comparisonDelta(a: OptionResult, b: OptionResult) {
     // Independent of the selected-row cost delta above: the monthly spending
     // scenario compares each option's own plan/allowance, not model cost.
     scenario: scenarioDelta(a.scenario, b.scenario),
+    // Optional USD-equivalent delta, independent of the native cost delta
+    // above; null unless the caller opts in via `normalize`.
+    usd: normalize ? usdDelta(a, b) : null,
   };
 }

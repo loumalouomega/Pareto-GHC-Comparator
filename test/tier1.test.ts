@@ -29,6 +29,7 @@ const stored = () => ({
   version: 1,
   enabled: true,
   active: "A",
+  normalize: false,
   sides: { A: option(), B: option() },
 });
 test("comparison store validates independently and synchronizes shared settings", () => {
@@ -39,6 +40,12 @@ test("comparison store validates independently and synchronizes shared settings"
   assert.ok(loaded);
   assert.equal(loaded.sides.B.options.preset, "general");
   assert.equal(loaded.sides.B.options.display.chart, "task");
+  assert.equal(loaded.normalize, false);
+  assert.equal(loadComparison({ ...raw, normalize: true })?.normalize, true);
+  assert.equal(
+    loadComparison({ ...raw, normalize: "yes" })?.normalize,
+    false,
+  );
   loaded.sides.A.options.tokens.input = 700;
   assert.equal(raw.sides.A.options.tokens.input, 1000);
   for (const v of [
@@ -142,6 +149,49 @@ test("comparison result keeps structure independent and explains deltas", () => 
     a.selected,
   );
 });
+test("comparisonDelta computes an optional USD equivalent delta only when requested", () => {
+  const available = [
+    { id: "gpt-5-mini", family: "gpt-5-mini", name: "GPT-5 mini", maxInputTokens: 100000 },
+  ];
+  const benchmarks = [
+    {
+      id: "aa",
+      slug: "gpt-5-mini",
+      name: "GPT-5 mini",
+      provider: "OpenAI",
+      scores: { general: 30, coding: 40, agentic: 20 },
+    },
+  ];
+  const a = option();
+  const result = optionResult(a, available, benchmarks, {}, new Map());
+  assert.equal(comparisonDelta(result, result).usd, null);
+  assert.equal(comparisonDelta(result, result, true).usd?.reason, "Same billing unit: see the cost delta.");
+
+  const b = structuredClone(result);
+  b.options.billing = "usd";
+  const usdCredits = comparisonDelta(result, b, true).usd!;
+  assert.equal(usdCredits.A.status, "converted");
+  assert.equal(usdCredits.B.status, "native");
+  if (usdCredits.A.status === "converted")
+    assert.equal(usdCredits.A.usd, Math.round(usdCredits.A.original.value * 0.01 * 1e10) / 1e10);
+  assert.equal(typeof usdCredits.delta, "number");
+  assert.match(usdCredits.reason, /pay-as-you-go/);
+
+  const c = structuredClone(result);
+  c.options.billing = "legacy";
+  const legacyDelta = comparisonDelta(c, b, true).usd!;
+  assert.match(legacyDelta.reason, /A not converted: .*never converted/);
+  assert.equal(legacyDelta.delta, null);
+
+  const d = structuredClone(result);
+  d.options.display.chart = "workload";
+  assert.match(comparisonDelta(d, b, true).usd!.reason, /bases/);
+
+  const noSelection = structuredClone(result);
+  noSelection.selected = undefined;
+  const noneDelta = comparisonDelta(noSelection, b, true).usd!;
+  assert.match(noneDelta.reason, /A not converted: Cost unavailable/);
+});
 test("each comparison side projects its own spending scenario, defaulting off", () => {
   const available = [
     { id: "gpt-5-mini", family: "gpt-5-mini", name: "GPT-5 mini", maxInputTokens: 100000 },
@@ -199,10 +249,15 @@ test("comparison messages reject malformed targets and nested envelopes", () => 
     }).type,
     "comparison",
   );
+  assert.deepEqual(
+    parseMessage({ type: "comparison", normalize: true }),
+    { type: "comparison", enabled: undefined, active: undefined, name: undefined, normalize: true },
+  );
   for (const v of [
     { type: "comparison", enabled: 1 },
     { type: "comparison", active: "C" },
     { type: "comparison", name: "" },
+    { type: "comparison", normalize: "yes" },
     { type: "target", side: "C", action: {} },
     { type: "target", side: "A", action: { type: "target" } },
     { type: "target", side: "A", action: null },

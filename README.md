@@ -38,7 +38,7 @@ Usage-based budget suggestions include free requests in the percentile and can s
 
 ## Compare options
 
-Enable **Compare options** to keep two named alternatives visible. Choose **Editing A / B** to change one option using the existing controls, or load a saved workload into it. Sources, selections, filters, billing, and workloads are independent; the score preset and task/workload chart basis are shared. The last pair is remembered separately, and leaving this mode restores your single view.
+Enable **Compare options** to keep two named alternatives visible. Choose **Editing A / B** to change one option using the existing controls, or load a saved workload into it. Sources, selections, filters, billing, and workloads are independent; the score preset and task/workload chart basis are shared. The last pair is remembered separately, and leaving this mode restores your single view. When A and B bill in different units, **Show USD equivalents** optionally converts AI credits to USD at the documented pay-as-you-go rate (never legacy premium requests) so a comparison delta is still shown, labelled and separate from the native cost — see [docs/billing.md](docs/billing.md) for the rate, allowance treatment, and what still stays separate.
 
 Select one row in each panel to see **B minus A** quality and cost differences. Cost differences require matching units and effective workloads; incompatible options retain separate frontiers with an explanation. CSV and snapshot exports include both options and their assumptions, PNG includes both charts, and badge export names the active option.
 

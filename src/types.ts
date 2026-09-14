@@ -442,7 +442,13 @@ export type ProfileAction =
   | { action: "rename"; id: string; name: string }
   | { action: "apply" | "update" | "delete"; id: string };
 export type HostMessage =
-  | { type: "comparison"; enabled?: boolean; active?: "A" | "B"; name?: string }
+  | {
+      type: "comparison";
+      enabled?: boolean;
+      active?: "A" | "B";
+      name?: string;
+      normalize?: boolean;
+    }
   | { type: "target"; side: "A" | "B"; action: HostMessage }
   | { type: "ready" | "refresh" | "key" }
   | { type: "source"; source: Source }
@@ -507,6 +513,7 @@ export interface ChecklistFamily {
 export interface ViewState {
   comparison?: {
     active: import("./comparison").Side;
+    normalize: boolean;
     sides: Record<
       import("./comparison").Side,
       import("./comparison").OptionResult

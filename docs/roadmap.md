@@ -13,17 +13,6 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Tier 2 investigations must establish feasibility before implementation is scheduled; listing them does not authorize inference, spending, account changes, or additional data collection.
 
-## Tier 1 — Explicit assumptions and cost scenarios
-
-Admission criterion: extend comparison using documented or user-supplied inputs, with visible provenance and uncertainty.
-
-### Comparable cost normalization — M
-
-- **Gap:** Credits, premium requests, and USD cannot currently share a meaningful cost frontier.
-- **Deliverables:** An optional common-currency estimate only where a documented conversion or explicit plan scenario supplies the needed assumptions. Retain original units and show conversion provenance, date, and allowance treatment.
-- **Dependencies:** Implemented option-comparison mode; implemented monthly spending scenarios (`projectScenario` in `src/plans.ts`) for allowance-dependent conversions.
-- **Acceptance:** No implicit universal credit/request exchange rate. Missing or incompatible assumptions keep options in separate panels/frontiers. Test conversion arithmetic and allowance boundaries, and preserve original and converted values in exports.
-
 ## Tier 2 — Feasibility investigations
 
 Admission criterion: establish a supported integration, concrete user workflow, and validation approach before committing to delivery. Effort below covers investigation only.

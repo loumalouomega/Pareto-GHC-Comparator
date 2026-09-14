@@ -20,7 +20,8 @@ export function parseMessage(raw: unknown): HostMessage {
       (m.enabled !== undefined && typeof m.enabled !== "boolean") ||
       (m.active !== undefined && m.active !== "A" && m.active !== "B") ||
       (m.name !== undefined &&
-        (typeof m.name !== "string" || !m.name.trim() || m.name.length > 60))
+        (typeof m.name !== "string" || !m.name.trim() || m.name.length > 60)) ||
+      (m.normalize !== undefined && typeof m.normalize !== "boolean")
     )
       throw Error("Invalid comparison.");
     return {
@@ -28,6 +29,7 @@ export function parseMessage(raw: unknown): HostMessage {
       enabled: m.enabled as boolean | undefined,
       active: m.active as "A" | "B" | undefined,
       name: m.name as string | undefined,
+      normalize: m.normalize as boolean | undefined,
     };
   }
   if (m.type === "target") {

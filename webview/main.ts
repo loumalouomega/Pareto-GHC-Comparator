@@ -1321,6 +1321,8 @@ function renderComparison() {
   if (singleChart) singleChart.hidden = !!pair;
   el<HTMLSelectElement>("comparison-active").disabled = !pair;
   el<HTMLInputElement>("comparison-name").disabled = !pair;
+  el<HTMLInputElement>("comparison-normalize").disabled = !pair;
+  el<HTMLInputElement>("comparison-normalize").checked = !!pair?.normalize;
   const panels = el("comparison-panels");
   panels.hidden = !pair;
   panels.replaceChildren();
@@ -1342,9 +1344,13 @@ function renderComparison() {
     el<HTMLInputElement>("comparison-name").value =
       pair.sides[pair.active].name;
   const scenarioD = pair.delta.scenario;
+  const usdD = pair.delta.usd;
   delta.textContent =
     `B minus A · Quality: ${format(pair.delta.score)} · Cost: ${format(pair.delta.cost)} ${pair.delta.reason}` +
-    ` · Monthly scenario Δ: ${scenarioD.low === null ? "unavailable" : `${format(scenarioD.low)}–${format(scenarioD.high)} USD`} (${scenarioD.reason})`;
+    ` · Monthly scenario Δ: ${scenarioD.low === null ? "unavailable" : `${format(scenarioD.low)}–${format(scenarioD.high)} USD`} (${scenarioD.reason})` +
+    (usdD
+      ? ` · USD equivalent Δ: ${usdD.delta === null ? "unavailable" : `${format(usdD.delta)} USD`} (${usdD.reason})`
+      : "");
   for (const side of ["A", "B"] as const) {
     const option = pair.sides[side],
       meta = sources[option.options.source];
@@ -1375,6 +1381,20 @@ function renderComparison() {
         "hint",
       ),
     );
+    if (pair.normalize && usdD) {
+      const n = usdD[side];
+      card.append(
+        text(
+          "p",
+          n.status === "converted"
+            ? `Selected cost: ${format(n.original.value)} AI credits ≈ ${format(n.usd)} USD at $${n.rate.usdPerUnit}/AI credit (GitHub Copilot models and pricing, ${n.provenance.date}). ${n.allowanceTreatment}`
+            : n.status === "native"
+              ? `Selected cost: ${format(n.usd)} USD (native, no conversion)`
+              : `USD equivalent unavailable: ${n.reason}`,
+          "hint",
+        ),
+      );
+    }
     card.append(
       text("p", meta.availabilityNote),
       text("p", meta.pricingNote),
@@ -1547,6 +1567,10 @@ el<HTMLSelectElement>("comparison-active").onchange = () => {
 };
 el<HTMLInputElement>("comparison-name").onchange = () =>
   send("comparison", { name: el<HTMLInputElement>("comparison-name").value });
+el<HTMLInputElement>("comparison-normalize").onchange = () =>
+  send("comparison", {
+    normalize: el<HTMLInputElement>("comparison-normalize").checked,
+  });
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;

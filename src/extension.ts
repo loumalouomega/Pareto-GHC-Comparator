@@ -2,10 +2,12 @@ import {
   loadComparison,
   optionResult,
   comparisonDelta,
+  selectedCost,
   type ComparisonOption,
   type ComparisonStore,
   type Side,
 } from "./comparison";
+import { normalizeCost } from "./normalize";
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
@@ -25,7 +27,7 @@ import { staticModels, staticRegistryDate } from "./staticSources";
 import { historyScenarioPrefill, planRegistryDate } from "./plans";
 import { buildGroups } from "./groups";
 import { defaultBilling, sources } from "./sources";
-import { exportBadge, exportCsv, exportSnapshot } from "./export";
+import { exportBadge, exportCsv, exportSnapshot, scenarioExport } from "./export";
 import { html } from "./html";
 import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
@@ -544,8 +546,9 @@ export function activate(context: vscode.ExtensionContext) {
       ) as unknown as Record<Side, ReturnType<typeof optionResult>>;
       state.comparison = {
         active: comparison.active,
+        normalize: comparison.normalize,
         sides,
-        delta: comparisonDelta(sides.A, sides.B),
+        delta: comparisonDelta(sides.A, sides.B, comparison.normalize),
       };
     }
     void panel?.webview.postMessage({ type: "state", state });
@@ -756,6 +759,7 @@ export function activate(context: vscode.ExtensionContext) {
                   version: 1,
                   enabled: false,
                   active: "A",
+                  normalize: false,
                   sides: { A: capture("Option A"), B: capture("Option B") },
                 };
                 comparison.enabled = true;
@@ -770,6 +774,8 @@ export function activate(context: vscode.ExtensionContext) {
               }
               if (comparison?.enabled && m.name)
                 comparison.sides[comparison.active].name = m.name.trim();
+              if (comparison?.enabled && m.normalize !== undefined)
+                comparison.normalize = m.normalize;
               await context.globalState.update("comparison", comparison);
               render();
               await discover();
@@ -1107,6 +1113,9 @@ export function activate(context: vscode.ExtensionContext) {
                       return {
                         side,
                         ...result,
+                        costNormalization: comparison!.normalize
+                          ? selectedCost(result)
+                          : ({ status: "off" } as const),
                         availabilityNote:
                           sources[option.options.source].availabilityNote,
                         pricingNote: sources[option.options.source].pricingNote,
@@ -1123,6 +1132,9 @@ export function activate(context: vscode.ExtensionContext) {
                       (sum, p) => sum + p.rows.length,
                       0,
                     );
+                    const usdCostDelta = comparison!.normalize
+                      ? comparisonDelta(pair[0], pair[1], true).usd
+                      : null;
                     payload =
                       m.type === "exportSnapshot"
                         ? JSON.stringify(
@@ -1130,12 +1142,19 @@ export function activate(context: vscode.ExtensionContext) {
                               version: 2,
                               disclaimer:
                                 "Illustrative comparison, not measured task cost or an account bill.",
-                              options: pair,
+                              options: pair.map((p) => ({
+                                ...p,
+                                scenario:
+                                  p.scenario.status === "off"
+                                    ? p.scenario
+                                    : scenarioExport(p.scenario),
+                              })),
+                              usdCostDelta,
                             },
                             null,
                             2,
                           )
-                        : "option,assumptions," +
+                        : "option,assumptions,usd_equivalent,usd_conversion," +
                           exportCsv([], options).trimEnd() +
                           "\n" +
                           (() => {
@@ -1157,21 +1176,38 @@ export function activate(context: vscode.ExtensionContext) {
                                   catalogDate,
                                   staticRegistryDate,
                                   planRegistryDate,
-                                  scenario: p.scenario,
+                                  scenario:
+                                    p.scenario.status === "off"
+                                      ? p.scenario
+                                      : scenarioExport(p.scenario),
+                                  costNormalization: p.costNormalization,
+                                  usdCostDelta,
                                   benchmarkVersion: snapshot?.version,
                                   benchmarkFetchedAt: snapshot?.fetchedAt,
                                 });
                                 if (!p.rows.length)
-                                  return `${p.side},"${label.replace(/"/g, '""')}",${Array(dataColumns).fill("").join(",")}\n`;
+                                  return `${p.side},"${label.replace(/"/g, '""')}",,,${Array(dataColumns).fill("").join(",")}\n`;
                                 return p.rows
                                   .map((row) => {
+                                    const n = comparison!.normalize
+                                      ? normalizeCost(
+                                          row.cost,
+                                          p.options.billing,
+                                          p.options.display.chart,
+                                        )
+                                      : ({ status: "off" } as const);
+                                    const usdEquivalent =
+                                      n.status === "native" ||
+                                      n.status === "converted"
+                                        ? String(n.usd)
+                                        : "";
                                     const csv = exportCsv(
                                       [row],
                                       p.options,
                                       new Set(p.recommendation.modelIds),
                                     );
                                     return (
-                                      `${p.side},"${label.replace(/"/g, '""')}",` +
+                                      `${p.side},"${label.replace(/"/g, '""')}",${usdEquivalent},${n.status},` +
                                       csv.slice(csv.indexOf("\n") + 1)
                                     );
                                   })
