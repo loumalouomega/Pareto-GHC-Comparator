@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 1.0.0
+
 ### Added
 
 - Two-option comparison mode with independent A/B settings, shared editor, separate charts/frontiers, selected-row deltas, saved-pair restoration, and two-option CSV/snapshot/PNG exports. Badge export targets the active option.
@@ -45,6 +47,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Keep a BYOK-priced OpenCode model listed in the Provider-billed rates form after saving a rate for it, instead of it disappearing (it previously could not be edited or removed from the UI once priced).
 - Stop silently dropping a pin whose benchmark disappeared from the catalog; it now stays visible as an unresolved row you explicitly replace or unpin, matching the existing rule for a stale manual override.
 - Pad an empty comparison option's row in the two-option CSV export to the actual number of data columns instead of a stale hardcoded count, which had fallen out of sync with the header.
+
+History: [v0.11.0...v1.0.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.11.0...v1.0.0).
 
 ## 0.11.0
 
