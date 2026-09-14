@@ -21,7 +21,10 @@ export function parseMessage(raw: unknown): HostMessage {
       (m.active !== undefined && m.active !== "A" && m.active !== "B") ||
       (m.name !== undefined &&
         (typeof m.name !== "string" || !m.name.trim() || m.name.length > 60)) ||
-      (m.normalize !== undefined && typeof m.normalize !== "boolean")
+      (m.normalize !== undefined && typeof m.normalize !== "boolean") ||
+      (m.view !== undefined &&
+        m.view !== "side-by-side" &&
+        m.view !== "overlay")
     )
       throw Error("Invalid comparison.");
     return {
@@ -30,6 +33,7 @@ export function parseMessage(raw: unknown): HostMessage {
       active: m.active as "A" | "B" | undefined,
       name: m.name as string | undefined,
       normalize: m.normalize as boolean | undefined,
+      view: m.view as "side-by-side" | "overlay" | undefined,
     };
   }
   if (m.type === "target") {

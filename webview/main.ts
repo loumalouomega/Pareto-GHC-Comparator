@@ -10,6 +10,7 @@ import type {
   ViewState,
   HostMessage,
 } from "../src/types";
+import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
 import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
@@ -499,13 +500,12 @@ function renderDetails() {
       more.append(text("p", row.mapping.reason, "notice"));
     if (row.mapping.aliases.length)
       more.append(
-        text(
-          "p",
-          `Aliases tried: ${row.mapping.aliases.join(", ")}.`,
-          "hint",
-        ),
+        text("p", `Aliases tried: ${row.mapping.aliases.join(", ")}.`, "hint"),
       );
-    if (row.mapping.issue === "override-stale" || row.mapping.issue === "pin-stale") {
+    if (
+      row.mapping.issue === "override-stale" ||
+      row.mapping.issue === "pin-stale"
+    ) {
       more.append(
         text(
           "p",
@@ -513,7 +513,10 @@ function renderDetails() {
           "notice",
         ),
       );
-      const chooseBtn = text("button", "Choose replacement") as HTMLButtonElement;
+      const chooseBtn = text(
+        "button",
+        "Choose replacement",
+      ) as HTMLButtonElement;
       chooseBtn.onclick = () => {
         select.focus();
         select.scrollIntoView({ block: "nearest" });
@@ -522,11 +525,7 @@ function renderDetails() {
     }
     if (row.mapping.suggestions.length) {
       more.append(
-        text(
-          "p",
-          "Suggested (identifier match — unverified):",
-          "hint",
-        ),
+        text("p", "Suggested (identifier match — unverified):", "hint"),
       );
       const list = document.createElement("ul");
       list.className = "mapping-suggestions";
@@ -590,7 +589,9 @@ function renderDetails() {
   const populate = () => {
     select.replaceChildren(new Option("Use automatic matching", ""));
     const candidates = new Set(row.candidateIds);
-    const suggested = new Set((row.mapping?.suggestions ?? []).map((s) => s.benchmarkId));
+    const suggested = new Set(
+      (row.mapping?.suggestions ?? []).map((s) => s.benchmarkId),
+    );
     const matches = state!.models
       .filter((b) =>
         `${b.name} ${b.slug}`
@@ -619,10 +620,7 @@ function renderDetails() {
       select.append(group);
     }
     const shown = row.selectedBenchmarkId ?? "";
-    if (
-      shown &&
-      !Array.from(select.options).some((o) => o.value === shown)
-    ) {
+    if (shown && !Array.from(select.options).some((o) => o.value === shown)) {
       const current = new Option(
         row.benchmark
           ? `Current selection: ${row.benchmark.name}`
@@ -648,7 +646,10 @@ function renderDetails() {
     updateApplyState();
   };
   applyBtn.onclick = () => {
-    send("mapping", { id: row.id, benchmarkId: pendingBenchmark ?? select.value });
+    send("mapping", {
+      id: row.id,
+      benchmarkId: pendingBenchmark ?? select.value,
+    });
     pendingBenchmark = undefined;
   };
   resetBtn.onclick = () => {
@@ -1086,11 +1087,7 @@ function renderByok() {
   const stale = Object.keys(state.byok).filter((id) => !seen.has(id));
   if (stale.length) {
     table.append(
-      text(
-        "p",
-        "Saved rates for models not currently listed here:",
-        "hint",
-      ),
+      text("p", "Saved rates for models not currently listed here:", "hint"),
     );
     for (const id of stale) {
       const row = document.createElement("div");
@@ -1193,10 +1190,7 @@ function renderScenario() {
         `Per-request estimate: ${format(s.perRequest.value)} ${s.plan.unit} · ${provenanceLabel(s.perRequest.provenance)}`,
         "hint",
       ),
-      text(
-        "p",
-        `Monthly usage: ${scenarioRange(s.usage)} ${s.plan.unit}`,
-      ),
+      text("p", `Monthly usage: ${scenarioRange(s.usage)} ${s.plan.unit}`),
       text(
         "p",
         `Allowance: ${scenarioRange(s.allowance)} ${s.plan.unit}${s.allowance.flexVariable ? " (base to base + flex)" : ""} · ${provenanceLabel(s.allowance.provenance)}`,
@@ -1341,6 +1335,209 @@ function renderUsage() {
       ".";
 }
 const comparisonCharts: Chart<"scatter">[] = [];
+const overlaySidePointStyle: Record<Side, "circle" | "rectRot"> = {
+  A: "circle",
+  B: "rectRot",
+};
+const overlaySideBorderColor: Record<Side, string> = {
+  A: "#2f6fed",
+  B: "#e2792e",
+};
+const overlaySideDash: Record<Side, number[]> = { A: [4, 4], B: [8, 4] };
+/** Same fill logic as colorForRow (hue hashed from the base model), so the
+ * same model keeps the same hue on both sides; side is told apart instead by
+ * point shape and border color, since a shared model can appear on both. */
+const overlayFillColor = (row: OverlayRow): string => {
+  const light =
+    document.body.classList.contains("vscode-light") ||
+    document.body.classList.contains("vscode-high-contrast-light");
+  const hue = hashHue(row.baseModelId || row.id);
+  return `hsl(${hue} 65% ${light ? "38%" : "68%"})`;
+};
+/** Draws the single overlaid chart into `card`: both options' models, each
+ * side's own Pareto frontier, and (when comparable) the combined frontier
+ * across both. See overlayResult in src/comparison.ts for how rows and the
+ * combined frontier are computed. */
+function drawOverlay(
+  pair: NonNullable<ViewState["comparison"]>,
+  overlay: OverlayResult,
+  card: HTMLElement,
+) {
+  const a = pair.sides.A,
+    b = pair.sides.B;
+  card.append(
+    text("h2", "Overlay: quality vs. cost"),
+    text(
+      "p",
+      `A: ${a.name} (${sources[a.options.source].label}) vs B: ${b.name} (${sources[b.options.source].label}) · ${overlay.unit}` +
+        (overlay.converted
+          ? " (pay-as-you-go equivalent; included allowance and plan fee not counted)"
+          : ""),
+    ),
+  );
+  for (const notice of overlay.notices)
+    card.append(text("p", notice, "hint comparison-overlay-notice"));
+  const wrap = text("div", "", "comparison-overlay-chart");
+  const canvas = document.createElement("canvas");
+  canvas.id = "comparison-chart-overlay";
+  canvas.setAttribute(
+    "aria-label",
+    "Overlay of both options' quality and cost, with each option's Pareto frontier and the combined frontier across both",
+  );
+  wrap.append(canvas);
+  card.append(wrap);
+  const bySide = (side: Side) => overlay.rows.filter((r) => r.side === side);
+  const byX = (x: OverlayRow, y: OverlayRow) => x.x - y.x || x.score - y.score;
+  const aRows = bySide("A"),
+    bRows = bySide("B");
+  const aFrontierRows = aRows.filter((r) => r.sideFrontier).sort(byX);
+  const bFrontierRows = bRows.filter((r) => r.sideFrontier).sort(byX);
+  const combinedRows = overlay.rows.filter((r) => r.combinedFrontier).sort(byX);
+  // Parallel to `data` in each dataset below, so onClick/tooltip can map a
+  // point back to its originating side and row id.
+  const datasetRows = [
+    aRows,
+    bRows,
+    aFrontierRows,
+    bFrontierRows,
+    combinedRows,
+  ];
+  if (combinedRows.length)
+    card.append(
+      text(
+        "p",
+        `Combined frontier: ${combinedRows.filter((r) => r.side === "A").length} from A, ${combinedRows.filter((r) => r.side === "B").length} from B.`,
+        "hint",
+      ),
+    );
+  const showLabels = a.options.display.labels || b.options.display.labels;
+  const showQuadrant = a.options.display.quadrant || b.options.display.quadrant;
+  const hasZero = overlay.rows.some((r) => r.x === 0);
+  comparisonCharts.push(
+    new Chart(canvas, {
+      type: "scatter",
+      plugins: [
+        ...(showQuadrant && overlay.rows.length
+          ? [
+              quadrantPlug(
+                median(overlay.rows.map((r) => r.x)),
+                median(overlay.rows.map((r) => r.score)),
+              ),
+            ]
+          : []),
+        ...(showLabels
+          ? [
+              {
+                id: "overlayLabels",
+                afterDatasetsDraw(c: Chart<"scatter">) {
+                  c.ctx.save();
+                  c.ctx.fillStyle = getComputedStyle(document.body).color;
+                  c.ctx.font = "10px sans-serif";
+                  for (const index of [0, 1]) {
+                    const rows = datasetRows[index];
+                    c.getDatasetMeta(index).data.forEach((point, i) => {
+                      if (rows[i])
+                        c.ctx.fillText(rows[i].name, point.x + 5, point.y - 5);
+                    });
+                  }
+                  c.ctx.restore();
+                },
+              },
+            ]
+          : []),
+      ],
+      data: {
+        datasets: [
+          {
+            label: `A · ${sources[a.options.source].label}`,
+            data: aRows.map((r) => ({ x: r.x, y: r.score })),
+            backgroundColor: aRows.map(overlayFillColor),
+            borderColor: overlaySideBorderColor.A,
+            pointStyle: overlaySidePointStyle.A,
+            pointRadius: aRows.map((r) => (r.selected ? 8 : 4)),
+            pointBorderWidth: 1.5,
+          },
+          {
+            label: `B · ${sources[b.options.source].label}`,
+            data: bRows.map((r) => ({ x: r.x, y: r.score })),
+            backgroundColor: bRows.map(overlayFillColor),
+            borderColor: overlaySideBorderColor.B,
+            pointStyle: overlaySidePointStyle.B,
+            pointRadius: bRows.map((r) => (r.selected ? 8 : 4)),
+            pointBorderWidth: 1.5,
+          },
+          {
+            label: "A frontier",
+            hidden: !a.options.display.frontier,
+            data: aFrontierRows.map((r) => ({ x: r.x, y: r.score })),
+            showLine: true,
+            borderColor: overlaySideBorderColor.A,
+            borderDash: overlaySideDash.A,
+            pointRadius: 0,
+          },
+          {
+            label: "B frontier",
+            hidden: !b.options.display.frontier,
+            data: bFrontierRows.map((r) => ({ x: r.x, y: r.score })),
+            showLine: true,
+            borderColor: overlaySideBorderColor.B,
+            borderDash: overlaySideDash.B,
+            pointRadius: 0,
+          },
+          {
+            label: "Combined frontier",
+            data: combinedRows.map((r) => ({ x: r.x, y: r.score })),
+            showLine: combinedRows.length > 0,
+            borderColor: getComputedStyle(document.body).color,
+            borderWidth: 2.5,
+            pointRadius: combinedRows.length ? 5 : 0,
+            pointBackgroundColor: getComputedStyle(document.body).color,
+          },
+        ],
+      },
+      options: {
+        animation: false,
+        plugins: {
+          legend: { display: true },
+          tooltip: {
+            callbacks: {
+              label: (context) => {
+                const row =
+                  datasetRows[context.datasetIndex]?.[context.dataIndex];
+                if (!row)
+                  return ["A frontier", "B frontier", "Combined frontier"][
+                    context.datasetIndex - 2
+                  ];
+                return `${row.side} · ${sources[row.source].label} · ${row.name}: ${context.parsed.y} points, ${context.parsed.x} ${overlay.unit}`;
+              },
+            },
+          },
+        },
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type:
+              a.options.display.scale === "linear" || hasZero
+                ? "linear"
+                : "logarithmic",
+            title: { display: true, text: overlay.unit },
+          },
+          y: { title: { display: true, text: a.options.preset } },
+        },
+        onClick: (_event, elements) => {
+          const e = elements[0];
+          const row = e && datasetRows[e.datasetIndex]?.[e.index];
+          if (row)
+            send("target", {
+              side: row.side,
+              action: { type: "select", id: row.id },
+            });
+        },
+      },
+    }),
+  );
+}
 function renderComparison() {
   for (const c of comparisonCharts) c.destroy();
   comparisonCharts.length = 0;
@@ -1355,6 +1552,12 @@ function renderComparison() {
   el<HTMLInputElement>("comparison-name").disabled = !pair;
   el<HTMLInputElement>("comparison-normalize").disabled = !pair;
   el<HTMLInputElement>("comparison-normalize").checked = !!pair?.normalize;
+  el<HTMLSelectElement>("comparison-view").disabled = !pair;
+  if (pair) el<HTMLSelectElement>("comparison-view").value = pair.view;
+  const overlayCard = el("comparison-overlay");
+  const showOverlay = !!pair && pair.view === "overlay";
+  overlayCard.hidden = !showOverlay;
+  overlayCard.replaceChildren();
   const panels = el("comparison-panels");
   panels.hidden = !pair;
   panels.replaceChildren();
@@ -1371,6 +1574,7 @@ function renderComparison() {
     ? `Export ${pair.active} badge JSON`
     : "Export badge JSON";
   if (!pair) return;
+  if (showOverlay && pair.overlay) drawOverlay(pair, pair.overlay, overlayCard);
   el<HTMLSelectElement>("comparison-active").value = pair.active;
   if (document.activeElement !== el("comparison-name"))
     el<HTMLInputElement>("comparison-name").value =
@@ -1437,12 +1641,17 @@ function renderComparison() {
     );
     if (option.discoveryError) card.append(text("p", option.discoveryError));
     card.append(text("p", option.recommendation.explanation));
-    const wrap = text("div", "", "comparison-chart");
-    const canvas = document.createElement("canvas");
-    canvas.id = `comparison-chart-${side}`;
-    canvas.setAttribute("aria-label", `${side} quality and cost chart`);
-    wrap.append(canvas);
-    card.append(wrap);
+    // Overlay view draws one shared chart above the panels instead; see
+    // drawOverlay. The per-side info card and table stay either way.
+    let canvas: HTMLCanvasElement | undefined;
+    if (!showOverlay) {
+      const wrap = text("div", "", "comparison-chart");
+      canvas = document.createElement("canvas");
+      canvas.id = `comparison-chart-${side}`;
+      canvas.setAttribute("aria-label", `${side} quality and cost chart`);
+      wrap.append(canvas);
+      card.append(wrap);
+    }
     const plotted = option.rows.filter(
       (r) => r.cost !== null && r.score !== null,
     );
@@ -1473,109 +1682,117 @@ function renderComparison() {
       table.append(tr);
     }
     card.append(table);
-    if (
-      option.options.display.scale === "log" &&
-      plotted.some((r) => r.cost === 0)
-    )
-      card.append(
-        text("p", "Log scale requested; using linear because a model is free."),
-      );
-    else if (option.options.display.scale !== "auto")
-      card.append(text("p", `Scale override: ${option.options.display.scale}`));
+    if (!showOverlay) {
+      if (
+        option.options.display.scale === "log" &&
+        plotted.some((r) => r.cost === 0)
+      )
+        card.append(
+          text(
+            "p",
+            "Log scale requested; using linear because a model is free.",
+          ),
+        );
+      else if (option.options.display.scale !== "auto")
+        card.append(
+          text("p", `Scale override: ${option.options.display.scale}`),
+        );
+    }
     panels.append(card);
-    comparisonCharts.push(
-      new Chart(canvas, {
-        type: "scatter",
-        plugins: [
-          ...(option.options.display.quadrant && plotted.length
-            ? [
-                quadrantPlug(
-                  median(plotted.map((r) => r.cost!)),
-                  median(plotted.map((r) => r.score!)),
-                ),
-              ]
-            : []),
-          ...(option.options.display.labels
-            ? [
-                {
-                  id: "optionLabels",
-                  afterDatasetsDraw(c: Chart<"scatter">) {
-                    c.ctx.save();
-                    c.ctx.fillStyle = getComputedStyle(document.body).color;
-                    c.ctx.font = "10px sans-serif";
-                    c.getDatasetMeta(0).data.forEach((point, i) => {
-                      if (plotted[i])
-                        c.ctx.fillText(
-                          plotted[i].name,
-                          point.x + 5,
-                          point.y - 5,
-                        );
-                    });
-                    c.ctx.restore();
+    if (canvas)
+      comparisonCharts.push(
+        new Chart(canvas, {
+          type: "scatter",
+          plugins: [
+            ...(option.options.display.quadrant && plotted.length
+              ? [
+                  quadrantPlug(
+                    median(plotted.map((r) => r.cost!)),
+                    median(plotted.map((r) => r.score!)),
+                  ),
+                ]
+              : []),
+            ...(option.options.display.labels
+              ? [
+                  {
+                    id: "optionLabels",
+                    afterDatasetsDraw(c: Chart<"scatter">) {
+                      c.ctx.save();
+                      c.ctx.fillStyle = getComputedStyle(document.body).color;
+                      c.ctx.font = "10px sans-serif";
+                      c.getDatasetMeta(0).data.forEach((point, i) => {
+                        if (plotted[i])
+                          c.ctx.fillText(
+                            plotted[i].name,
+                            point.x + 5,
+                            point.y - 5,
+                          );
+                      });
+                      c.ctx.restore();
+                    },
                   },
-                },
-              ]
-            : []),
-        ],
-        data: {
-          datasets: [
-            {
-              label: "Models",
-              data: plotted.map((r) => ({ x: r.cost!, y: r.score! })),
-              backgroundColor: plotted.map(colorForRow),
-              pointRadius: plotted.map((r) =>
-                r.id === option.selected ? 7 : 4,
-              ),
-            },
-            {
-              label: "Frontier",
-              hidden: !option.options.display.frontier,
-              data: plotted
-                .filter((r) => r.frontier)
-                .sort((a, b) => a.cost! - b.cost!)
-                .map((r) => ({ x: r.cost!, y: r.score! })),
-              showLine: true,
-              borderDash: [4, 4],
-              pointRadius: 0,
-            },
+                ]
+              : []),
           ],
-        },
-        options: {
-          animation: false,
-          plugins: {
-            tooltip: {
-              callbacks: {
-                label: (context) =>
-                  context.datasetIndex === 0
-                    ? `${plotted[context.dataIndex]?.name}: ${context.parsed.y} points, ${context.parsed.x} ${option.options.billing}`
-                    : "Frontier",
+          data: {
+            datasets: [
+              {
+                label: "Models",
+                data: plotted.map((r) => ({ x: r.cost!, y: r.score! })),
+                backgroundColor: plotted.map(colorForRow),
+                pointRadius: plotted.map((r) =>
+                  r.id === option.selected ? 7 : 4,
+                ),
+              },
+              {
+                label: "Frontier",
+                hidden: !option.options.display.frontier,
+                data: plotted
+                  .filter((r) => r.frontier)
+                  .sort((a, b) => a.cost! - b.cost!)
+                  .map((r) => ({ x: r.cost!, y: r.score! })),
+                showLine: true,
+                borderDash: [4, 4],
+                pointRadius: 0,
+              },
+            ],
+          },
+          options: {
+            animation: false,
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: (context) =>
+                    context.datasetIndex === 0
+                      ? `${plotted[context.dataIndex]?.name}: ${context.parsed.y} points, ${context.parsed.x} ${option.options.billing}`
+                      : "Frontier",
+                },
               },
             },
-          },
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: {
-              type:
-                option.options.display.scale === "linear" ||
-                plotted.some((r) => r.cost === 0)
-                  ? "linear"
-                  : "logarithmic",
-              title: { display: true, text: option.options.billing },
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: {
+                type:
+                  option.options.display.scale === "linear" ||
+                  plotted.some((r) => r.cost === 0)
+                    ? "linear"
+                    : "logarithmic",
+                title: { display: true, text: option.options.billing },
+              },
+              y: { title: { display: true, text: option.options.preset } },
             },
-            y: { title: { display: true, text: option.options.preset } },
+            onClick: (_event, elements) => {
+              const e = elements[0];
+              if (e?.datasetIndex === 0 && plotted[e.index])
+                send("target", {
+                  side,
+                  action: { type: "select", id: plotted[e.index].id },
+                });
+            },
           },
-          onClick: (_event, elements) => {
-            const e = elements[0];
-            if (e?.datasetIndex === 0 && plotted[e.index])
-              send("target", {
-                side,
-                action: { type: "select", id: plotted[e.index].id },
-              });
-          },
-        },
-      }),
-    );
+        }),
+      );
   }
   if (focusSide && focusRow)
     Array.from(panels.querySelectorAll<HTMLButtonElement>("button"))
@@ -1602,6 +1819,10 @@ el<HTMLInputElement>("comparison-name").onchange = () =>
 el<HTMLInputElement>("comparison-normalize").onchange = () =>
   send("comparison", {
     normalize: el<HTMLInputElement>("comparison-normalize").checked,
+  });
+el<HTMLSelectElement>("comparison-view").onchange = () =>
+  send("comparison", {
+    view: el<HTMLSelectElement>("comparison-view").value,
   });
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
@@ -2231,7 +2452,22 @@ el("export-png").onclick = () => {
     ctx.fillStyle =
       getComputedStyle(document.body).backgroundColor || "#ffffff";
     ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    if (state?.comparison) {
+    if (state?.comparison?.view === "overlay" && state.comparison.overlay) {
+      ctx.fillStyle = getComputedStyle(document.body).color;
+      ctx.font = "20px sans-serif";
+      ctx.fillText(
+        `A: ${state.comparison.sides.A.name} vs B: ${state.comparison.sides.B.name} · ${state.comparison.overlay.unit}`,
+        20,
+        35,
+      );
+      ctx.drawImage(
+        el<HTMLCanvasElement>("comparison-chart-overlay"),
+        0,
+        60,
+        1600,
+        820,
+      );
+    } else if (state?.comparison) {
       for (const [index, side] of (["A", "B"] as const).entries()) {
         ctx.fillStyle = getComputedStyle(document.body).color;
         ctx.font = "20px sans-serif";

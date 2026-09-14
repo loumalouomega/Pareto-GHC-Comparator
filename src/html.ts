@@ -29,6 +29,7 @@ export function html(
  <label id="gap-label" hidden>Allowed score gap (index points)<input id="score-gap" type="number" required min="0" max="100000000" step="any" value="3"></label>
  <p id="recommendation-result" role="status" aria-live="polite"></p>
   </div><p id="budget-suggestion" class="hint" role="status"></p><button id="budget-apply" class="secondary" hidden>Use suggested budget</button></section>
+ <section id="comparison-overlay" class="comparison-overlay" hidden aria-label="Overlay comparison"></section>
  <section id="comparison-panels" class="comparison-panels" hidden aria-label="Comparison results"></section><p id="comparison-delta" role="status" hidden></p>
  <section class="chart-card" aria-labelledby="chart-title"><div class="chart-heading"><h2 id="chart-title">Quality vs. usage cost</h2><span id="count"></span></div><div id="legend" aria-label="Providers"></div><div id="chart-wrap"><canvas id="chart" role="img" aria-label="Model quality and cost scatter plot. The table below provides all values and model selection."></canvas></div><p id="empty" hidden></p><p class="hint">Dotted line: Pareto frontier — no displayed model offers both a lower or equal cost and a higher or equal score, with one strict improvement. Shaded quadrant: most attractive — above-median score at or below median cost. Star markers: recommendations, which consider only the displayed, comparable models.</p></section>
  <div class="results"><section class="table-card" aria-labelledby="table-title"><h2 id="table-title">Models exposed to this extension</h2><div class="table-scroll"><table><caption class="sr-only">Filtered comparison results. Select a model to inspect its benchmark and tradeoffs.</caption><thead><tr><th scope="col">Model</th><th scope="col">Score</th><th id="cost-heading" scope="col">AI credits</th><th id="efficiency-heading" scope="col">Cost / quality</th><th scope="col">Comparison</th></tr></thead><tbody id="rows"></tbody></table></div></section>
@@ -41,7 +42,8 @@ export function html(
  <label>Editing<select id="comparison-active"><option value="A">A</option><option value="B">B</option></select></label>
  <label>Option name<input id="comparison-name" maxlength="60"></label>
  <label class="checkbox-label"><input id="comparison-normalize" type="checkbox" disabled>Show USD equivalents</label>
- <p class="hint">While on, the Compare tab shows both options with a B minus A summary, and the controls on every tab edit the option selected in Editing.</p>
+ <label>View<select id="comparison-view" disabled><option value="side-by-side">Side by side</option><option value="overlay">Overlay</option></select></label>
+ <p class="hint">While on, the Compare tab shows both options with a B minus A summary, and the controls on every tab edit the option selected in Editing. Side by side draws two charts; Overlay superimposes both options on one chart, converting to a USD equivalent when their billing units differ, so the same-cost tradeoffs are easier to compare.</p>
  </section>
  <section class="card profile-bar" aria-labelledby="profiles-title">
  <h2 id="profiles-title">Saved workloads</h2>

@@ -353,6 +353,8 @@ test("extension discovers Copilot models, serves cached data, validates messages
   const originalProfile = structuredClone(state.get("profiles"));
   await receiver({ type: "comparison", enabled: true });
   assert.equal(last().comparison.active, "A");
+  assert.equal(last().comparison.view, "side-by-side");
+  assert.equal(last().comparison.overlay, undefined);
   await receiver({
     type: "target",
     side: "A",
@@ -478,6 +480,24 @@ test("extension discovers Copilot models, serves cached data, validates messages
   await receiver({ type: "comparison", enabled: true });
   assert.equal(last().comparison.sides.B.name, "Alternative");
   assert.equal(last().comparison.sides.A.rows.length, 0);
+  // Overlay view: the host computes and attaches one merged result instead
+  // of two independent ones; switching back drops it.
+  await receiver({ type: "comparison", view: "overlay" });
+  assert.equal(last().comparison.view, "overlay");
+  const overlay = last().comparison.overlay;
+  assert.ok(overlay);
+  assert.equal(typeof overlay.unit, "string");
+  assert.deepEqual(Object.keys(overlay.excluded).sort(), ["A", "B"]);
+  assert.ok(Array.isArray(overlay.rows));
+  assert.ok(Array.isArray(overlay.notices));
+  assert.ok(
+    overlay.rows.every(
+      (r: { side: string }) => r.side === "A" || r.side === "B",
+    ),
+  );
+  await receiver({ type: "comparison", view: "side-by-side" });
+  assert.equal(last().comparison.view, "side-by-side");
+  assert.equal(last().comparison.overlay, undefined);
   await receiver({ type: "comparison", enabled: false });
   writes.length = 0;
   const home = process.env.HOME;

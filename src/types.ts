@@ -347,11 +347,7 @@ export interface MappingAssist {
   suggestions: BenchmarkSuggestion[];
 }
 export type PricingStatus =
-  | "priced"
-  | "free"
-  | "byok"
-  | "unresolved"
-  | "not-comparable";
+  "priced" | "free" | "byok" | "unresolved" | "not-comparable";
 export type PricingSource =
   | "copilot-catalog"
   | "legacy-multiplier"
@@ -458,6 +454,7 @@ export type HostMessage =
       active?: "A" | "B";
       name?: string;
       normalize?: boolean;
+      view?: import("./comparison").ComparisonView;
     }
   | { type: "target"; side: "A" | "B"; action: HostMessage }
   | { type: "ready" | "refresh" | "key" }
@@ -524,11 +521,13 @@ export interface ViewState {
   comparison?: {
     active: import("./comparison").Side;
     normalize: boolean;
+    view: import("./comparison").ComparisonView;
     sides: Record<
       import("./comparison").Side,
       import("./comparison").OptionResult
     >;
     delta: ReturnType<typeof import("./comparison").comparisonDelta>;
+    overlay?: import("./comparison").OverlayResult;
   };
   source: Source;
   options: Options;

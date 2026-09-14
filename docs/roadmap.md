@@ -13,7 +13,7 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-No open tiers right now — the last one (`Copy invocable model identifier`, from `docs/model-switching-investigation.md`) shipped: `src/invocable.ts` copies a doc-verified client id for OpenCode and the Claude Code/Codex/some Gemini CLI static-registry models, falling back to the display name (with an explicit "no verified invocable id" note) everywhere else. See `AGENTS.md`'s "Feasibility decisions" section for the record.
+No open tiers right now — the last one (comparison overlay view) shipped: `overlayResult` in `src/comparison.ts` superimposes both A/B options on one chart with per-option and combined Pareto frontiers, converting to a labelled USD-equivalent axis when the two options bill differently. See `AGENTS.md`'s "Two-option comparison and Tier 1 delivery" section for the record.
 
 ## Requirements across future work
 
@@ -21,5 +21,5 @@ These remain acceptance requirements while the former product exclusions above b
 
 - **Consent and local data:** Keep local usage reads opt-in, visibly indicate watching, and retain disable/erase controls. Broader data sources need explicit opt-in and a stated purpose; convenience is not a reason for silent default-on scanning.
 - **Evidence and uncertainty:** Do not infer prices or reasoning configurations from display-name similarity. Keep unknowns visible and distinguish observed zero counts from missing fields and legacy estimates.
-- **Honest comparisons:** Preserve cost units, workload assumptions, benchmark variants, and pricing provenance. A shared currency label alone does not make different billing models or task workloads comparable.
+- **Honest comparisons:** Preserve cost units, workload assumptions, benchmark variants, and pricing provenance. A shared currency label alone does not make different billing models or task workloads comparable. The comparison overlay view is the one place a USD-equivalent axis stands in for mismatched native units, and even there it stays explicitly labelled, drops what it can't convert (legacy premium requests) rather than mixing it in, and withholds the combined frontier when the two options' workloads or bases still don't match.
 - **Supported integrations:** Record evidence and validation gaps by client/platform. Treat session schemas and external capabilities as versioned dependencies, and degrade with actionable explanations when they change.

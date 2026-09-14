@@ -1,10 +1,19 @@
-import { optionResult, comparisonDelta, type ComparisonStore } from "../src/comparison";
+import {
+  optionResult,
+  comparisonDelta,
+  overlayResult,
+  type ComparisonStore,
+} from "../src/comparison";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
 import { compare, registryRateFor } from "../src/compare";
 import { mergeByokForm, parseByokFormStore } from "../src/byok";
-import { historyScenarioPrefill, planRegistryDate, projectScenario } from "../src/plans";
+import {
+  historyScenarioPrefill,
+  planRegistryDate,
+  projectScenario,
+} from "../src/plans";
 import { buildGroups } from "../src/groups";
 import { recommend } from "../src/recommend";
 import { changeProfile, profileModified } from "../src/profiles";
@@ -76,21 +85,60 @@ const usageFixture = {
   dateRange: { from: Date.parse("2026-09-01"), to: Date.parse("2026-09-03") },
   medianPrompt: 150,
   medianOutput: 75,
-  diagnostics: {malformed:1,unsupported:1,unreadable:0,stale:1,missingTokens:1,estimatedTokens:0},
+  diagnostics: {
+    malformed: 1,
+    unsupported: 1,
+    unreadable: 0,
+    stale: 1,
+    missingTokens: 1,
+    estimatedTokens: 0,
+  },
   medianSample: 3,
   premiumP90: 2,
   creditP90: 0.5,
   creditSample: 2,
   models: [
-    { modelId: "copilot/gpt-5-mini", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 0.66 },
-    { modelId: "copilot/mystery", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1 },
+    {
+      modelId: "copilot/gpt-5-mini",
+      requests: 2,
+      promptTokens: 200,
+      outputTokens: 100,
+      premiumEstimate: 0.66,
+    },
+    {
+      modelId: "copilot/mystery",
+      requests: 1,
+      promptTokens: 100,
+      outputTokens: 50,
+      premiumEstimate: 1,
+    },
   ],
   days: [
-    { date: "2026-09-03", requests: 3, promptTokens: 300, outputTokens: 150, premiumEstimate: 6.5 },
+    {
+      date: "2026-09-03",
+      requests: 3,
+      promptTokens: 300,
+      outputTokens: 150,
+      premiumEstimate: 6.5,
+    },
   ],
   workspaces: [
-    { id: "ws1", path: "/home/user/myrepo", requests: 2, promptTokens: 200, outputTokens: 100, premiumEstimate: 5 },
-    { id: "deadbeef", path: "", requests: 1, promptTokens: 100, outputTokens: 50, premiumEstimate: 1.5 },
+    {
+      id: "ws1",
+      path: "/home/user/myrepo",
+      requests: 2,
+      promptTokens: 200,
+      outputTokens: 100,
+      premiumEstimate: 5,
+    },
+    {
+      id: "deadbeef",
+      path: "",
+      requests: 1,
+      promptTokens: 100,
+      outputTokens: 50,
+      premiumEstimate: 1.5,
+    },
     ...Array.from({ length: 9 }, (_, i) => ({
       id: `ws-extra-${i}`,
       path: `/home/user/proj${i}`,
@@ -169,21 +217,77 @@ for (const theme of ["light", "dark", "high-contrast"])
     const messages: Record<string, unknown>[] = [];
     await page.exposeBinding("hostMessage", async (_, m) => {
       messages.push(m);
-      const saveActive=()=>{ if(comparison?.enabled) comparison.sides[comparison.active]={...comparison.sides[comparison.active],options:structuredClone(state.options),mappings:structuredClone(mappings),excluded:{[state.source]:[...excluded]},selected:state.selected}; };
-      const useActive=()=>{const s=comparison!.sides[comparison!.active];state.options=structuredClone(s.options);state.source=s.options.source;state.selected=s.selected;mappings=structuredClone(s.mappings);excluded=new Set(s.excluded[s.options.source] ?? []);state.optionsRevision++;};
-      if(m.type==='comparison') {
+      const saveActive = () => {
+        if (comparison?.enabled)
+          comparison.sides[comparison.active] = {
+            ...comparison.sides[comparison.active],
+            options: structuredClone(state.options),
+            mappings: structuredClone(mappings),
+            excluded: { [state.source]: [...excluded] },
+            selected: state.selected,
+          };
+      };
+      const useActive = () => {
+        const s = comparison!.sides[comparison!.active];
+        state.options = structuredClone(s.options);
+        state.source = s.options.source;
+        state.selected = s.selected;
+        mappings = structuredClone(s.mappings);
+        excluded = new Set(s.excluded[s.options.source] ?? []);
+        state.optionsRevision++;
+      };
+      if (m.type === "comparison") {
         saveActive();
-        if(m.enabled===true) {
-          single=structuredClone(state);
-          comparison ??= {version:1,enabled:true,active:'A',normalize:false,sides:{A:{name:'Option A',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}},B:{name:'Option B',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}}}};
-          comparison.enabled=true;useActive();
+        if (m.enabled === true) {
+          single = structuredClone(state);
+          comparison ??= {
+            version: 1,
+            enabled: true,
+            active: "A",
+            normalize: false,
+            view: "side-by-side",
+            sides: {
+              A: {
+                name: "Option A",
+                options: structuredClone(state.options),
+                mappings: { ...mappings },
+                pins: {},
+                excluded: { [state.source]: [...excluded] },
+              },
+              B: {
+                name: "Option B",
+                options: structuredClone(state.options),
+                mappings: { ...mappings },
+                pins: {},
+                excluded: { [state.source]: [...excluded] },
+              },
+            },
+          };
+          comparison.enabled = true;
+          useActive();
         }
-        if(m.enabled===false && comparison) {comparison.enabled=false;state=structuredClone(single);state.optionsRevision++;}
-        if(comparison?.enabled && m.active) {comparison.active=m.active;useActive();}
-        if(comparison?.enabled && m.name) comparison.sides[comparison.active].name=m.name;
-        if(comparison?.enabled && m.normalize!==undefined) comparison.normalize=m.normalize;
+        if (m.enabled === false && comparison) {
+          comparison.enabled = false;
+          state = structuredClone(single);
+          state.optionsRevision++;
+        }
+        if (comparison?.enabled && m.active) {
+          comparison.active = m.active;
+          useActive();
+        }
+        if (comparison?.enabled && m.name)
+          comparison.sides[comparison.active].name = m.name;
+        if (comparison?.enabled && m.normalize !== undefined)
+          comparison.normalize = m.normalize;
+        if (comparison?.enabled && m.view !== undefined)
+          comparison.view = m.view;
       }
-      if(m.type==='target' && comparison?.enabled){saveActive();comparison.active=m.side;useActive();m=m.action;}
+      if (m.type === "target" && comparison?.enabled) {
+        saveActive();
+        comparison.active = m.side;
+        useActive();
+        m = m.action;
+      }
 
       if (m.type === "options") state.options = m.options;
       if (m.type === "source") {
@@ -251,7 +355,11 @@ for (const theme of ["light", "dark", "high-contrast"])
       if (m.type === "byokApply") {
         const results = (m.ids as string[]).map((id) => {
           const model = opencodeAvailable.find((a) => a.id === id);
-          return { id, model, suggestion: model ? registryRateFor(model) : undefined };
+          return {
+            id,
+            model,
+            suggestion: model ? registryRateFor(model) : undefined,
+          };
         });
         const bad = results.find((r) => !r.model || !r.suggestion);
         if (bad) {
@@ -278,7 +386,8 @@ for (const theme of ["light", "dark", "high-contrast"])
         for (const id of m.ids as string[]) delete next[id];
         state.byok = next;
       }
-      const listed = state.source === "opencode" ? opencodeAvailable : available;
+      const listed =
+        state.source === "opencode" ? opencodeAvailable : available;
       const usedCounts = new Map<string, number>();
       if (state.usage) {
         for (const stat of state.usage.models) {
@@ -286,12 +395,22 @@ for (const theme of ["light", "dark", "high-contrast"])
           if (id) usedCounts.set(id, (usedCounts.get(id) ?? 0) + stat.requests);
         }
       }
-      state.rows = compare(listed, state.models, state.options, mappings, undefined, {
-        excluded: [...excluded],
-        usedCounts,
-        byok: state.byok,
-      });
-      state.budgetSuggestion = suggestBudget(state.usage, state.options.billing);
+      state.rows = compare(
+        listed,
+        state.models,
+        state.options,
+        mappings,
+        undefined,
+        {
+          excluded: [...excluded],
+          usedCounts,
+          byok: state.byok,
+        },
+      );
+      state.budgetSuggestion = suggestBudget(
+        state.usage,
+        state.options.billing,
+      );
       state.checklist = listed.map((a) => ({
         id: a.id,
         name: a.name,
@@ -305,7 +424,12 @@ for (const theme of ["light", "dark", "high-contrast"])
         { ...state.options, filter: "", onlyMine: false, freeOnly: false },
         mappings,
       );
-      state.groups = buildGroups(listed as never, [...excluded], state.rows, structure);
+      state.groups = buildGroups(
+        listed as never,
+        [...excluded],
+        state.rows,
+        structure,
+      );
       state.recommendation = recommend(state.rows, state.options);
       {
         const selectedRow = state.rows.find((r) => r.id === state.selected);
@@ -334,9 +458,33 @@ for (const theme of ["light", "dark", "high-contrast"])
       state.profileModified = profileModified(profiles, state.options);
       if (comparison?.enabled) {
         saveActive();
-        for(const side of ['A','B'] as const){comparison.sides[side].options.preset=state.options.preset;comparison.sides[side].options.display.chart=state.options.display.chart;}
-        const calc=(side:'A'|'B')=>optionResult(comparison!.sides[side],comparison!.sides[side].options.source==='opencode'?opencodeAvailable:available,state.models,{},usedCounts);
-        const sides={A:calc('A'),B:calc('B')};state.comparison={active:comparison.active,normalize:comparison.normalize,sides,delta:comparisonDelta(sides.A,sides.B,comparison.normalize)};
+        for (const side of ["A", "B"] as const) {
+          comparison.sides[side].options.preset = state.options.preset;
+          comparison.sides[side].options.display.chart =
+            state.options.display.chart;
+        }
+        const calc = (side: "A" | "B") =>
+          optionResult(
+            comparison!.sides[side],
+            comparison!.sides[side].options.source === "opencode"
+              ? opencodeAvailable
+              : available,
+            state.models,
+            {},
+            usedCounts,
+          );
+        const sides = { A: calc("A"), B: calc("B") };
+        state.comparison = {
+          active: comparison.active,
+          normalize: comparison.normalize,
+          view: comparison.view,
+          sides,
+          delta: comparisonDelta(sides.A, sides.B, comparison.normalize),
+          overlay:
+            comparison.view === "overlay"
+              ? overlayResult(sides.A, sides.B)
+              : undefined,
+        };
       } else delete state.comparison;
       await page.evaluate(
         (s) =>
@@ -627,13 +775,8 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await expect(page.locator("#recommendation-result")).toContainText("USD");
     await expect(page.locator("#rows tr")).toHaveCount(3);
-    await expect(
-      page.locator('#billing option[value="legacy"]'),
-    ).toBeHidden();
-    await expect(page.locator("canvas")).toHaveAttribute(
-      "aria-label",
-      /USD/,
-    );
+    await expect(page.locator('#billing option[value="legacy"]')).toBeHidden();
+    await expect(page.locator("canvas")).toHaveAttribute("aria-label", /USD/);
 
     // Pricing assistance: a same-identifier static-registry rate is offered,
     // unverified, for an unpriced provider-billed model — independent of its
@@ -697,9 +840,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Grouped selection: families contain models; bulk actions use one message.
     await openTab("Settings");
     await expect(page.locator("#checklist .check-family")).toHaveCount(5);
-    await expect(
-      page.getByLabel("Filter models for selection"),
-    ).toBeVisible();
+    await expect(page.getByLabel("Filter models for selection")).toBeVisible();
     await page.getByLabel("Filter models for selection").fill("gpt-5.4");
     await expect(page.locator("#checklist .check-family")).toHaveCount(1);
     await expect(page.locator("#include-all")).toHaveText("Select matching");
@@ -733,7 +874,10 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator(".mapping-suggestions")).toContainText(
       "Some Unrelated Benchmark",
     );
-    await page.locator(".mapping-suggestions").getByRole("button", { name: "Apply" }).click();
+    await page
+      .locator(".mapping-suggestions")
+      .getByRole("button", { name: "Apply" })
+      .click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
       "User selected",
     );
@@ -748,7 +892,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#details .mapping-status")).toHaveText(
       "Missing benchmark",
     );
-    await page.getByLabel("Filter models", { exact: true }).fill("no-such-model");
+    await page
+      .getByLabel("Filter models", { exact: true })
+      .fill("no-such-model");
     await expect(page.locator("#rows tr")).toHaveCount(0);
     await page.getByLabel("Filter models", { exact: true }).fill("");
     await page.locator("#display-chart").selectOption("workload");
@@ -771,42 +917,64 @@ for (const theme of ["light", "dark", "high-contrast"])
       /linear cost scale/,
     );
     // Local usage section: empty state, scan message, and rendered aggregates.
-    await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
+    await expect(page.locator("#usage-summary")).toHaveText(
+      /No local scan yet/,
+    );
     await openTab("Usage");
     await page.locator("#usage-scan").click();
     expect(messages.some((m) => m.type === "scanUsage")).toBeTruthy();
     await expect(page.locator("#usage-summary")).toContainText("3 requests");
-    await expect(page.locator("#usage-models")).toContainText("copilot/gpt-5-mini");
+    await expect(page.locator("#usage-models")).toContainText(
+      "copilot/gpt-5-mini",
+    );
     await expect(page.locator("#usage-days")).toContainText("2026-09-03");
     await expect(page.locator("#usage-workspaces")).toContainText("myrepo");
-    await expect(page.locator("#usage-workspaces")).not.toContainText("/home/user/myrepo");
-    await expect(page.locator("#usage-workspaces")).toContainText("deadbeef · unmapped workspace");
+    await expect(page.locator("#usage-workspaces")).not.toContainText(
+      "/home/user/myrepo",
+    );
+    await expect(page.locator("#usage-workspaces")).toContainText(
+      "deadbeef · unmapped workspace",
+    );
     await expect(page.locator("#usage-workspaces tr")).toHaveCount(12);
     await page.locator("#usage-full-paths").check();
-    await expect(page.locator("#usage-workspaces")).toContainText("/home/user/myrepo");
+    await expect(page.locator("#usage-workspaces")).toContainText(
+      "/home/user/myrepo",
+    );
     await page.locator("#usage-full-paths").uncheck();
-    await expect(page.locator("#usage-workspaces")).not.toContainText("/home/user/myrepo");
-    await expect(page.locator("#usage-unknown")).toContainText("copilot/mystery");
+    await expect(page.locator("#usage-workspaces")).not.toContainText(
+      "/home/user/myrepo",
+    );
+    await expect(page.locator("#usage-unknown")).toContainText(
+      "copilot/mystery",
+    );
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
-    await expect(page.locator("#usage-diagnostics")).toContainText("1 malformed records");
-    await expect(page.locator("#usage-diagnostics")).toContainText("1 stale contributions");
+    await expect(page.locator("#usage-diagnostics")).toContainText(
+      "1 malformed records",
+    );
+    await expect(page.locator("#usage-diagnostics")).toContainText(
+      "1 stale contributions",
+    );
     // Only-my-models filter, workload prefill, and budget suggestion.
-    await expect(page.locator("#usage-prefill-note")).toContainText("Median 150 prompt + 75 output");
-    const selectionLeaves = await page.locator(".check-leaf-row").allTextContents();
+    await expect(page.locator("#usage-prefill-note")).toContainText(
+      "Median 150 prompt + 75 output",
+    );
+    const selectionLeaves = await page
+      .locator(".check-leaf-row")
+      .allTextContents();
     await openTab("Settings");
     await page.locator("#only-mine").check();
     await expect(page.locator("#count")).toHaveText("1 plotted / 1 models");
     await expect(page.locator("#rows")).toContainText("2 used");
-    expect((await page.locator(".check-leaf-row").allTextContents()).length).toBe(selectionLeaves.length);
+    expect(
+      (await page.locator(".check-leaf-row").allTextContents()).length,
+    ).toBe(selectionLeaves.length);
     await page.locator("#only-mine").uncheck();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
 
     await openTab("Compare");
     // Monthly spending scenario: plan-aware what-if projection, kept
     // separate from local history and per-task/workload estimates.
-    await page
-      .getByRole("button", { name: "GPT-5.4", exact: true })
-      .click();
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
     await expect(
       page.locator('#scenario-plan option[value="copilot-free"]'),
     ).toHaveJSProperty("disabled", true);
@@ -823,9 +991,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#scenario-result")).toContainText(
       "Estimated monthly total:",
     );
-    await expect(page.locator("#scenario-notes")).toContainText(
-      "not a bill",
-    );
+    await expect(page.locator("#scenario-notes")).toContainText("not a bill");
     // A Custom plan reveals its fields immediately, without a round trip.
     await page.locator("#scenario-plan").selectOption("custom");
     await expect(page.locator("#scenario-custom")).toBeVisible();
@@ -835,9 +1001,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#scenario-custom-fee").fill("5");
     await page.locator("#scenario-custom-allowance").fill("200");
     await page.locator("#scenario-custom-overage").fill("0.02");
-    await expect(page.locator("#scenario-result")).toContainText(
-      "your input",
-    );
+    await expect(page.locator("#scenario-result")).toContainText("your input");
     // History prefill: fills the requests inputs and labels their origin;
     // editing them by hand afterward drops the history label again.
     await page.locator("#scenario-plan").selectOption("copilot-pro");
@@ -865,58 +1029,116 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Usage");
     await page.locator("#usage-clear").click();
     expect(messages.some((m) => m.type === "clearUsage")).toBeTruthy();
-    await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
+    await expect(page.locator("#usage-summary")).toHaveText(
+      /No local scan yet/,
+    );
     await openTab("Plan & budget");
-    await page.locator('#comparison-enabled').check();
-    await expect(page.locator('.comparison-panel')).toHaveCount(2);
-    await page.locator('#comparison-active').selectOption('B');
-    await page.locator('#comparison-name').fill('Other provider');
-    await page.locator('#comparison-name').press('Tab');
+    await page.locator("#comparison-enabled").check();
+    await expect(page.locator(".comparison-panel")).toHaveCount(2);
+    await page.locator("#comparison-active").selectOption("B");
+    await page.locator("#comparison-name").fill("Other provider");
+    await page.locator("#comparison-name").press("Tab");
     await openTab("Compare");
-    await page.locator('#source').selectOption('opencode');
-    await expect(page.locator('.comparison-panel').nth(1)).toContainText('Other provider');
-    await expect(page.locator('#comparison-delta')).toContainText('Different billing units');
-    await expect(page.locator('.comparison-panel').first()).toContainText('GitHub Copilot');
+    await page.locator("#source").selectOption("opencode");
+    await expect(page.locator(".comparison-panel").nth(1)).toContainText(
+      "Other provider",
+    );
+    await expect(page.locator("#comparison-delta")).toContainText(
+      "Different billing units",
+    );
+    await expect(page.locator(".comparison-panel").first()).toContainText(
+      "GitHub Copilot",
+    );
     // Optional USD equivalents: off by default, and only meaningful text
     // (rate, allowance treatment, native/unavailable) once toggled on.
-    await expect(page.locator('.comparison-panel').first()).not.toContainText('$0.01/AI credit');
+    await expect(page.locator(".comparison-panel").first()).not.toContainText(
+      "$0.01/AI credit",
+    );
     await openTab("Plan & budget");
-    await page.locator('#comparison-normalize').check();
-    await expect(page.locator('#comparison-delta')).toContainText('USD equivalent Δ');
-    await expect(page.locator('.comparison-panel').first()).toContainText('$0.01/AI credit');
-    await expect(page.locator('.comparison-panel').nth(1)).toContainText('native, no conversion');
-    await page.locator('#comparison-normalize').uncheck();
-    await expect(page.locator('.comparison-panel').first()).not.toContainText('$0.01/AI credit');
+    await page.locator("#comparison-normalize").check();
+    await expect(page.locator("#comparison-delta")).toContainText(
+      "USD equivalent Δ",
+    );
+    await expect(page.locator(".comparison-panel").first()).toContainText(
+      "$0.01/AI credit",
+    );
+    await expect(page.locator(".comparison-panel").nth(1)).toContainText(
+      "native, no conversion",
+    );
+    await page.locator("#comparison-normalize").uncheck();
+    await expect(page.locator(".comparison-panel").first()).not.toContainText(
+      "$0.01/AI credit",
+    );
     // Each comparison option carries its own spending scenario, shown per
     // panel, with a separate delta sentence that never bounds the difference.
-    await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: off');
-    await page.locator('#comparison-active').selectOption('A');
-    await page.locator('#scenario-plan').selectOption('copilot-pro');
-    await page.locator('#scenario-requests-low').fill('10');
-    await page.locator('#scenario-requests-high').fill('10');
-    await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: Copilot Pro');
-    await expect(page.locator('#comparison-delta')).toContainText('Monthly scenario');
-    await expect(page.locator('#comparison-delta')).toContainText('Scenario off or unavailable on at least one option.');
-    await page.locator('#scenario-plan').selectOption('none');
+    await expect(page.locator(".comparison-panel").first()).toContainText(
+      "Spending scenario: off",
+    );
+    await page.locator("#comparison-active").selectOption("A");
+    await page.locator("#scenario-plan").selectOption("copilot-pro");
+    await page.locator("#scenario-requests-low").fill("10");
+    await page.locator("#scenario-requests-high").fill("10");
+    await expect(page.locator(".comparison-panel").first()).toContainText(
+      "Spending scenario: Copilot Pro",
+    );
+    await expect(page.locator("#comparison-delta")).toContainText(
+      "Monthly scenario",
+    );
+    await expect(page.locator("#comparison-delta")).toContainText(
+      "Scenario off or unavailable on at least one option.",
+    );
+    await page.locator("#scenario-plan").selectOption("none");
     // Wait for the debounced round trip to settle (an assertion, not a raw
     // timeout) before the comparison-enabled toggle below, so a late state
     // update can't land between that click and Playwright's next sample.
-    await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: off');
-    await openTab("Settings");
-    await page.locator('#export-png').click();
-    expect(messages.some(m=>m.type==='target' && (m.action as any)?.type==='exportPng')).toBeTruthy();
+    await expect(page.locator(".comparison-panel").first()).toContainText(
+      "Spending scenario: off",
+    );
+    // Overlay view: one shared chart instead of two per-side ones. A (Copilot,
+    // credits) and B (Other provider, USD) bill differently, so the axis
+    // converts to a USD equivalent — the per-side info cards and tables stay.
+    await page.locator("#comparison-view").selectOption("overlay");
+    await expect(page.locator(".comparison-panel")).toHaveCount(2);
+    await expect(page.locator(".comparison-panel canvas")).toHaveCount(0);
+    await expect(page.locator("#comparison-chart-overlay")).toHaveCount(1);
     await openTab("Compare");
-    await page.setViewportSize({width:700,height:1000});
-    const a=await page.locator('.comparison-panel').first().boundingBox(),b=await page.locator('.comparison-panel').nth(1).boundingBox();
-    expect(b!.y).toBeGreaterThan(a!.y+a!.height);
+    await expect(page.locator("#comparison-overlay")).toBeVisible();
+    await expect(page.locator("#comparison-chart-overlay")).toBeVisible();
+    await expect(page.locator("#comparison-overlay")).toContainText(
+      "USD equivalent",
+    );
+    // The per-side tables stay in overlay view, so row selection still works.
+    await page
+      .locator(".comparison-panel")
+      .first()
+      .getByRole("button", { name: "GPT-5.4", exact: true })
+      .click();
+    await openTab("Plan & budget");
+    await page.locator("#comparison-view").selectOption("side-by-side");
+    await openTab("Compare");
+    await expect(page.locator("#comparison-overlay")).toBeHidden();
+    await expect(page.locator(".comparison-panel canvas")).toHaveCount(2);
+    await openTab("Plan & budget");
+    await openTab("Settings");
+    await page.locator("#export-png").click();
+    expect(
+      messages.some(
+        (m) => m.type === "target" && (m.action as any)?.type === "exportPng",
+      ),
+    ).toBeTruthy();
+    await openTab("Compare");
+    await page.setViewportSize({ width: 700, height: 1000 });
+    const a = await page.locator(".comparison-panel").first().boundingBox(),
+      b = await page.locator(".comparison-panel").nth(1).boundingBox();
+    expect(b!.y).toBeGreaterThan(a!.y + a!.height);
     // Side A is already active (selected above for the scenario checks);
     // re-selecting the same value here would redundantly resend a
     // "comparison" message right before the toggle below, racing its
     // render against this click (selectOption dispatches change events
     // even for a same-value reselect, unlike a real user re-picking it).
-    await expect(page.locator('#source')).toHaveValue('copilot');
+    await expect(page.locator("#source")).toHaveValue("copilot");
     await openTab("Plan & budget");
-    await page.locator('#comparison-enabled').uncheck();
-    await expect(page.locator('#comparison-panels')).toBeHidden();
+    await page.locator("#comparison-enabled").uncheck();
+    await expect(page.locator("#comparison-panels")).toBeHidden();
     expect(errors).toEqual([]);
   });

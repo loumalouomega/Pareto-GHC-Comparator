@@ -56,6 +56,14 @@ Each successful benchmark refresh retains the previous validated snapshot locall
 
 Under the OpenCode source, the **Provider-billed (BYOK) rates** table lists models the CLI reports as provider-billed, including ones that already have an applied rate, with fields for input, cache-read, cache-write (blank means input rate), and output USD rates per million tokens. **Save BYOK rates** stores the table locally and prices those models with a visible BYOK label; empty rows remove the entry, and invalid entries keep the model unpriced. Free-tier models are never overridden. A rate applied from a suggested static-registry match (see "Resolving an unmapped model or an unpriced model" above) shows its registry and date next to the model name, with its own **Remove** control; manually typed rates show no such provenance. Saving the form again without changing a registry-applied rate keeps its provenance.
 
+## Compare options
+
+**Plan & budget → Compare options** turns on a second, independent set of settings, A and B: each keeps its own source, task, billing, chart view, filters, exclusions, and pinned/overridden mappings. **Editing** picks which option every tab's controls edit; switching it swaps the whole panel to that option's saved settings.
+
+**View** chooses how the Compare tab shows both options. **Side by side** (default) draws two independent charts and tables, one per option. **Overlay** superimposes both options' models on a single chart instead — each option's own Pareto frontier, plus a combined frontier across both — so you can see at a glance which of two tools or models is the better value across the cost range. When the two options bill differently, the overlay's axis switches to a labelled USD equivalent; see `docs/billing.md`'s "Overlay view" section for the conversion rule, what gets excluded (legacy premium requests), and when the combined frontier is withheld instead of drawn.
+
+**Show USD equivalents** (off by default) additionally shows each option's selected cost, and the B-minus-A delta, converted to USD when the two options bill differently — see `docs/billing.md`.
+
 ## Local Copilot usage
 
 The **Local Copilot usage** card is independent of the benchmark comparison. **Scan local usage** asks for consent on first use, then reads `workspaceStorage/chatSessions` files (stable and Insiders installations, current JSONL plus legacy JSON sessions) on this machine only and reports request, token, and premium-request totals by model, day, and workspace. Only changed files are re-parsed between scans, using a size/mtime index; an opt-in file watcher keeps totals fresh with a visible indicator. **Erase local usage** stops watching and deletes the stored data; rescanning asks for consent again.

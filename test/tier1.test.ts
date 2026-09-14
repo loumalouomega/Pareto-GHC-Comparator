@@ -1,12 +1,15 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import { defaults, type UsageRequest } from "../src/types";
+import { defaults, type Billing, type ChartType, type UsageRequest } from "../src/types";
 import {
   loadComparison,
   optionResult,
   comparisonDelta,
+  overlayResult,
   type ComparisonOption,
+  type OptionResult,
 } from "../src/comparison";
+import { normalizeCost } from "../src/normalize";
 import { parseMessage } from "../src/messages";
 import {
   aggregateUsage,
@@ -45,6 +48,14 @@ test("comparison store validates independently and synchronizes shared settings"
   assert.equal(
     loadComparison({ ...raw, normalize: "yes" })?.normalize,
     false,
+  );
+  // A store saved before the overlay view existed, or with a corrupted
+  // value, still loads and defaults to the original side-by-side view.
+  assert.equal(loaded.view, "side-by-side");
+  assert.equal(loadComparison({ ...raw, view: "overlay" })?.view, "overlay");
+  assert.equal(
+    loadComparison({ ...raw, view: "bogus" })?.view,
+    "side-by-side",
   );
   loaded.sides.A.options.tokens.input = 700;
   assert.equal(raw.sides.A.options.tokens.input, 1000);
@@ -192,6 +203,120 @@ test("comparisonDelta computes an optional USD equivalent delta only when reques
   const noneDelta = comparisonDelta(noSelection, b, true).usd!;
   assert.match(noneDelta.reason, /A not converted: Cost unavailable/);
 });
+// Minimal OptionResult stand-in: overlayResult only reads `options` and
+// `rows`/`selected`, so tests can hand it exact cost/score pairs instead of
+// routing through the full catalog-dependent compare() pipeline.
+const fakeResult = (
+  billing: Billing,
+  chart: ChartType,
+  rows: Array<{ id: string; cost: number; score: number; frontier?: boolean }>,
+  selected?: string,
+): OptionResult => {
+  const options = structuredClone(defaults);
+  options.billing = billing;
+  options.display.chart = chart;
+  return {
+    name: "X",
+    options,
+    rows: rows.map((r) => ({
+      id: r.id,
+      modelId: r.id,
+      baseModelId: r.id,
+      name: r.id,
+      provider: "Test",
+      score: r.score,
+      cost: r.cost,
+      frontier: r.frontier ?? false,
+      reasons: [],
+      dominatedBy: [],
+      mappingStatus: "exact",
+      candidateIds: [],
+    })),
+    recommendation: { modelIds: [], explanation: "" },
+    selected,
+    groups: [],
+    structureIds: [],
+    scenario: { status: "off" },
+  } as unknown as OptionResult;
+};
+test("overlayResult keeps native costs when both sides share a billing unit", () => {
+  const a = fakeResult(
+    "credits",
+    "task",
+    [{ id: "m1", cost: 2, score: 30, frontier: true }],
+    "m1",
+  );
+  const b = fakeResult("credits", "task", [
+    { id: "m2", cost: 5, score: 50, frontier: true },
+  ]);
+  const overlay = overlayResult(a, b);
+  assert.equal(overlay.unit, "AI credits");
+  assert.equal(overlay.converted, false);
+  assert.equal(overlay.rows.length, 2);
+  assert.deepEqual(overlay.excluded, { A: 0, B: 0 });
+  assert.equal(overlay.notices.length, 0);
+  const rowA = overlay.rows.find((r) => r.side === "A")!;
+  assert.equal(rowA.x, 2);
+  assert.equal(rowA.selected, true);
+  assert.equal(rowA.sideFrontier, true);
+});
+test("overlayResult converts to a USD-equivalent axis when billing units differ, dropping rows it can't convert", () => {
+  const a = fakeResult("credits", "task", [{ id: "m1", cost: 200, score: 30 }]);
+  const b = fakeResult("usd", "task", [{ id: "m2", cost: 1.5, score: 50 }]);
+  const overlay = overlayResult(a, b);
+  assert.equal(overlay.unit, "USD equivalent");
+  assert.equal(overlay.converted, true);
+  const converted = normalizeCost(200, "credits", "task");
+  assert.equal(converted.status, "converted");
+  if (converted.status === "converted")
+    assert.equal(overlay.rows.find((r) => r.side === "A")!.x, converted.usd);
+  assert.equal(overlay.rows.find((r) => r.side === "B")!.x, 1.5);
+  // Legacy premium requests never convert to a USD equivalent (see
+  // normalize.ts): those rows are dropped and counted rather than mixed in.
+  const legacy = fakeResult("legacy", "task", [{ id: "m3", cost: 1, score: 20 }]);
+  const overlayLegacy = overlayResult(legacy, b);
+  assert.equal(overlayLegacy.excluded.A, 1);
+  assert.equal(overlayLegacy.rows.filter((r) => r.side === "A").length, 0);
+  assert.match(overlayLegacy.notices[0], /never converted/);
+  assert.match(overlayLegacy.notices[0], /1 from A, 0 from B/);
+});
+test("overlayResult blocks the combined frontier when the options aren't comparable, but keeps each side's own frontier flag", () => {
+  const a = fakeResult("credits", "workload", [
+    { id: "m1", cost: 2, score: 30, frontier: true },
+  ]);
+  const b = fakeResult("credits", "workload", [
+    { id: "m2", cost: 5, score: 50, frontier: true },
+  ]);
+  b.options.tokens.input += 1;
+  const overlay = overlayResult(a, b);
+  assert.ok(overlay.rows.every((r) => !r.combinedFrontier));
+  assert.match(overlay.notices.join(" "), /Combined frontier unavailable/);
+  assert.match(overlay.notices.join(" "), /workloads/);
+  assert.ok(overlay.rows.every((r) => r.sideFrontier));
+});
+test("overlayResult computes a combined Pareto frontier across both sides, without conflating rows that share an id", () => {
+  const a = fakeResult("credits", "task", [
+    { id: "shared", cost: 1, score: 20 },
+    { id: "extra", cost: 3, score: 20 },
+  ]);
+  const b = fakeResult("credits", "task", [
+    { id: "shared", cost: 4, score: 60 },
+    { id: "extra", cost: 0.2, score: 10 },
+  ]);
+  const overlay = overlayResult(a, b);
+  const at = (side: "A" | "B", id: string) =>
+    overlay.rows.find((r) => r.side === side && r.id === id)!;
+  assert.equal(at("A", "shared").combinedFrontier, true);
+  assert.equal(at("B", "shared").combinedFrontier, true);
+  assert.equal(at("A", "extra").combinedFrontier, false);
+  // Same id "extra" reused on the other side is a distinct, non-dominated
+  // point: the combined frontier must key off the row itself, not the id.
+  assert.equal(at("B", "extra").combinedFrontier, true);
+  assert.equal(
+    overlay.notices.some((n) => /Combined frontier unavailable/.test(n)),
+    false,
+  );
+});
 test("each comparison side projects its own spending scenario, defaulting off", () => {
   const available = [
     { id: "gpt-5-mini", family: "gpt-5-mini", name: "GPT-5 mini", maxInputTokens: 100000 },
@@ -251,13 +376,20 @@ test("comparison messages reject malformed targets and nested envelopes", () => 
   );
   assert.deepEqual(
     parseMessage({ type: "comparison", normalize: true }),
-    { type: "comparison", enabled: undefined, active: undefined, name: undefined, normalize: true },
+    { type: "comparison", enabled: undefined, active: undefined, name: undefined, normalize: true, view: undefined },
+  );
+  const viewMessage = parseMessage({ type: "comparison", view: "overlay" });
+  assert.equal(viewMessage.type, "comparison");
+  assert.equal(
+    viewMessage.type === "comparison" ? viewMessage.view : undefined,
+    "overlay",
   );
   for (const v of [
     { type: "comparison", enabled: 1 },
     { type: "comparison", active: "C" },
     { type: "comparison", name: "" },
     { type: "comparison", normalize: "yes" },
+    { type: "comparison", view: "bogus" },
     { type: "target", side: "C", action: {} },
     { type: "target", side: "A", action: { type: "target" } },
     { type: "target", side: "A", action: null },

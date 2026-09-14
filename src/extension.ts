@@ -3,6 +3,7 @@ import {
   optionResult,
   comparisonDelta,
   selectedCost,
+  overlayResult,
   type ComparisonOption,
   type ComparisonStore,
   type Side,
@@ -28,7 +29,12 @@ import { staticModels, staticRegistryDate } from "./staticSources";
 import { historyScenarioPrefill, planRegistryDate } from "./plans";
 import { buildGroups } from "./groups";
 import { defaultBilling, sources } from "./sources";
-import { exportBadge, exportCsv, exportSnapshot, scenarioExport } from "./export";
+import {
+  exportBadge,
+  exportCsv,
+  exportSnapshot,
+  scenarioExport,
+} from "./export";
 import { html } from "./html";
 import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
@@ -548,8 +554,13 @@ export function activate(context: vscode.ExtensionContext) {
       state.comparison = {
         active: comparison.active,
         normalize: comparison.normalize,
+        view: comparison.view,
         sides,
         delta: comparisonDelta(sides.A, sides.B, comparison.normalize),
+        overlay:
+          comparison.view === "overlay"
+            ? overlayResult(sides.A, sides.B)
+            : undefined,
       };
     }
     void panel?.webview.postMessage({ type: "state", state });
@@ -761,6 +772,7 @@ export function activate(context: vscode.ExtensionContext) {
                   enabled: false,
                   active: "A",
                   normalize: false,
+                  view: "side-by-side",
                   sides: { A: capture("Option A"), B: capture("Option B") },
                 };
                 comparison.enabled = true;
@@ -777,6 +789,8 @@ export function activate(context: vscode.ExtensionContext) {
                 comparison.sides[comparison.active].name = m.name.trim();
               if (comparison?.enabled && m.normalize !== undefined)
                 comparison.normalize = m.normalize;
+              if (comparison?.enabled && m.view !== undefined)
+                comparison.view = m.view;
               await context.globalState.update("comparison", comparison);
               render();
               await discover();
@@ -1008,8 +1022,9 @@ export function activate(context: vscode.ExtensionContext) {
                   byok = next;
                   await context.globalState.update("byokRates", byok);
                   const registryLabel =
-                    sources[results[0].suggestion!.registry as keyof typeof sources]
-                      ?.label ?? results[0].suggestion!.registry;
+                    sources[
+                      results[0].suggestion!.registry as keyof typeof sources
+                    ]?.label ?? results[0].suggestion!.registry;
                   message = `Applied ${registryLabel} registry rate (${results[0].suggestion!.registryDate}) to ${results.length} model${results.length === 1 ? "" : "s"}.`;
                 }
               }

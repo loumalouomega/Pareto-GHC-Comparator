@@ -3,15 +3,27 @@ import { buildGroups } from "./groups";
 import { recommend } from "./recommend";
 import { catalogDate } from "./catalog";
 import { projectScenario, scenarioDelta } from "./plans";
-import { normalizeCost, type NormalizedCost } from "./normalize";
+import {
+  normalizeCost,
+  costUnit,
+  normalizeReasons,
+  type NormalizedCost,
+} from "./normalize";
 import type {
   Options,
   AvailableModel,
   Benchmark,
   ByokStore,
   Row,
+  Source,
 } from "./types";
 export type Side = "A" | "B";
+/**
+ * "side-by-side" (default) keeps the two options' charts separate, as
+ * documented in AGENTS.md. "overlay" plots both options' rows on one chart
+ * instead; see `overlayResult`.
+ */
+export type ComparisonView = "side-by-side" | "overlay";
 export interface ComparisonOption {
   name: string;
   options: Options;
@@ -26,6 +38,8 @@ export interface ComparisonStore {
   active: Side;
   /** Show each side's selected cost as a USD equivalent; off by default. */
   normalize: boolean;
+  /** How the Compare tab renders both options; defaults to "side-by-side". */
+  view: ComparisonView;
   sides: Record<Side, ComparisonOption>;
 }
 export function loadComparison(raw: unknown): ComparisonStore | undefined {
@@ -88,6 +102,7 @@ export function loadComparison(raw: unknown): ComparisonStore | undefined {
       enabled: v.enabled,
       active: v.active,
       normalize: v.normalize === true,
+      view: v.view === "overlay" ? "overlay" : "side-by-side",
       sides,
     };
   } catch {
@@ -164,7 +179,11 @@ export type OptionResult = ReturnType<typeof optionResult> & {
 /** The selected row's cost as a USD equivalent, for panels and exports. */
 export function selectedCost(result: OptionResult): NormalizedCost {
   const row = result.rows.find((r) => r.id === result.selected);
-  return normalizeCost(row?.cost, result.options.billing, result.options.display.chart);
+  return normalizeCost(
+    row?.cost,
+    result.options.billing,
+    result.options.display.chart,
+  );
 }
 /**
  * Why a cost basis or workload difference blocks a native cost delta between
@@ -210,7 +229,9 @@ function usdDelta(a: OptionResult, b: OptionResult) {
   return {
     A,
     B,
-    delta: reason ? null : round((B as { usd: number }).usd - (A as { usd: number }).usd),
+    delta: reason
+      ? null
+      : round((B as { usd: number }).usd - (A as { usd: number }).usd),
     reason:
       reason ||
       "USD equivalent at the documented pay-as-you-go AI-credit rate; included allowance and plan fee not counted.",
@@ -243,4 +264,108 @@ export function comparisonDelta(
     // above; null unless the caller opts in via `normalize`.
     usd: normalize ? usdDelta(a, b) : null,
   };
+}
+/** One plotted model in the overlay chart, tagged with its originating side. */
+export interface OverlayRow {
+  side: Side;
+  source: Source;
+  id: string;
+  name: string;
+  baseModelId: string;
+  provider: string;
+  score: number;
+  /** Cost on the shared x axis: native cost when both sides share a billing
+   * unit, otherwise its USD equivalent (see `unit`/`converted`). */
+  x: number;
+  selected: boolean;
+  /** Frontier flag from the row's own option, unaffected by the other side. */
+  sideFrontier: boolean;
+  /** Frontier across both sides' plotted rows together; see `overlayResult`. */
+  combinedFrontier: boolean;
+}
+export interface OverlayResult {
+  /** Axis unit label: a shared native unit, or "USD equivalent" once the two
+   * sides' billing units differ and rows were converted. */
+  unit: string;
+  converted: boolean;
+  rows: OverlayRow[];
+  /** Rows dropped because their cost couldn't convert (legacy premium
+   * requests), per side. */
+  excluded: Record<Side, number>;
+  notices: string[];
+}
+/**
+ * Merges both comparison options' rows onto one chart's worth of data.
+ * When the sides bill the same way, costs stay native; otherwise every cost
+ * is converted to its USD equivalent (see normalize.ts) so the two tools sit
+ * on one axis, and rows that can't convert (legacy premium requests) are
+ * dropped and counted instead of silently mixed in.
+ *
+ * The combined frontier only makes sense when the same basisReason check
+ * used for the native cost delta passes (same cost basis, same workload for
+ * workload view, same legacy plan); converting units doesn't make different
+ * workloads comparable. When it doesn't pass, each side's own frontier
+ * (`sideFrontier`) is still available, but `combinedFrontier` is left false
+ * on every row and a notice explains why.
+ */
+export function overlayResult(a: OptionResult, b: OptionResult): OverlayResult {
+  const notices: string[] = [];
+  const excluded: Record<Side, number> = { A: 0, B: 0 };
+  const sameBilling = a.options.billing === b.options.billing;
+  const unit = sameBilling ? costUnit(a.options.billing) : "USD equivalent";
+  const options = { A: a, B: b };
+  const rows: OverlayRow[] = [];
+  for (const side of ["A", "B"] as const) {
+    const result = options[side];
+    for (const row of result.rows) {
+      if (row.cost === null || row.score === null) continue;
+      let x: number;
+      if (sameBilling) x = row.cost;
+      else {
+        const converted = normalizeCost(
+          row.cost,
+          result.options.billing,
+          result.options.display.chart,
+        );
+        if (converted.status === "unavailable") {
+          excluded[side]++;
+          continue;
+        }
+        x = converted.usd;
+      }
+      rows.push({
+        side,
+        source: result.options.source,
+        id: row.id,
+        name: row.name,
+        baseModelId: row.baseModelId,
+        provider: row.provider,
+        score: row.score,
+        x,
+        selected: row.id === result.selected,
+        sideFrontier: row.frontier,
+        combinedFrontier: false,
+      });
+    }
+  }
+  if (excluded.A || excluded.B)
+    notices.push(
+      `${normalizeReasons.legacy} Not plotted: ${excluded.A} from A, ${excluded.B} from B.`,
+    );
+  const reason = basisReason(a, b);
+  if (reason) {
+    notices.push(`Combined frontier unavailable: ${reason}`);
+    return { unit, converted: !sameBilling, rows, excluded, notices };
+  }
+  // Same dominance rule as markFrontier (compare.ts), applied across both
+  // sides' merged x/score instead of one option's rows.
+  for (const row of rows)
+    row.combinedFrontier = !rows.some(
+      (o) =>
+        o !== row &&
+        o.x <= row.x &&
+        o.score >= row.score &&
+        (o.x < row.x || o.score > row.score),
+    );
+  return { unit, converted: !sameBilling, rows, excluded, notices };
 }
