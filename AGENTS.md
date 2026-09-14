@@ -28,6 +28,7 @@ This repository builds a desktop VS Code extension that compares coding-assistan
 | `test/source.test.ts` | Mocked host test for source switching and stale-discovery guard. |
 | `test/webview.spec.ts`, `playwright.config.ts` | Chromium UI tests with synthetic data and a mocked host. |
 | `scripts/build.mjs` | Bundles host/webview code and copies styles into `dist/`. |
+| `scripts/cli-spike.ts` | Feasibility-spike evidence for `docs/cli-investigation.md`; runs the pure comparator/export modules outside VS Code from explicit snapshot/options files. Not shipped (`.vscodeignore` excludes it), not a product feature. |
 | `scripts/verify-release.mjs` | Checks a supplied tag name against manifest and lockfile versions. |
 | `scripts/capture-screenshot.mjs` | Captures a preview from a previously validated snapshot, without accepting an API key. |
 | `site/index.html` | Static landing page deployed to GitHub Pages from version tags. |
@@ -147,6 +148,14 @@ Cache freshness is 24 hours. There is at most one automatic download attempt per
 - CI builds on branch pushes, PRs, tags, and manual dispatch. Only version-tag pushes reach publication after checks pass. A separate Pages workflow deploys `site/` to GitHub Pages on version tags. `scripts/verify-release.mjs` requires a stable tag matching both manifests. A separate release job uploads the tested VSIX to GitHub Releases. The Marketplace publish job uses the tested VSIX artifact, verifies publisher access, uses `VSCE_PAT` when present, and otherwise attempts Entra credentials. `verify-pat` checks Reader access while publish needs write access, so a passing verification followed by a 401/403 fails with a PAT scope/organization/role checklist and leaves the GitHub Release usable. Credential provisioning is external to this repository.
 - `npm run package` is local packaging; installing, pushing release tags, and publishing have additional side effects. Follow the user's authorized scope and do not treat documentation work as a request to release.
 - Ship `CHANGELOG.md` in the VSIX for user-facing history. Keep `AGENTS.md` and the planning roadmap as repository documentation.
+
+### Feasibility decisions
+
+Three Tier 2 investigations closed 2026-09-14; each decision doc holds the evidence, capability matrix or contract, and rationale — treat these as the source of truth, not this summary:
+
+- `docs/model-switching-investigation.md`: no client offers a documented, verifiable, host-triggered "Apply model" action. VS Code's `workbench.action.chat.open` accepts an undocumented `modelSelector` argument (found only by reading the shipped workbench bundle, absent from `@types/vscode` and the commands reference) with no way to read back the applied selection — out of scope per the roadmap's own "do not edit undocumented configuration" rule. OpenCode/Codex/Claude Code/Gemini CLI/Aider take a model as a per-invocation flag or a config key the extension has no reason to start editing. The investigation also found `copy` (`src/extension.ts:867-872`) writes a display name, not an invocable id — tracked as the roadmap's "Copy invocable model identifier" task.
+- `docs/cli-investigation.md`: feasible, delivery deferred. Every module except `src/extension.ts` is already `vscode`-free; `scripts/cli-spike.ts` proves `compare`/`export`/`opencode` discovery run standalone from explicit snapshot/options files (validated with `validSnapshot`/`savedOptions`), with no VS Code global state or editor credential access. Copilot has no CLI/offline discovery equivalent (only `vscode.lm.selectChatModels`, which needs a running extension host), so a v1 CLI would be Copilot-incomplete by construction. Pair (A/B) export logic is still inline in `src/extension.ts:1102-1217` and would need extracting first.
+- `docs/measured-evaluations-investigation.md`: feasible as a bounded, Copilot-only v1 (via `vscode.lm`'s existing consent/`CancellationToken` primitives, with a client-side request cap since Copilot has no server-side spend cap). Direct-API providers (OpenAI/Anthropic/OpenRouter) offer real provider-enforced spend caps but need new credential storage and consent scope, so they're a later iteration. Not scheduled for delivery: real billed requests need an explicit go-ahead beyond the investigation itself.
 
 ### Roadmap completion audit safeguards
 
