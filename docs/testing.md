@@ -45,6 +45,20 @@ Match the check to the change type (see also the contributor guidance):
 
 Add regression coverage for meaningful new behavior and failure cases.
 
+## Feasibility spikes
+
+`scripts/cli-spike.ts` is evidence for `docs/cli-investigation.md`, not a gating check or a shipped feature (`.vscodeignore` excludes it from the VSIX). It has no CI job. To reproduce its evidence:
+
+```sh
+npx tsx scripts/cli-spike.ts --snapshot test/fixtures/cli/snapshot.json \
+  --options test/fixtures/cli/options.json --source codex --format csv
+npx esbuild scripts/cli-spike.ts --bundle --platform=node --format=esm \
+  --outfile=/tmp/cli-spike-bundle.mjs   # must succeed with no `vscode` external
+grep -c 'from "vscode"' /tmp/cli-spike-bundle.mjs   # must be 0
+```
+
+The measured-evaluations investigation (`docs/measured-evaluations-investigation.md`) proposes a test plan (mocked-provider request/spend caps, cancellation, consent, erase, and strict separation from benchmark/history data) for when that feature is scheduled; none of it is implemented, and no test in this repo sends a real inference request — the existing host-test guard's `sendRequest` throws "Inference must never be called" precisely to keep it that way.
+
 ## What automation does not prove
 
 Automated tests use fixtures, synthetic model data, and a mocked host. They do not prove real-account model discovery or real API access: a real smoke test requires Copilot sign-in and a user-provided Artificial Analysis key. Record missing prerequisites as unperformed validation, never as passing checks.
