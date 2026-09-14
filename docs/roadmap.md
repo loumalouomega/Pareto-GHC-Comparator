@@ -8,18 +8,10 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 - Tiers are ordered by recommended execution order. Each tier states its admission criterion; tasks within a tier follow dependency order.
 - Each task defines the current gap, deliverables, dependencies, and acceptance criteria. Reference tasks by name rather than their position in the list.
-- Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Remove empty tiers.
+- Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Remove empty tiers. This file tracks only candidate future work — it does not keep a running summary of what already shipped; `AGENTS.md` is the record of current verified behavior and `CHANGELOG.md` of what changed and when.
 - Link a corresponding GitHub issue when one exists. The issue holds the request and discussion; this file defines the proposed scope. Verify claims against the code before treating them as implemented behavior.
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Tier 2 investigations must establish feasibility before implementation is scheduled; listing them does not authorize inference, spending, account changes, or additional data collection.
-
-## Completed foundation
-
-Per-model chart controls, static known-model registries, comparator-depth features (freshness alerts, efficiency sort, snapshot/badge exports, benchmark drift, OpenCode BYOK rates), and personal-usage features (history, workload prefill, used-model filtering, budget suggestions, workspace breakdown) are implemented. Verified behavior is recorded in AGENTS.md and user-visible changes in CHANGELOG.md; the completion-audit evidence is in [Testing](testing.md#roadmap-completion-audit).
-
-The two-option comparison mode and usage-schema resilience are implemented. A shared A/B editor persists its pair independently, and usage storage version 2 records token provenance and completeness diagnostics. See AGENTS.md and [Testing](testing.md#tier-1-validation).
-
-OpenCode discovery is validated across Linux, macOS, and Windows, and both install-script and npm-global installs, in CI (`opencode-smoke` job); this found and fixed a Windows npm-install resolution gap. Real-account provider pricing (`opencode-go`/`openai`) is verified on Linux only, since CI runs credential-free and macOS/Windows there see only the Zen free tier. See [Testing](testing.md#tier-1-validation) for the evidence and remaining gaps, and `docs/opencode-integration.md` blocker B4.
 
 ## Tier 1 — Explicit assumptions and cost scenarios
 
