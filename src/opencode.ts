@@ -317,12 +317,25 @@ export function executableCandidates(
     Object.entries(env).find(([key]) =>
       platform === "win32" ? key.toLowerCase() === "path" : key === "PATH",
     )?.[1] ?? "";
+  const pathDirs = pathValue
+    .split(platform === "win32" ? ";" : ":")
+    .filter(Boolean)
+    .map((p) => p.replace(/^"|"$/g, ""));
+  // `npm install -g opencode-ai` on Windows only puts .cmd/.ps1 shims on PATH;
+  // the real opencode.exe (per that package's "bin" field) sits under
+  // <npm prefix>\node_modules\opencode-ai\bin\, i.e. directly under each PATH
+  // entry that is itself an npm prefix. Unix npm symlinks a real executable
+  // straight into the PATH bin dir, so no extra candidate is needed there.
+  const dirCandidates = (dir: string) =>
+    platform === "win32"
+      ? [
+          paths.join(dir, binary),
+          paths.join(dir, "node_modules", "opencode-ai", "bin", binary),
+        ]
+      : [paths.join(dir, binary)];
   return [
     ...new Set([
-      ...pathValue
-        .split(platform === "win32" ? ";" : ":")
-        .filter(Boolean)
-        .map((p) => paths.join(p.replace(/^"|"$/g, ""), binary)),
+      ...pathDirs.flatMap(dirCandidates),
       paths.join(home, ".opencode", "bin", binary),
     ]),
   ];
@@ -349,7 +362,7 @@ export function createOpenCodeRunner(
       }
     }
     throw new OpenCodeError(
-      "OpenCode CLI not found. Put the native opencode executable on PATH (opencode.exe on Windows) or in ~/.opencode/bin, then refresh. Script-only .cmd/.bat installations are unsupported; expose a native executable.",
+      "OpenCode CLI not found. Put the native opencode executable on PATH (opencode.exe on Windows, including npm global installs' node_modules\\opencode-ai\\bin\\opencode.exe) or in ~/.opencode/bin, then refresh. Script-only .cmd/.bat/.ps1 shims are unsupported; expose a native executable.",
       "missing",
     );
   };

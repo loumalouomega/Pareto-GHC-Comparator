@@ -19,7 +19,19 @@ test("native resolution uses platform path semantics and never invokes a shell",
     ),
     [
       "C:\\Program Files\\OpenCode\\opencode.exe",
+      "C:\\Program Files\\OpenCode\\node_modules\\opencode-ai\\bin\\opencode.exe",
       "D:\\tools\\opencode.exe",
+      "D:\\tools\\node_modules\\opencode-ai\\bin\\opencode.exe",
+      "C:\\Users\\Person\\.opencode\\bin\\opencode.exe",
+    ],
+  );
+  // `npm install -g opencode-ai` on Windows: PATH carries only the npm prefix
+  // (with .cmd/.ps1 shims), the real binary sits under node_modules\opencode-ai\bin.
+  assert.deepEqual(
+    executableCandidates("win32", { Path: "C:\\npm\\prefix" }, "C:\\Users\\Person"),
+    [
+      "C:\\npm\\prefix\\opencode.exe",
+      "C:\\npm\\prefix\\node_modules\\opencode-ai\\bin\\opencode.exe",
       "C:\\Users\\Person\\.opencode\\bin\\opencode.exe",
     ],
   );
