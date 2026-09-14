@@ -5,6 +5,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { validSnapshot } from "../src/api";
+import { planRegistryDate } from "../src/plans";
+
+/** Minimal RFC4180-style splitter (handles quoted fields with "" escapes),
+ * for asserting a CSV row's actual column count regardless of embedded commas. */
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "",
+    inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else inQuotes = false;
+      } else cur += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ",") {
+      out.push(cur);
+      cur = "";
+    } else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
 
 test("extension discovers Copilot models, serves cached data, validates messages, and keeps secrets host-side", async () => {
   const commands = new Map<string, () => unknown>();
@@ -251,6 +277,22 @@ test("extension discovers Copilot models, serves cached data, validates messages
   await receiver({ type: "unpin", id: "gpt-5-mini", benchmarkId: "other" });
   await receiver({ type: "mapping", id: "gpt-5-mini", benchmarkId: "aa" });
   assert.deepEqual(state.get("mappings"), { "gpt-5-mini": "aa" });
+  // Plan-aware spending scenario: an "options" message with a scenario
+  // persists and the served state carries scenario/scenarioPrefill/
+  // planRegistryDate; scenarioPrefill is null without a usage scan.
+  assert.equal(last().planRegistryDate, planRegistryDate);
+  assert.equal(last().scenario.status, "off");
+  assert.equal(last().scenarioPrefill, null);
+  await receiver({
+    type: "options",
+    options: {
+      ...last().options,
+      scenario: { ...last().options.scenario, planId: "copilot-pro", requestsLow: 5, requestsHigh: 5 },
+    },
+  });
+  assert.equal(last().options.scenario.planId, "copilot-pro");
+  assert.equal(last().scenario.status, "projected");
+  assert.equal((state.get("options") as any)?.scenario.planId, "copilot-pro");
   const byokRates = {
     "opencode:openai/gpt-5.4": {
       rates: { input: 1, read: 1, write: null, output: 1 },
@@ -357,10 +399,26 @@ test("extension discovers Copilot models, serves cached data, validates messages
     snapshotExport.options[1].rows,
     JSON.parse(JSON.stringify(last().comparison.sides.B.rows)),
   );
+  // Side B carries its own scenario in the pair snapshot; switching it to
+  // codex (USD billing) makes the copied "copilot-pro" scenario unavailable
+  // rather than silently approximated for a different source.
+  assert.equal(snapshotExport.options[1].planRegistryDate, planRegistryDate);
+  assert.equal(snapshotExport.options[1].scenario.status, "unavailable");
+  assert.match(snapshotExport.options[1].scenario.reason, /Copilot only/);
   await receiver({ type: "target", side: "B", action: { type: "exportCsv" } });
   assert.match(exports.at(-1)!, /option,assumptions/);
   assert.match(exports.at(-1)!, /\nA,/);
   assert.match(exports.at(-1)!, /\nB,/);
+  // The empty-option row (side A has 0 rows here) must pad to the same
+  // column count as a populated row (side B), not a stale hardcoded width.
+  {
+    const csvLines = exports.at(-1)!.trim().split("\n");
+    const header = splitCsvLine(csvLines[0]);
+    const rowA = splitCsvLine(csvLines.find((l) => l.startsWith("A,"))!);
+    const rowB = splitCsvLine(csvLines.find((l) => l.startsWith("B,"))!);
+    assert.equal(rowA.length, header.length);
+    assert.equal(rowB.length, header.length);
+  }
   await receiver({
     type: "target",
     side: "B",

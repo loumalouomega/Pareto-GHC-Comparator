@@ -46,6 +46,7 @@ import {
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
 import { defaults, type AvailableModel, type Benchmark } from "../src/types";
+import { parseScenario, planRegistryDate, projectScenario } from "../src/plans";
 import { staticEntries, staticModels, isStaticSource, staticPricingSources, staticRegistryDate } from "../src/staticSources";
 import { sources, defaultBilling, allowedBilling, isLiveSource } from "../src/sources";
 import { workload, loadProfiles, changeProfile } from "../src/profiles";
@@ -537,6 +538,19 @@ test("coverage: options migration edge cases", () => {
   assert.equal(fallback.display.scale, "auto");
   assert.equal(fallback.display.chart, "task");
   assert.equal(fallback.display.quadrant, true);
+  // Options saved before scenarios existed migrate to the default (off).
+  const { scenario: _drop, ...withoutScenario } = defaults;
+  assert.deepEqual(parseOptions(withoutScenario).scenario, defaults.scenario);
+  // A corrupted scenario never resets the rest of the saved options.
+  const corrupted = parseOptions({ ...defaults, scenario: "not an object", preset: "coding" });
+  assert.deepEqual(corrupted.scenario, defaults.scenario);
+  assert.equal(corrupted.preset, "coding");
+  const kept2 = parseOptions({
+    ...defaults,
+    scenario: { planId: "copilot-pro", requestsLow: 10, requestsHigh: 20 },
+  });
+  assert.equal(kept2.scenario.planId, "copilot-pro");
+  assert.equal(kept2.scenario.requestsLow, 10);
 });
 
 test("coverage: estimate legacy, free tier, long context, and missing entry", () => {
@@ -813,6 +827,18 @@ test("freshness alert stays silent for current dates and nudges when stale", () 
   assert.match(stale ?? "", /stale/);
   assert.match(stale ?? "", /docs\/catalog\.md/);
   assert.match(freshnessAlert("not-a-date", "2026-09-11") ?? "", /unavailable/);
+  // A stale plan registry date also triggers the nudge and appears in the message.
+  assert.equal(
+    freshnessAlert("2026-09-10", "2026-09-11", Date.parse("2026-09-20"), "2026-09-12"),
+    null,
+  );
+  const stalePlans = freshnessAlert(
+    "2026-09-10",
+    "2026-09-11",
+    Date.parse("2026-09-20"),
+    "2026-01-01",
+  );
+  assert.match(stalePlans ?? "", /plans 2026-01-01/);
 });
 
 test("snapshot and badge exports reflect displayed rows", () => {
@@ -838,6 +864,29 @@ test("snapshot and badge exports reflect displayed rows", () => {
   assert.equal(snapshot.rows[0].pricingStatus, rows[0].pricing?.status ?? null);
   assert.equal(snapshot.rows[0].pricingSource, rows[0].pricing?.source ?? null);
   assert.equal(snapshot.rows[0].pricingProvenance, null);
+  assert.equal(snapshot.planRegistryDate, null);
+  assert.equal(snapshot.scenario, null);
+  const scenario = projectScenario({
+    scenario: parseScenario({ planId: "copilot-pro", requestsLow: 1, requestsHigh: 1 }),
+    options: defaults,
+    row: rows[0],
+    rowOrigin: "selected",
+    catalogDate: "2026-09-10",
+  });
+  const withScenario = JSON.parse(
+    exportSnapshot(rows, defaults, recommended, {
+      source: "copilot",
+      preset: "general",
+      billing: "credits",
+      catalogDate: "2026-09-10",
+      staticRegistryDate: "2026-09-11",
+      planRegistryDate,
+      scenario,
+    }),
+  );
+  assert.equal(withScenario.planRegistryDate, planRegistryDate);
+  assert.equal(withScenario.scenario.status, scenario.status);
+  assert.match(withScenario.scenario.label, /not a bill/);
   const csv = exportCsv(rows, defaults, recommended);
   assert.match(csv, /pricing_status,pricing_source/);
   assert.ok(csv.includes(`,${rows[0].pricing?.status},${rows[0].pricing?.source}\n`));
@@ -1508,7 +1557,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

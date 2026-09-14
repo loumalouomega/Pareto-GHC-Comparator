@@ -33,6 +33,90 @@ export interface RecommendationSettings {
   budgets: Record<Billing, number>;
   scoreGap: number;
 }
+/** Local-history window a scenario's request range was prefilled from. */
+export interface ScenarioHistory {
+  from: string;
+  to: string;
+  activeDays: number;
+  calendarDays: number;
+  requests: number;
+}
+/**
+ * What-if monthly spending scenario inputs (see src/plans.ts). `planId`
+ * "none" means off. Custom plan fields are user input; null means not entered.
+ */
+export interface ScenarioSettings {
+  planId: string;
+  requestsLow: number;
+  requestsHigh: number;
+  origin: "user" | "history";
+  history: ScenarioHistory | null;
+  custom: {
+    monthlyFeeUsd: number | null;
+    allowance: number | null;
+    overageUsdPerUnit: number | null;
+  };
+}
+export type ScenarioProvenance =
+  | { kind: "provider"; date: string; sources: string[] }
+  | { kind: "user" }
+  | ({ kind: "history" } & ScenarioHistory)
+  | {
+      kind: "estimate";
+      basis: "task" | "workload" | "legacy-multiplier";
+      catalogDate: string;
+    };
+export type ScenarioBoundary = "within-base" | "within-flex" | "over-allowance";
+export interface ScenarioRange {
+  low: number;
+  high: number;
+}
+export type ScenarioResult =
+  | { status: "off" }
+  | {
+      status: "unavailable";
+      planId: string;
+      label: string;
+      reason: string;
+      notes: string[];
+      disclaimer: string;
+    }
+  | {
+      status: "projected";
+      plan: {
+        id: string;
+        label: string;
+        unit: "AI credits" | "premium requests";
+        registryDate: string | null;
+      };
+      row: {
+        id: string;
+        name: string;
+        origin: "selected" | "recommended" | "first-comparable";
+      };
+      perRequest: { value: number; provenance: ScenarioProvenance };
+      requests: ScenarioRange & { provenance: ScenarioProvenance };
+      usage: ScenarioRange;
+      allowance: ScenarioRange & {
+        provenance: ScenarioProvenance;
+        flexVariable: boolean;
+      };
+      overageUnits: ScenarioRange;
+      overageUsd: (ScenarioRange & { provenance: ScenarioProvenance }) | null;
+      feeUsd: {
+        value: number | null;
+        basis: "account" | "seat" | null;
+        provenance: ScenarioProvenance | null;
+      };
+      totalUsd: ScenarioRange | null;
+      boundary: { low: ScenarioBoundary; high: ScenarioBoundary };
+      notes: string[];
+      disclaimer: string;
+    };
+/** Request range derived from local usage history, applied only on demand. */
+export interface ScenarioPrefill extends ScenarioRange, ScenarioHistory {
+  undated: number;
+}
 export interface Options {
   source: Source;
   preset: Preset;
@@ -44,6 +128,7 @@ export interface Options {
   recommendation: RecommendationSettings;
   display: DisplaySettings;
   freeOnly: boolean;
+  scenario: ScenarioSettings;
 }
 export const defaults: Options = {
   source: "copilot",
@@ -67,6 +152,14 @@ export const defaults: Options = {
   },
   freeOnly: false,
   onlyMine: false,
+  scenario: {
+    planId: "none",
+    requestsLow: 0,
+    requestsHigh: 0,
+    origin: "user",
+    history: null,
+    custom: { monthlyFeeUsd: null, allowance: null, overageUsdPerUnit: null },
+  },
 };
 export interface Benchmark {
   id: string;
@@ -439,6 +532,9 @@ export interface ViewState {
   hasKey: boolean;
   catalogDate: string;
   staticRegistryDate: string;
+  planRegistryDate: string;
+  scenario: ScenarioResult;
+  scenarioPrefill: ScenarioPrefill | null;
   recommendation: RecommendationResult;
   profiles: ProfileSummary[];
   activeProfileId?: string;

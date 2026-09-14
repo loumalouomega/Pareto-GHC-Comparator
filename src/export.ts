@@ -1,4 +1,4 @@
-import type { Options, Row } from "./types";
+import type { Options, Row, ScenarioResult } from "./types";
 export interface SnapshotMeta {
   source: Options["source"];
   preset: Options["preset"];
@@ -7,6 +7,19 @@ export interface SnapshotMeta {
   staticRegistryDate: string;
   version?: string;
   fetchedAt?: number;
+  planRegistryDate?: string;
+  scenario?: ScenarioResult;
+}
+
+/**
+ * Wraps a monthly spending scenario for export with an explicit label, so it
+ * never reads as a bill or measured cost alongside the comparison rows.
+ */
+export function scenarioExport(result: ScenarioResult) {
+  return {
+    label: "Estimated monthly spending scenario (projection, not a bill)",
+    ...result,
+  };
 }
 
 function cell(value: string): string {
@@ -89,8 +102,10 @@ export function exportSnapshot(
         billing: meta.billing,
         catalogDate: meta.catalogDate,
         staticRegistryDate: meta.staticRegistryDate,
+        planRegistryDate: meta.planRegistryDate ?? null,
         benchmarkVersion: meta.version ?? null,
         benchmarkFetchedAt: meta.fetchedAt ?? null,
+        scenario: meta.scenario ? scenarioExport(meta.scenario) : null,
         rows: rows.map((r) => ({
           id: r.id,
           modelId: r.modelId,

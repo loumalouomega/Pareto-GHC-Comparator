@@ -3,13 +3,15 @@ export function freshnessAlert(
   catalogDate: string,
   staticRegistryDate: string,
   now: number = Date.now(),
+  planRegistryDate?: string,
 ): string | null {
-  const catalogTime = Date.parse(catalogDate),
-    registryTime = Date.parse(staticRegistryDate);
-  if (!Number.isFinite(catalogTime) || !Number.isFinite(registryTime))
+  const dates = [catalogDate, staticRegistryDate, ...(planRegistryDate === undefined ? [] : [planRegistryDate])];
+  const times = dates.map((d) => Date.parse(d));
+  if (times.some((t) => !Number.isFinite(t)))
     return "Pricing dates are unavailable; rates may be stale (see docs/catalog.md).";
-  const oldest = Math.min(catalogTime, registryTime);
+  const oldest = Math.min(...times);
   if (now - oldest <= staleAfterMs) return null;
   const days = Math.round((now - oldest) / 86400000);
-  return `Pricing is ${days} days old (catalog ${catalogDate}, registries ${staticRegistryDate}); rates may be stale (see docs/catalog.md).`;
+  const plans = planRegistryDate === undefined ? "" : `, plans ${planRegistryDate}`;
+  return `Pricing is ${days} days old (catalog ${catalogDate}, registries ${staticRegistryDate}${plans}); rates may be stale (see docs/catalog.md).`;
 }

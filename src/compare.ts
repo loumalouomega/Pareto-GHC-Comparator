@@ -2,6 +2,7 @@ import { catalog } from "./catalog";
 import { opencodeBenchmarkFamilies } from "./opencode";
 import { staticEntries, isStaticSource } from "./staticSources";
 import { allowedBilling } from "./sources";
+import { parseScenario } from "./plans";
 import {
   defaults,
   type AvailableModel,
@@ -119,6 +120,9 @@ export function parseOptions(value: unknown): Options {
       write: v.tokens.write,
       output: v.tokens.output,
     },
+    // Tolerant on its own: never throws, so a corrupted scenario can't reset
+    // the rest of a saved options/profile/comparison-side object.
+    scenario: parseScenario(v.scenario),
   };
 }
 /** Tolerant merge for pre-source settings; still validated by parseOptions. */

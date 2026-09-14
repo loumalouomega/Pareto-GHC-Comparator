@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
 import { compare, registryRateFor } from "../src/compare";
 import { mergeByokForm, parseByokFormStore } from "../src/byok";
+import { historyScenarioPrefill, planRegistryDate, projectScenario } from "../src/plans";
 import { buildGroups } from "../src/groups";
 import { recommend } from "../src/recommend";
 import { changeProfile, profileModified } from "../src/profiles";
@@ -144,6 +145,9 @@ for (const theme of ["light", "dark", "high-contrast"])
       fetchedAt: Date.now(),
       catalogDate: "2026-09-10",
       staticRegistryDate: "2026-09-11",
+      planRegistryDate,
+      scenario: { status: "off" },
+      scenarioPrefill: null,
       drift: {},
       byok: {},
       usage: null,
@@ -302,6 +306,28 @@ for (const theme of ["light", "dark", "high-contrast"])
       );
       state.groups = buildGroups(listed as never, [...excluded], state.rows, structure);
       state.recommendation = recommend(state.rows, state.options);
+      {
+        const selectedRow = state.rows.find((r) => r.id === state.selected);
+        const recommendedRow = state.recommendation.modelIds[0]
+          ? state.rows.find((r) => r.id === state.recommendation.modelIds[0])
+          : undefined;
+        const firstComparableRow = state.rows.find(
+          (r) => r.cost !== null && r.score !== null,
+        );
+        const rowOrigin = selectedRow
+          ? "selected"
+          : recommendedRow
+            ? "recommended"
+            : "first-comparable";
+        state.scenario = projectScenario({
+          scenario: state.options.scenario,
+          options: state.options,
+          row: selectedRow ?? recommendedRow ?? firstComparableRow,
+          rowOrigin,
+          catalogDate: state.catalogDate,
+        });
+      }
+      state.scenarioPrefill = historyScenarioPrefill(state.usage);
       state.profiles = profiles.items.map(({ id, name }) => ({ id, name }));
       state.activeProfileId = profiles.activeId;
       state.profileModified = profileModified(profiles, state.options);
@@ -717,6 +743,59 @@ for (const theme of ["light", "dark", "high-contrast"])
     expect((await page.locator(".check-leaf-row").allTextContents()).length).toBe(selectionLeaves.length);
     await page.locator("#only-mine").uncheck();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
+
+    // Monthly spending scenario: plan-aware what-if projection, kept
+    // separate from local history and per-task/workload estimates.
+    await page
+      .getByRole("button", { name: "GPT-5.4", exact: true })
+      .click();
+    await expect(
+      page.locator('#scenario-plan option[value="copilot-free"]'),
+    ).toHaveJSProperty("disabled", true);
+    await page.locator("#scenario-plan").selectOption("copilot-pro");
+    await page.locator("#scenario-requests-low").fill("100");
+    await page.locator("#scenario-requests-high").fill("400");
+    await expect(page.locator("#scenario-result")).toContainText(
+      "Plan: Copilot Pro",
+    );
+    await expect(page.locator("#scenario-result")).toContainText(
+      "Requests / month: 100–400 · your input",
+    );
+    await expect(page.locator("#scenario-result")).toContainText(
+      "Estimated monthly total:",
+    );
+    await expect(page.locator("#scenario-notes")).toContainText(
+      "not a bill",
+    );
+    // A Custom plan reveals its fields immediately, without a round trip.
+    await page.locator("#scenario-plan").selectOption("custom");
+    await expect(page.locator("#scenario-custom")).toBeVisible();
+    await expect(page.locator("#scenario-result")).toContainText(
+      "Enter the custom plan",
+    );
+    await page.locator("#scenario-custom-fee").fill("5");
+    await page.locator("#scenario-custom-allowance").fill("200");
+    await page.locator("#scenario-custom-overage").fill("0.02");
+    await expect(page.locator("#scenario-result")).toContainText(
+      "your input",
+    );
+    // History prefill: fills the requests inputs and labels their origin;
+    // editing them by hand afterward drops the history label again.
+    await page.locator("#scenario-plan").selectOption("copilot-pro");
+    await page.locator("#scenario-prefill").click();
+    await expect(page.locator("#scenario-prefill-note")).toContainText(
+      "Observed history:",
+    );
+    await expect(page.locator("#scenario-requests-low")).not.toHaveValue("100");
+    await expect(page.locator("#scenario-result")).toContainText(
+      "observed history",
+    );
+    await page.locator("#scenario-requests-low").fill("1");
+    await expect(page.locator("#scenario-result")).toContainText(
+      "· your input",
+    );
+    await page.locator("#scenario-plan").selectOption("none");
+
     await page.locator("#usage-prefill").click();
     await expect(page.locator("#input")).toHaveValue("150");
     await expect(page.locator("#output")).toHaveValue("75");
@@ -735,12 +814,31 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator('.comparison-panel').nth(1)).toContainText('Other provider');
     await expect(page.locator('#comparison-delta')).toContainText('Different billing units');
     await expect(page.locator('.comparison-panel').first()).toContainText('GitHub Copilot');
+    // Each comparison option carries its own spending scenario, shown per
+    // panel, with a separate delta sentence that never bounds the difference.
+    await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: off');
+    await page.locator('#comparison-active').selectOption('A');
+    await page.locator('#scenario-plan').selectOption('copilot-pro');
+    await page.locator('#scenario-requests-low').fill('10');
+    await page.locator('#scenario-requests-high').fill('10');
+    await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: Copilot Pro');
+    await expect(page.locator('#comparison-delta')).toContainText('Monthly scenario');
+    await expect(page.locator('#comparison-delta')).toContainText('Scenario off or unavailable on at least one option.');
+    await page.locator('#scenario-plan').selectOption('none');
+    // Wait for the debounced round trip to settle (an assertion, not a raw
+    // timeout) before the comparison-enabled toggle below, so a late state
+    // update can't land between that click and Playwright's next sample.
+    await expect(page.locator('.comparison-panel').first()).toContainText('Spending scenario: off');
     await page.locator('#export-png').click();
     expect(messages.some(m=>m.type==='target' && (m.action as any)?.type==='exportPng')).toBeTruthy();
     await page.setViewportSize({width:700,height:1000});
     const a=await page.locator('.comparison-panel').first().boundingBox(),b=await page.locator('.comparison-panel').nth(1).boundingBox();
     expect(b!.y).toBeGreaterThan(a!.y+a!.height);
-    await page.locator('#comparison-active').selectOption('A');
+    // Side A is already active (selected above for the scenario checks);
+    // re-selecting the same value here would redundantly resend a
+    // "comparison" message right before the toggle below, racing its
+    // render against this click (selectOption dispatches change events
+    // even for a same-value reselect, unlike a real user re-picking it).
     await expect(page.locator('#source')).toHaveValue('copilot');
     await page.locator('#comparison-enabled').uncheck();
     await expect(page.locator('#comparison-panels')).toBeHidden();

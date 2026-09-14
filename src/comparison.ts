@@ -1,6 +1,8 @@
 import { compare, parseOptions, sortRowsByEfficiency } from "./compare";
 import { buildGroups } from "./groups";
 import { recommend } from "./recommend";
+import { catalogDate } from "./catalog";
+import { projectScenario, scenarioDelta } from "./plans";
 import type {
   Options,
   AvailableModel,
@@ -113,10 +115,20 @@ export function optionResult(
       ? sortRowsByEfficiency(unsorted)
       : unsorted;
   const recommendation = recommend(rows, options);
-  const selected =
-    rows.find((r) => r.id === option.selected)?.id ??
-    recommendation.modelIds[0] ??
-    rows.find((r) => r.cost !== null && r.score !== null)?.id;
+  const selectedRow = rows.find((r) => r.id === option.selected);
+  const recommendedRow = recommendation.modelIds[0]
+    ? rows.find((r) => r.id === recommendation.modelIds[0])
+    : undefined;
+  const firstComparableRow = rows.find(
+    (r) => r.cost !== null && r.score !== null,
+  );
+  const rowOrigin: "selected" | "recommended" | "first-comparable" = selectedRow
+    ? "selected"
+    : recommendedRow
+      ? "recommended"
+      : "first-comparable";
+  const row = selectedRow ?? recommendedRow ?? firstComparableRow;
+  const selected = row?.id;
   return {
     name: option.name,
     options,
@@ -128,6 +140,13 @@ export function optionResult(
       ...available.map((a) => a.id),
       ...structure.map((r) => r.id),
     ],
+    scenario: projectScenario({
+      scenario: options.scenario,
+      options,
+      row,
+      rowOrigin,
+      catalogDate,
+    }),
   };
 }
 export type OptionResult = ReturnType<typeof optionResult> & {
@@ -158,5 +177,8 @@ export function comparisonDelta(a: OptionResult, b: OptionResult) {
       reason ||
       (x?.cost == null || y?.cost == null ? "Selected cost unavailable." : ""),
     direction: "B minus A",
+    // Independent of the selected-row cost delta above: the monthly spending
+    // scenario compares each option's own plan/allowance, not model cost.
+    scenario: scenarioDelta(a.scenario, b.scenario),
   };
 }

@@ -29,3 +29,39 @@ A suggestion requires the OpenCode provider (e.g. `openai`) to be in an explicit
 **Cost per task** (the default chart view) reuses the formula above with a fixed illustrative mix of 1,000 input and 1,000 output tokens instead of the editable workload, so models stay comparable without depending on workload inputs. It is a documented proxy for the Artificial Analysis "Cost per Intelligence Index Task" concept, not the official evaluation weights. Context-limit exclusion does not apply to the fixed mix; legacy billing shows the same per-interaction multiplier in both views.
 
 These figures describe estimated usage, not your account bill or measured task cost. No inference request is sent by this extension.
+
+## Monthly spending scenarios
+
+The **Monthly spending scenario** card is a separate, optional what-if projection: fee + expected usage against a plan's documented allowance and overage rate. It is independent of the estimates above — it never sets a price or a benchmark mapping, and its output is a projection, never a bill.
+
+**Plan registry**, verified 2026-09-14 against GitHub's documentation ([plans](https://docs.github.com/en/copilot/get-started/plans), [individual billing](https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing), [models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing), [flex allotments](https://github.blog/news-insights/company-news/github-copilot-individual-plans-introducing-flex-allotments-in-pro-and-pro-and-a-new-max-plan/), [legacy premium requests](https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/copilot-requests)):
+
+| Plan | Fee | Base credits/mo | Flex credits/mo |
+| --- | --- | --- | --- |
+| Copilot Pro | $10 | 1,000 | 500 |
+| Copilot Pro+ | $39 | 3,900 | 3,100 |
+| Copilot Max | $100 | 10,000 | 10,000 |
+| Copilot Business | $19/seat | 1,900 per user (pooled) | — |
+| Copilot Enterprise | $39/seat | 3,900 per user (pooled) | — |
+| Legacy annual Pro / Pro+ | not documented | 300 / 1,500 premium requests | — |
+
+Base credits are used first, then flex; flex is documented as variable, base as fixed. Credits reset 00:00 UTC on the 1st of each month and do not roll over. Usage beyond the allowance is billed only when a budget for additional usage is set (AI credits at $0.01 each, legacy premium requests at $0.04 each); without a budget, that usage is unavailable rather than billed. Code completions and next edit suggestions never consume AI credits. **Copilot Free, Copilot Student, and OpenCode Go stay unavailable**: their allowances (Free/Student) or their per-model 5-hour/weekly/monthly dollar limits (OpenCode Go) are not a monthly-allowance shape this projection models. Every other source is unavailable with "no verified billing rules" rather than approximated from Copilot's rules. A **Custom plan** lets you enter your own fee, allowance, and overage rate for AI credits or legacy billing; those values are always labelled as your own input, never verified.
+
+**Arithmetic**, per plan and per month:
+
+```
+usage        = requests × per-request cost (the model's displayed cost — task, workload, or legacy basis)
+allowance    = [base, base + flex]                     (flex-less plans: base = base)
+overage_low  = max(0, usage_low  − (base + flex))       (best case: full allowance available)
+overage_high = max(0, usage_high − base)                (worst case: only base is guaranteed, since flex may change)
+overage_usd  = overage_units × overage rate             (only if the plan documents one)
+total_usd    = fee + overage_usd                        (fee counted once, never scaled by requests; null if the fee is undocumented)
+```
+
+Every quantity is rounded to 1e-6 before a boundary comparison, so floating-point noise never flips a boundary; landing exactly on a boundary counts as within it. Because `overage_high` is computed against base only, it can be nonzero even while the boundary reads "within flex" — that is the pessimistic figure assuming flex isn't available, shown alongside the boundary rather than instead of it.
+
+**Row and requests.** The projection uses the model row you have selected; with none selected it falls back to the recommended row, then the first comparable row, and says which it used. Requests/month are either typed directly (low/high) or filled from local usage history via **Use my request history** — a window in `days` from your last scan, spread over active days (high) or the full calendar span (low), and always labelled "observed history" with its window; editing the fields by hand afterward returns to "your input". History requests span every discovered Copilot model but are priced as if they all used the selected row — a deliberate simplification, noted in the card.
+
+**Comparison mode**: each A/B option keeps its own plan and requests, so switching one option's source or billing can make its scenario unavailable (never silently converted). The delta between options is a separate sentence from the selected-row cost delta, comparing only the range ends (low−low, high−high) and only when both options project the same unit with a documented fee — otherwise it names the reason (off, unavailable, different units, or an undocumented fee) instead of a number. Scenarios are saved with workload profiles like every other workload setting.
+
+**Exports.** CSV and snapshot exports include the plan registry date and a `scenario` block labelled "Estimated monthly spending scenario (projection, not a bill)", with the same field-by-field provenance shown in the UI (provider-verified with its date and sources, your own input, observed history with its window, or a displayed estimate).

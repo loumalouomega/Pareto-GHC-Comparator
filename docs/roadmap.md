@@ -17,18 +17,11 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 Admission criterion: extend comparison using documented or user-supplied inputs, with visible provenance and uncertainty.
 
-### Plan-aware spending scenarios — L
-
-- **Gap:** Token estimates and history percentiles do not model subscription fees, included allowances, remaining balances, or negotiated rates.
-- **Deliverables:** Optional what-if inputs for expected usage, plan fees, allowances, and overage rates. Report estimated ranges and assumptions separately from observed history and per-task token costs; label user inputs versus provider-verified data.
-- **Dependencies:** Implemented option-comparison mode; documented billing rules for each supported plan. Account balance integration is a separate investigation, not a prerequisite for manual scenarios.
-- **Acceptance:** Cover zero usage, allowance boundaries, missing plan data, and rate changes. Do not double-count subscriptions or describe projections as actual bills or measured task-completion costs. Unsupported plans remain unavailable rather than approximated from another provider.
-
 ### Comparable cost normalization — M
 
 - **Gap:** Credits, premium requests, and USD cannot currently share a meaningful cost frontier.
 - **Deliverables:** An optional common-currency estimate only where a documented conversion or explicit plan scenario supplies the needed assumptions. Retain original units and show conversion provenance, date, and allowance treatment.
-- **Dependencies:** Implemented option-comparison mode; Plan-aware spending scenarios for allowance-dependent conversions.
+- **Dependencies:** Implemented option-comparison mode; implemented monthly spending scenarios (`projectScenario` in `src/plans.ts`) for allowance-dependent conversions.
 - **Acceptance:** No implicit universal credit/request exchange rate. Missing or incompatible assumptions keep options in separate panels/frontiers. Test conversion arithmetic and allowance boundaries, and preserve original and converted values in exports.
 
 ## Tier 2 — Feasibility investigations

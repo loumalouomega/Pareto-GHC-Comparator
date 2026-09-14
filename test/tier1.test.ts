@@ -142,6 +142,45 @@ test("comparison result keeps structure independent and explains deltas", () => 
     a.selected,
   );
 });
+test("each comparison side projects its own spending scenario, defaulting off", () => {
+  const available = [
+    { id: "gpt-5-mini", family: "gpt-5-mini", name: "GPT-5 mini", maxInputTokens: 100000 },
+  ];
+  const benchmarks = [
+    {
+      id: "aa",
+      slug: "gpt-5-mini",
+      name: "GPT-5 mini",
+      provider: "OpenAI",
+      scores: { general: 30, coding: 40, agentic: 20 },
+    },
+  ];
+  const a = option();
+  const off = optionResult(a, available, benchmarks, {}, new Map());
+  assert.equal(off.scenario.status, "off");
+  assert.equal(comparisonDelta(off, off).scenario.reason, "Scenario off or unavailable on at least one option.");
+
+  const withScenario = option();
+  withScenario.options.scenario = {
+    ...defaults.scenario,
+    planId: "copilot-pro",
+    requestsLow: 10,
+    requestsHigh: 10,
+  };
+  const projected = optionResult(withScenario, available, benchmarks, {}, new Map());
+  assert.equal(projected.scenario.status, "projected");
+  if (projected.scenario.status === "projected") {
+    // No selected row, so it falls back to the recommended row and notes it.
+    assert.equal(projected.scenario.row.origin, "recommended");
+    assert.ok(projected.scenario.notes.some((n) => /recommended model/.test(n)));
+  }
+  const other = option();
+  other.options.scenario = { ...defaults.scenario, planId: "copilot-max", requestsLow: 10, requestsHigh: 10 };
+  const projectedOther = optionResult(other, available, benchmarks, {}, new Map());
+  const delta = comparisonDelta(projected, projectedOther);
+  assert.equal(typeof delta.scenario.low, "number");
+  assert.match(delta.scenario.reason, /not a bound/);
+});
 test("comparison messages reject malformed targets and nested envelopes", () => {
   assert.deepEqual(
     parseMessage({

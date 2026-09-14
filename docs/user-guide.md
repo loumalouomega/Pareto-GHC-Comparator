@@ -13,7 +13,7 @@ Exact ties remain recommended together. Star-shaped chart points and **★ Recom
 
 ## Saved workload profiles
 
-Save named configurations across projects using the **Saved workload** controls. **Save as** creates and applies a profile from the current settings. Select an existing profile and click **Apply** to restore its source, task, billing mode, annual plan, token counts, recommendation mode, all three budgets, and score gap.
+Save named configurations across projects using the **Saved workload** controls. **Save as** creates and applies a profile from the current settings. Select an existing profile and click **Apply** to restore its source, task, billing mode, annual plan, token counts, recommendation mode, all three budgets, score gap, and monthly spending scenario.
 
 Selecting **Custom** detaches the current workload from a saved profile without deleting it. Changing an applied profile marks it **Modified (not saved)**. **Update** explicitly overwrites that profile with the current workload. **Rename** uses the text in **Profile name**; **Delete** removes the selected profile while retaining the current workload. Names must be 1–60 characters after trimming and unique without regard to case.
 
@@ -55,8 +55,20 @@ Three actions build on a scan. **Use my average** (in the token workload fieldse
 
 The **By workspace** table lists up to 20 workspaces with request, token, and premium totals, labeled by folder basename (multi-root sessions join names with `; `); **Show full paths** reveals absolute paths, kept as tooltips otherwise. Sessions whose workspace cannot be resolved show the storage id with an unmapped-workspace note. Paths never leave the machine.
 
+## Monthly spending scenario
+
+The **Monthly spending scenario** card is a separate what-if projection — fee plus expected usage against a plan's documented allowance and overage rate — kept apart from the cost estimates in the chart and table, and from local usage history. It is off by default (**Off**).
+
+Choose a **Plan** (Copilot Pro, Pro+, Max, Business, Enterprise, the legacy annual Pro/Pro+ plan, or **Custom plan**) and enter **Expected requests / month** as a low–high range. Plans that don't apply to the current source or billing mode are listed but disabled, with the reason shown as a tooltip and under the plan select; an unrecognized saved plan id is kept and shown as unavailable rather than silently swapped for another plan. **Custom plan** reveals fields for your own monthly fee, included allowance, and overage rate — always labelled as your own input, never verified.
+
+**Use my request history** fills the range from your last local usage scan (needs a scan first): the high estimate is requests per active day × 30, the low estimate is requests over the full calendar span × 30, both labelled "observed history" with the window and how many undated requests were excluded. History requests span every discovered Copilot model but are priced as if they all used the currently selected row; editing the requests fields by hand afterward returns to "your input".
+
+The result shows, for each field, its value and where it came from — provider-verified (with the plan registry date), your input, observed history, or the displayed per-request estimate (and which chart basis it uses) — plus requests, monthly usage, the allowance range, how far beyond it you'd be (in the plan's unit, and in USD only if a budget would allow it), the plan fee, an estimated monthly total range, and a boundary indicator (within base, within flex, or over the allowance) for each end of the range. A plan with an undocumented fee (the legacy annual plan) shows no total, with a note pointing to Custom plan. Every result carries a disclaimer that it is a projection, not a bill.
+
+In **Compare options**, each option keeps its own plan and requests; switching an option's source or billing can make its scenario unavailable rather than silently converted. Each comparison panel shows its own scenario line, and the delta line compares only the range ends between options with the same unit and a documented fee — otherwise it names why (off, unavailable, different units, or an undocumented fee).
+
 ## Exports
 
-**Export CSV** writes the displayed rows with recommendation markers. **Export snapshot JSON** writes the same rows plus the source, task, billing mode, catalog and registry dates, and benchmark snapshot version, with a note that figures are illustrative rather than measured cost or a bill. **Export badge JSON** writes a shields-compatible payload naming the highest-scoring displayed model. **Export chart PNG** saves the current chart image. All exports go through the save dialog and reflect the current filter, exclusions, and sort.
+**Export CSV** writes the displayed rows with recommendation markers. **Export snapshot JSON** writes the same rows plus the source, task, billing mode, catalog, registry and plan-registry dates, benchmark snapshot version, and the current monthly spending scenario (labelled as a projection, never a bill), with a note that figures are illustrative rather than measured cost or a bill. **Export badge JSON** writes a shields-compatible payload naming the highest-scoring displayed model. **Export chart PNG** saves the current chart image. All exports go through the save dialog and reflect the current filter, exclusions, and sort.
 
 Each preset uses its published Artificial Analysis index directly; scores are not invented or blended into a custom ranking. The tested reasoning variant appears in the details. Benchmark scores are a proxy for task suitability, not a guarantee of performance with Copilot's configuration. Comparing a fixed token workload does not estimate how many tokens different models need to complete the same task.

@@ -15,10 +15,10 @@ export default defineConfig({
       exclude: ["src/extension.ts", "node_modules", "dist"],
       // Ratcheted at measured coverage: any drop fails `npm run test:coverage`.
       thresholds: {
-        lines: 98,
-        functions: 98.8,
-        branches: 92.5,
-        statements: 96.8,
+        lines: 98.2,
+        functions: 99.3,
+        branches: 93,
+        statements: 97.2,
       },
     },
   },

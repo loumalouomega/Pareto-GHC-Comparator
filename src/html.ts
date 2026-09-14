@@ -66,6 +66,24 @@ export function html(
  <label id="budget-label"><span id="budget-unit">Maximum AI credits</span><input id="budget" type="number" required min="0" max="100000000" step="any" value="1"></label>
  <label id="gap-label" hidden>Allowed score gap (index points)<input id="score-gap" type="number" required min="0" max="100000000" step="any" value="3"></label>
   </div><p id="recommendation-result" role="status" aria-live="polite"></p><p id="budget-suggestion" class="hint" role="status"></p><button id="budget-apply" class="secondary" hidden>Use suggested budget</button><p class="hint">Recommendations use only the displayed, comparable models. Star markers identify recommendations; the dotted line remains the Pareto frontier.</p></section>
+  <section class="recommendation-card" aria-labelledby="scenario-title" id="scenario-card">
+  <h2 id="scenario-title">Monthly spending scenario</h2>
+  <p class="hint">What-if projection from your inputs and published plan rules — separate from local history and per-task/workload estimates, and never a bill.</p>
+  <div class="controls">
+  <label>Plan<select id="scenario-plan"><option value="none">Off</option></select></label>
+  <label>Expected requests / month (low)<input id="scenario-requests-low" type="number" min="0" max="10000000" step="1" value="0"></label>
+  <label>Expected requests / month (high)<input id="scenario-requests-high" type="number" min="0" max="10000000" step="1" value="0"></label>
+  <button id="scenario-prefill" class="secondary">Use my request history</button> <span id="scenario-prefill-note" class="hint" role="status"></span>
+  </div>
+  <fieldset id="scenario-custom" hidden><legend>Custom plan · your own figures, not verified</legend>
+  <label>Monthly fee (USD)<input id="scenario-custom-fee" type="number" min="0" max="1000000" step="any"></label>
+  <label><span id="scenario-custom-allowance-unit">Included AI credits / month</span><input id="scenario-custom-allowance" type="number" min="0" max="1000000000" step="any"></label>
+  <label><span id="scenario-custom-overage-unit">USD per extra AI credit</span><input id="scenario-custom-overage" type="number" min="0" max="1000000" step="any"></label>
+  </fieldset>
+  <p id="scenario-plan-note" class="hint" role="status"></p>
+  <div id="scenario-result" role="status" aria-live="polite"></div>
+  <ul id="scenario-notes" class="hint"></ul>
+  </section>
   <section class="recommendation-card" aria-labelledby="usage-title" id="usage-card">
   <h2 id="usage-title">Local Copilot usage</h2><div class="controls">
   <button id="usage-scan" class="secondary">Scan local usage</button>

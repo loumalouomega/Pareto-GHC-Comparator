@@ -5,6 +5,8 @@ import type {
   ChecklistFamily,
   Options,
   Row,
+  ScenarioHistory,
+  ScenarioProvenance,
   ViewState,
   HostMessage,
 } from "../src/types";
@@ -12,6 +14,7 @@ import { sources } from "../src/sources";
 import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert } from "../src/freshness";
+import { plansFor } from "../src/plans";
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 const vscode = acquireVsCodeApi();
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -102,6 +105,11 @@ let byokDraft: Record<
   { input: string; read: string; write: string; output: string }
 > = {};
 let usageFullPaths = false;
+// Mirrors Options["scenario"].origin/history for the pending draft: reset to
+// "user" on any manual edit, set to "history" only by the prefill button.
+let scenarioOrigin: "user" | "history" = "user";
+let scenarioHistory: ScenarioHistory | null = null;
+let scenarioPlanDraft = "none";
 const collapsedFamilies = new Set<string>();
 const collapsedModels = new Set<string>();
 const mappingLabels = {
@@ -1062,6 +1070,128 @@ function renderByok() {
     }
   }
 }
+function provenanceLabel(p: ScenarioProvenance): string {
+  switch (p.kind) {
+    case "provider":
+      return `provider-verified · plans dated ${p.date}`;
+    case "user":
+      return "your input";
+    case "history":
+      return `observed history (${p.from} – ${p.to} UTC)`;
+    case "estimate":
+      return `displayed ${p.basis === "task" ? "task" : p.basis === "workload" ? "workload" : "legacy"} estimate · catalog ${p.catalogDate}`;
+  }
+}
+const scenarioRange = (r: { low: number; high: number }) =>
+  r.low === r.high ? format(r.low) : `${format(r.low)}–${format(r.high)}`;
+/**
+ * Renders the "Monthly spending scenario" card: a what-if projection from
+ * plan.ts, kept visibly separate from local history and per-task/workload
+ * estimates, with every figure labelled by its provenance. Never a bill.
+ */
+function renderScenario() {
+  if (!state) return;
+  const planSelect = el<HTMLSelectElement>("scenario-plan");
+  const choices = plansFor(state.options.source, state.options.billing);
+  planSelect.replaceChildren(new Option("Off", "none"));
+  for (const c of choices) {
+    const option = new Option(
+      c.available ? c.label : `${c.label} (unavailable)`,
+      c.id,
+    );
+    option.disabled = !c.available;
+    if (c.reason) option.title = c.reason;
+    planSelect.append(option);
+  }
+  // An unknown/removed saved plan id is kept visible and disabled, never
+  // silently dropped or swapped for another plan.
+  if (
+    scenarioPlanDraft !== "none" &&
+    !choices.some((c) => c.id === scenarioPlanDraft)
+  ) {
+    const unknown = new Option(
+      `Unavailable: ${scenarioPlanDraft}`,
+      scenarioPlanDraft,
+    );
+    unknown.disabled = true;
+    planSelect.append(unknown);
+  }
+  planSelect.value = scenarioPlanDraft;
+  const chosen = choices.find((c) => c.id === planSelect.value);
+  el("scenario-plan-note").textContent = chosen?.reason ?? "";
+  const isCustom = planSelect.value === "custom";
+  (el("scenario-custom") as HTMLElement).hidden = !isCustom;
+  const unitWord =
+    state.options.billing === "legacy" ? "premium request" : "AI credit";
+  el("scenario-custom-allowance-unit").textContent =
+    `Included ${unitWord}s / month`;
+  el("scenario-custom-overage-unit").textContent = `USD per extra ${unitWord}`;
+
+  const prefillBtn = el<HTMLButtonElement>("scenario-prefill");
+  const prefill = state.scenarioPrefill;
+  prefillBtn.disabled = !prefill;
+  el("scenario-prefill-note").textContent = prefill
+    ? `Observed history: ${prefill.requests} requests over ${prefill.activeDays} active / ${prefill.calendarDays} calendar days (${prefill.from} – ${prefill.to} UTC)${prefill.undated ? ` · ${prefill.undated} undated excluded` : ""} · all Copilot models.`
+    : "Scan local usage to enable a history-based estimate.";
+
+  const result = el("scenario-result");
+  result.replaceChildren();
+  const notes = el("scenario-notes");
+  notes.replaceChildren();
+  const s = state.scenario;
+  if (s.status === "unavailable") {
+    result.append(text("p", s.reason, "notice"));
+    for (const n of s.notes) notes.append(text("li", n));
+  } else if (s.status === "projected") {
+    result.append(
+      text(
+        "p",
+        `Plan: ${s.plan.label}${s.plan.registryDate ? ` · plans dated ${s.plan.registryDate}` : ""}`,
+      ),
+      text(
+        "p",
+        `Model: ${s.row.name}${s.row.origin !== "selected" ? ` (${s.row.origin})` : ""}`,
+      ),
+      text(
+        "p",
+        `Requests / month: ${scenarioRange(s.requests)} · ${provenanceLabel(s.requests.provenance)}`,
+      ),
+      text(
+        "p",
+        `Per-request estimate: ${format(s.perRequest.value)} ${s.plan.unit} · ${provenanceLabel(s.perRequest.provenance)}`,
+        "hint",
+      ),
+      text(
+        "p",
+        `Monthly usage: ${scenarioRange(s.usage)} ${s.plan.unit}`,
+      ),
+      text(
+        "p",
+        `Allowance: ${scenarioRange(s.allowance)} ${s.plan.unit}${s.allowance.flexVariable ? " (base to base + flex)" : ""} · ${provenanceLabel(s.allowance.provenance)}`,
+      ),
+      text(
+        "p",
+        `Beyond allowance: ${scenarioRange(s.overageUnits)} ${s.plan.unit}${s.overageUsd ? ` · up to ${format(s.overageUsd.high)} USD if a budget allows` : ""}`,
+      ),
+      text(
+        "p",
+        `Plan fee: ${s.feeUsd.value === null ? "not documented — not included" : `${format(s.feeUsd.value)} USD / month${s.feeUsd.basis === "seat" ? " per seat" : ""}`}`,
+      ),
+      text(
+        "p",
+        `Estimated monthly total: ${s.totalUsd ? `${scenarioRange(s.totalUsd)} USD` : "unavailable"}`,
+        "mapping-status",
+      ),
+      text(
+        "p",
+        `Boundary — low estimate: ${s.boundary.low.replace(/-/g, " ")} · high estimate: ${s.boundary.high.replace(/-/g, " ")}`,
+        "hint",
+      ),
+    );
+    for (const n of s.notes) notes.append(text("li", n));
+  }
+  if (s.status !== "off") notes.append(text("li", s.disclaimer, "hint"));
+}
 function renderUsage() {
   if (!state) return;
   const u = state.usage;
@@ -1211,7 +1341,10 @@ function renderComparison() {
   if (document.activeElement !== el("comparison-name"))
     el<HTMLInputElement>("comparison-name").value =
       pair.sides[pair.active].name;
-  delta.textContent = `B minus A · Quality: ${format(pair.delta.score)} · Cost: ${format(pair.delta.cost)} ${pair.delta.reason}`;
+  const scenarioD = pair.delta.scenario;
+  delta.textContent =
+    `B minus A · Quality: ${format(pair.delta.score)} · Cost: ${format(pair.delta.cost)} ${pair.delta.reason}` +
+    ` · Monthly scenario Δ: ${scenarioD.low === null ? "unavailable" : `${format(scenarioD.low)}–${format(scenarioD.high)} USD`} (${scenarioD.reason})`;
   for (const side of ["A", "B"] as const) {
     const option = pair.sides[side],
       meta = sources[option.options.source];
@@ -1229,6 +1362,17 @@ function renderComparison() {
         `Workload ${Object.entries(option.options.tokens)
           .map(([k, v]) => `${k}: ${v}`)
           .join(" · ")} · Plan ${option.options.plan}`,
+      ),
+    );
+    card.append(
+      text(
+        "p",
+        option.scenario.status === "off"
+          ? "Spending scenario: off"
+          : option.scenario.status === "unavailable"
+            ? `Spending scenario unavailable: ${option.scenario.reason}`
+            : `Spending scenario: ${option.scenario.plan.label} · ${scenarioRange(option.scenario.requests)} requests/mo · ${option.scenario.totalUsd ? `${scenarioRange(option.scenario.totalUsd)} USD/mo` : "total unavailable"} (projection, not a bill)`,
+        "hint",
       ),
     );
     card.append(
@@ -1446,6 +1590,24 @@ function render(next: ViewState) {
       el<HTMLInputElement>(key).value = state.options[key];
     for (const key of ["input", "read", "write", "output"] as const)
       el<HTMLInputElement>(key).value = String(state.options.tokens[key]);
+    el<HTMLInputElement>("scenario-requests-low").value = String(
+      state.options.scenario.requestsLow,
+    );
+    el<HTMLInputElement>("scenario-requests-high").value = String(
+      state.options.scenario.requestsHigh,
+    );
+    for (const [id, value] of [
+      ["scenario-custom-fee", state.options.scenario.custom.monthlyFeeUsd],
+      ["scenario-custom-allowance", state.options.scenario.custom.allowance],
+      [
+        "scenario-custom-overage",
+        state.options.scenario.custom.overageUsdPerUnit,
+      ],
+    ] as const)
+      el<HTMLInputElement>(id).value = value === null ? "" : String(value);
+    scenarioOrigin = state.options.scenario.origin;
+    scenarioHistory = state.options.scenario.history;
+    scenarioPlanDraft = state.options.scenario.planId;
     initialized = true;
   }
   el("tokens").hidden =
@@ -1486,9 +1648,14 @@ function render(next: ViewState) {
   el<HTMLButtonElement>("refresh").disabled = state.loading;
   el<HTMLButtonElement>("key").disabled = state.loading;
   el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
-  const stale = freshnessAlert(state.catalogDate, state.staticRegistryDate);
+  const stale = freshnessAlert(
+    state.catalogDate,
+    state.staticRegistryDate,
+    undefined,
+    state.planRegistryDate,
+  );
   el("catalog").textContent =
-    `Catalog dated ${state.catalogDate} · Registries dated ${state.staticRegistryDate}` +
+    `Catalog dated ${state.catalogDate} · Registries dated ${state.staticRegistryDate} · Plans dated ${state.planRegistryDate}` +
     (stale ? ` · ${stale}` : "");
   el("pricing-line").replaceChildren(
     text("span", `${meta.pricingLabel.split(":")[0]}: `),
@@ -1535,6 +1702,7 @@ function render(next: ViewState) {
   el("export-note").textContent = state.exportNote ?? "";
   renderByok();
   renderUsage();
+  renderScenario();
   el("provenance").textContent = state.fetchedAt
     ? `Index v${state.version} · retrieved ${new Date(state.fetchedAt).toLocaleString()}${Date.now() - state.fetchedAt > 86400000 ? " · older than 24 hours" : ""}`
     : "No benchmark snapshot loaded";
@@ -1744,9 +1912,41 @@ function sendOptions(): boolean {
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
     onlyMine: (el("only-mine") as HTMLInputElement).checked,
+    scenario: readScenario(),
   };
   send("options", { options });
   return true;
+}
+/**
+ * Scenario inputs are optional and always sent: an empty/invalid field
+ * becomes 0 or null (parseScenario is equally tolerant host-side), never a
+ * blocked submit — the result explains an incomplete Custom plan instead.
+ */
+function readScenario(): Options["scenario"] {
+  const numOr = (id: string, fallback: number): number => {
+    const input = el<HTMLInputElement>(id);
+    return input.value !== "" && input.validity.valid
+      ? Number(input.value)
+      : fallback;
+  };
+  const numOrNull = (id: string): number | null => {
+    const input = el<HTMLInputElement>(id);
+    return input.value !== "" && input.validity.valid
+      ? Number(input.value)
+      : null;
+  };
+  return {
+    planId: el<HTMLSelectElement>("scenario-plan").value,
+    requestsLow: numOr("scenario-requests-low", 0),
+    requestsHigh: numOr("scenario-requests-high", 0),
+    origin: scenarioOrigin,
+    history: scenarioOrigin === "history" ? scenarioHistory : null,
+    custom: {
+      monthlyFeeUsd: numOrNull("scenario-custom-fee"),
+      allowance: numOrNull("scenario-custom-allowance"),
+      overageUsdPerUnit: numOrNull("scenario-custom-overage"),
+    },
+  };
 }
 el("source").addEventListener("change", () => {
   // Source switches reset billing host-side; send immediately, not debounced.
@@ -1775,6 +1975,12 @@ for (const id of [
   "display-sort",
   "free-only",
   "only-mine",
+  "scenario-plan",
+  "scenario-requests-low",
+  "scenario-requests-high",
+  "scenario-custom-fee",
+  "scenario-custom-allowance",
+  "scenario-custom-overage",
 ]) {
   el(id).addEventListener("input", () => {
     if (id === "billing") {
@@ -1785,10 +1991,37 @@ for (const id of [
         .value as Options["billing"];
       current.value = String(budgetDraft[displayedBilling]);
     }
+    if (id === "scenario-plan") {
+      // Keep the live selection across any unrelated render before this
+      // edit round-trips (renderScenario reapplies scenarioPlanDraft), and
+      // reveal the Custom fields immediately rather than after a round trip.
+      scenarioPlanDraft = el<HTMLSelectElement>("scenario-plan").value;
+      (el("scenario-custom") as HTMLElement).hidden =
+        scenarioPlanDraft !== "custom";
+    }
+    if (id === "scenario-requests-low" || id === "scenario-requests-high") {
+      scenarioOrigin = "user";
+      scenarioHistory = null;
+    }
     clearTimeout(timer);
     timer = setTimeout(sendOptions, 150);
   });
 }
+el<HTMLButtonElement>("scenario-prefill").onclick = () => {
+  if (!state?.scenarioPrefill) return;
+  const p = state.scenarioPrefill;
+  el<HTMLInputElement>("scenario-requests-low").value = String(p.low);
+  el<HTMLInputElement>("scenario-requests-high").value = String(p.high);
+  scenarioOrigin = "history";
+  scenarioHistory = {
+    from: p.from,
+    to: p.to,
+    activeDays: p.activeDays,
+    calendarDays: p.calendarDays,
+    requests: p.requests,
+  };
+  sendOptions();
+};
 el("profile").onchange = () => {
   updateProfileButtons();
   if (!el<HTMLSelectElement>("profile").value)

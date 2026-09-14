@@ -22,6 +22,7 @@ import {
 } from "./compare";
 import { discoverOpenCode, OpenCodeError } from "./opencode";
 import { staticModels, staticRegistryDate } from "./staticSources";
+import { historyScenarioPrefill, planRegistryDate } from "./plans";
 import { buildGroups } from "./groups";
 import { defaultBilling, sources } from "./sources";
 import { exportBadge, exportCsv, exportSnapshot } from "./export";
@@ -511,6 +512,9 @@ export function activate(context: vscode.ExtensionContext) {
       hasKey,
       catalogDate,
       staticRegistryDate,
+      planRegistryDate,
+      scenario: result.scenario,
+      scenarioPrefill: historyScenarioPrefill(usage),
       checklist,
       groups,
       freeSpotlight: freeSpotlightState,
@@ -1038,13 +1042,14 @@ export function activate(context: vscode.ExtensionContext) {
             ) {
               try {
                 const available = availableBySource[options.source];
-                const rows = optionResult(
+                const single = optionResult(
                   capture(),
                   available,
                   snapshot?.models ?? [],
                   byok,
                   usedCountsFor(),
-                ).rows;
+                );
+                const rows = single.rows;
                 const recommended = new Set(recommend(rows, options).modelIds);
                 const uri = await vscode.window.showSaveDialog(
                   m.type === "exportCsv"
@@ -1079,8 +1084,10 @@ export function activate(context: vscode.ExtensionContext) {
                             billing: options.billing,
                             catalogDate,
                             staticRegistryDate,
+                            planRegistryDate,
                             version: snapshot?.version,
                             fetchedAt: snapshot?.fetchedAt,
+                            scenario: single.scenario,
                           })
                         : exportBadge(rows, options, {
                             source: options.source,
@@ -1107,6 +1114,7 @@ export function activate(context: vscode.ExtensionContext) {
                           discoveryErrors[option.options.source] ?? "",
                         catalogDate,
                         staticRegistryDate,
+                        planRegistryDate,
                         benchmarkVersion: snapshot?.version,
                         benchmarkFetchedAt: snapshot?.fetchedAt,
                       };
@@ -1130,37 +1138,47 @@ export function activate(context: vscode.ExtensionContext) {
                         : "option,assumptions," +
                           exportCsv([], options).trimEnd() +
                           "\n" +
-                          pair
-                            .map((p) => {
-                              const label = JSON.stringify({
-                                side: p.side,
-                                name: p.name,
-                                options: p.options,
-                                discoveryError: p.discoveryError,
-                                availabilityNote: p.availabilityNote,
-                                pricingNote: p.pricingNote,
-                                catalogDate,
-                                staticRegistryDate,
-                                benchmarkVersion: snapshot?.version,
-                                benchmarkFetchedAt: snapshot?.fetchedAt,
-                              });
-                              if (!p.rows.length)
-                                return `${p.side},"${label.replace(/"/g, '""')}",${Array(14).fill("").join(",")}\n`;
-                              return p.rows
-                                .map((row) => {
-                                  const csv = exportCsv(
-                                    [row],
-                                    p.options,
-                                    new Set(p.recommendation.modelIds),
-                                  );
-                                  return (
-                                    `${p.side},"${label.replace(/"/g, '""')}",` +
-                                    csv.slice(csv.indexOf("\n") + 1)
-                                  );
-                                })
-                                .join("");
-                            })
-                            .join("");
+                          (() => {
+                            // Derived from the header, not hardcoded, so an
+                            // empty-option row always pads to the same width
+                            // as a populated one even if columns are added.
+                            const dataColumns = exportCsv([], options)
+                              .trimEnd()
+                              .split(",").length;
+                            return pair
+                              .map((p) => {
+                                const label = JSON.stringify({
+                                  side: p.side,
+                                  name: p.name,
+                                  options: p.options,
+                                  discoveryError: p.discoveryError,
+                                  availabilityNote: p.availabilityNote,
+                                  pricingNote: p.pricingNote,
+                                  catalogDate,
+                                  staticRegistryDate,
+                                  planRegistryDate,
+                                  scenario: p.scenario,
+                                  benchmarkVersion: snapshot?.version,
+                                  benchmarkFetchedAt: snapshot?.fetchedAt,
+                                });
+                                if (!p.rows.length)
+                                  return `${p.side},"${label.replace(/"/g, '""')}",${Array(dataColumns).fill("").join(",")}\n`;
+                                return p.rows
+                                  .map((row) => {
+                                    const csv = exportCsv(
+                                      [row],
+                                      p.options,
+                                      new Set(p.recommendation.modelIds),
+                                    );
+                                    return (
+                                      `${p.side},"${label.replace(/"/g, '""')}",` +
+                                      csv.slice(csv.indexOf("\n") + 1)
+                                    );
+                                  })
+                                  .join("");
+                              })
+                              .join("");
+                          })();
                   }
                   await vscode.workspace.fs.writeFile(
                     uri,

@@ -30,6 +30,8 @@ Requires VS Code 1.100 or newer with GitHub Copilot Chat. See [Getting started](
 
 An unresolved model explains why (no catalog entry, ambiguous entry, no alias match, or a selection that disappeared) and, when the Artificial Analysis slug exactly matches the model's own identifier, offers an unverified suggestion you explicitly apply or reset — a benchmark choice never sets a price. Unpriced provider-billed OpenCode models get the same treatment for pricing: a same-identifier static-registry rate, applied with visible provenance and flagged (not silently updated) if the registry rate later changes. See [User guide](docs/user-guide.md#resolving-an-unmapped-model-or-an-unpriced-model).
 
+The optional **Monthly spending scenario** card projects plan fee plus expected usage against a documented Copilot plan's allowance and overage rate (or your own Custom plan figures), with every field labelled provider-verified, your input, observed history, or a displayed estimate — always a projection, never a bill. See [Billing](docs/billing.md#monthly-spending-scenarios) and [User guide](docs/user-guide.md#monthly-spending-scenario).
+
 Local usage scanning requires consent in a modal prompt. **Erase Local Copilot Usage** stops queued and active scans before completing deletion; session deletions also refresh watched totals. **Only my models** filters comparison results while preserving all thinking-level checklist selections.
 
 Usage-based budget suggestions include free requests in the percentile and can suggest a zero budget.
