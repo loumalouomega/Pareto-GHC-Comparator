@@ -70,13 +70,22 @@ The earlier completion audit covered the then-completed roadmap. It does not cer
 
 - `test/tier1.test.ts`: comparison persistence/validation, shared result construction, compatible deltas, targeted messages, usage provenance, version-2 validation, and stable/Insiders/legacy/malformed fixture cases. All fixture content is synthetic.
 - `test/extension.test.ts`: isolated A/B options and exclusions, restoring the single view and last pair, profile-load isolation, export parity, and real temporary-session updates through unsupported, truncated, and deleted states.
-- `test/opencode-platform.test.ts`: native resolution, PATH/home fallback, Windows path rules, timeout limits, and literal process arguments at an executable path with spaces. The native process test copies Node as an executable fixture; it does not invoke real OpenCode providers.
+- `test/opencode-platform.test.ts`: native resolution, PATH/home fallback, the Windows npm-global-install layout (`node_modules\opencode-ai\bin\opencode.exe`), Windows path rules, timeout limits, and literal process arguments at an executable path with spaces. The native process test copies Node as an executable fixture; it does not invoke real OpenCode providers.
 - `test/webview.spec.ts`: all three themes cover comparison panels, active editor switching, cross-unit explanations, combined PNG messages, narrow layout, and usage diagnostics, alongside existing regression flows.
+- `.github/workflows/extension.yml` `Native discovery` job: the platform-discovery test file above, run remotely on Linux, macOS, and Windows and gating the release jobs. Confirmed green remotely: run [34816368954](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34816368954) (2026-09-14, commit `16e1af1`), all three OSes.
+- `scripts/opencode-smoke.ts` and the non-gating `opencode-smoke` CI job: real (unmocked) `opencode models --verbose` discovery through `discoverOpenCode`, against an isolated credential-free home, plus a real-executable path-with-spaces rerun. Output is sanitized to counts only (see `AGENTS.md`).
 
-| Environment | Automated native-process validation | Real OpenCode/provider smoke |
-| --- | --- | --- |
-| Linux, local | Passed; sandbox restrictions required execution outside the sandbox | Unperformed |
-| macOS | CI job configured; remote result not verified here | Unperformed |
-| Windows | CI job configured; remote result not verified here | Unperformed |
+### OpenCode discovery evidence by environment
 
-Copilot sign-in and Artificial Analysis API smoke tests remain unperformed without user-provided account prerequisites. No inference execution is part of validation.
+| OS | Install method | CLI version | Executable resolution | Free-tier discovery (`opencode` provider) | Priced/unpriced (`opencode-go`/`openai`) | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| Linux | install script (`~/.opencode/bin`) | 1.18.30 | Verified (home fallback, path with spaces) | Verified: 17 rows, 13 variants | **Verified with a real signed-in account**: 65 `opencode-go` priced, 81 `openai` unpriced | Local run, 2026-09-14 (163 total rows) |
+| Linux | npm global (`npm install -g opencode-ai`) | 1.18.30 | Verified (PATH, path with spaces) | Verified: 17 rows, 13 variants | Unverified (credential-free CI) | CI run [34817372006](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34817372006), job `OpenCode smoke (ubuntu-latest, npm)` |
+| macOS | install script | 1.18.30 | Verified (PATH, path with spaces) | Verified: 17 rows, 13 variants | Unverified (credential-free CI) | Same run, job `OpenCode smoke (macos-latest, script)` (one transient "Failed to fetch version information" from the install script's own version check, unrelated to this repo, seen once and reproduced-passing on rerun) |
+| macOS | npm global | 1.18.30 | Verified (PATH, path with spaces) | Verified: 17 rows, 13 variants | Unverified (credential-free CI) | Same run, job `OpenCode smoke (macos-latest, npm)` |
+| Windows | npm global | 1.18.30 | **Verified, including the npm-layout gap and fix** (see below) | Verified: 17 rows, 13 variants | Unverified (credential-free CI) | CI run [34817141985](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34817141985) (failure) and [34817372006](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34817372006) (fixed), job `OpenCode smoke (windows-latest, npm)` |
+| Windows | install script | — | Unverified | Unverified | Unverified | The official install script targets a POSIX shell; not exercised in this matrix (`script` is excluded for `windows-latest`) |
+
+**Windows npm-install gap found and fixed by this evidence:** `npm install -g opencode-ai@1.18.30` on `windows-latest` left only `.cmd`/`.ps1` shims on PATH (`npm root -g` resolved to `C:\npm\prefix\node_modules`); `executableCandidates` found no `opencode.exe` there and reported the CLI missing (run 34817141985, exit 1, `"kind":"missing"`). Fixed in `src/opencode.ts` by also probing `<dir>\node_modules\opencode-ai\bin\opencode.exe` for each Windows PATH entry (still plain `execFile`, no shell). Rerun 34817372006 resolved via that exact candidate (`"resolution":"npm-layout"`) and listed the same 17 free-tier rows. See `test/opencode-platform.test.ts` for the regression case.
+
+**What remains unverified:** provider-billed pricing (`opencode-go`, `openai`) and native executable resolution with a real signed-in account, on macOS and Windows — CI runs credential-free by design, so only the Zen free tier is reachable there; verifying priced listings needs a user-owned macOS/Windows machine with OpenCode connected to a provider. Copilot sign-in and Artificial Analysis API smoke tests remain unperformed without user-provided account prerequisites. No inference execution is part of any validation above.

@@ -11,26 +11,17 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Remove empty tiers.
 - Link a corresponding GitHub issue when one exists. The issue holds the request and discussion; this file defines the proposed scope. Verify claims against the code before treating them as implemented behavior.
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
-- Tier 3 investigations must establish feasibility before implementation is scheduled; listing them does not authorize inference, spending, account changes, or additional data collection.
+- Tier 2 investigations must establish feasibility before implementation is scheduled; listing them does not authorize inference, spending, account changes, or additional data collection.
 
 ## Completed foundation
 
 Per-model chart controls, static known-model registries, comparator-depth features (freshness alerts, efficiency sort, snapshot/badge exports, benchmark drift, OpenCode BYOK rates), and personal-usage features (history, workload prefill, used-model filtering, budget suggestions, workspace breakdown) are implemented. Verified behavior is recorded in AGENTS.md and user-visible changes in CHANGELOG.md; the completion-audit evidence is in [Testing](testing.md#roadmap-completion-audit).
 
-## Tier 1 — Outstanding integration validation
-
-Admission criterion: validate external environments that local automation cannot prove.
-
-### OpenCode macOS/Windows and real-provider smoke validation — S
-
-- **Gap:** Native executable resolution, provider fixtures, failure handling, and a three-platform CI job are implemented; local native-process validation ran on Linux only. A configured CI job is not evidence of a successful remote run or actual provider discovery.
-- **Deliverables:** Run the platform CI matrix and record real OpenCode discovery smoke results by OS, installation method, CLI version, and provider category; retain only sanitized diagnostics.
-- **Dependencies:** macOS/Windows runners or machines and user-provided OpenCode installations/accounts. No inference requests are required.
-- **Acceptance:** Document actual pass/fail evidence for executable paths with spaces, native PATH/fallback discovery, priced/unpriced/free-tier listings, and variant identity. Keep unavailable environments explicitly unverified and fix demonstrated compatibility gaps.
-
 The two-option comparison mode and usage-schema resilience are implemented. A shared A/B editor persists its pair independently, and usage storage version 2 records token provenance and completeness diagnostics. See AGENTS.md and [Testing](testing.md#tier-1-validation).
 
-## Tier 2 — Explicit assumptions and cost scenarios
+OpenCode discovery is validated across Linux, macOS, and Windows, and both install-script and npm-global installs, in CI (`opencode-smoke` job); this found and fixed a Windows npm-install resolution gap. Real-account provider pricing (`opencode-go`/`openai`) is verified on Linux only, since CI runs credential-free and macOS/Windows there see only the Zen free tier. See [Testing](testing.md#tier-1-validation) for the evidence and remaining gaps, and `docs/opencode-integration.md` blocker B4.
+
+## Tier 1 — Explicit assumptions and cost scenarios
 
 Admission criterion: extend comparison using documented or user-supplied inputs, with visible provenance and uncertainty.
 
@@ -55,7 +46,7 @@ Admission criterion: extend comparison using documented or user-supplied inputs,
 - **Dependencies:** Implemented option-comparison mode; Plan-aware spending scenarios for allowance-dependent conversions.
 - **Acceptance:** No implicit universal credit/request exchange rate. Missing or incompatible assumptions keep options in separate panels/frontiers. Test conversion arithmetic and allowance boundaries, and preserve original and converted values in exports.
 
-## Tier 3 — Feasibility investigations
+## Tier 2 — Feasibility investigations
 
 Admission criterion: establish a supported integration, concrete user workflow, and validation approach before committing to delivery. Effort below covers investigation only.
 

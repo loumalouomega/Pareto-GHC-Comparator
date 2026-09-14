@@ -38,7 +38,7 @@ Enable **Compare options** to keep two named alternatives visible. Choose **Edit
 
 Select one row in each panel to see **B minus A** quality and cost differences. Cost differences require matching units and effective workloads; incompatible options retain separate frontiers with an explanation. CSV and snapshot exports include both options and their assumptions, PNG includes both charts, and badge export names the active option.
 
-Usage completeness diagnostics distinguish malformed records, unsupported or unreadable files, stale retained contributions, missing tokens, and legacy text estimates. Prefill and sampled credit budgets use fully observed prompt/output pairs, including explicit zeros. Older usage caches are rescanned only with existing consent. Native OpenCode discovery supports platform-specific PATH resolution and the home-directory fallback; Windows requires `opencode.exe`, not a `.cmd` or `.bat` wrapper.
+Usage completeness diagnostics distinguish malformed records, unsupported or unreadable files, stale retained contributions, missing tokens, and legacy text estimates. Prefill and sampled credit budgets use fully observed prompt/output pairs, including explicit zeros. Older usage caches are rescanned only with existing consent. Native OpenCode discovery supports platform-specific PATH resolution, a global npm install's `node_modules\opencode-ai\bin\opencode.exe` layout on Windows, and the home-directory fallback; script-only `.cmd`/`.ps1`/`.bat` shims are not supported. Verified in CI on Linux, macOS, and Windows; see [Testing](docs/testing.md#tier-1-validation).
 
 ## Guides
 

@@ -8,7 +8,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 - Two-option comparison mode with independent A/B settings, shared editor, separate charts/frontiers, selected-row deltas, saved-pair restoration, and two-option CSV/snapshot/PNG exports. Badge export targets the active option.
 - Usage completeness diagnostics and version-2 storage distinguish observed, estimated, and missing tokens. Partially malformed files retain valid records; unsupported or unreadable updates retain visibly stale contributions until recovery or deletion.
-- Native OpenCode executable resolution for Linux/macOS/Windows, explicit timeout guidance, platform process tests, and a three-platform CI discovery job. Real provider and macOS/Windows smoke results remain unverified locally.
+- Native OpenCode executable resolution for Linux/macOS/Windows, including a global npm install's `node_modules\opencode-ai\bin\opencode.exe` layout on Windows, explicit timeout guidance, platform process tests, and a three-platform CI discovery job. A credential-free CI smoke job now verifies real free-tier discovery, variant expansion, and executable resolution (npm and install-script, plus a path containing spaces) on Linux, macOS, and Windows; real-account provider pricing stays verified on Linux only. See `docs/testing.md`.
 
 
 - Cost-per-quality table sort: an optional **Cost per quality** ordering (cost per index point, unpriced or unscored rows last with reasons) in chart display settings, with a matching table column; existing discovery order remains the default and saved settings migrate without losing user choices.
@@ -33,6 +33,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Erasing local usage cancels queued scans and waits for active writes before deleting data; stale scans cannot restore history or watchers. Session deletions now trigger an incremental refresh, and deletion failures report that stored data could not be erased.
 - Keep thinking-level checklist selections available while **Only my models** or free-only filtering hides comparison rows.
 - Isolate temporary cache files so concurrent usage and benchmark writes cannot overwrite each other.
+- Resolve OpenCode's real executable on Windows when installed via `npm install -g opencode-ai`, whose PATH shims are `.cmd`/`.ps1` wrappers rather than `opencode.exe`; found and fixed via real CI discovery evidence.
 
 ## 0.11.0
 

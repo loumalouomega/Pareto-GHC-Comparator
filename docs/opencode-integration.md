@@ -123,7 +123,7 @@ auth-file reads, no inference requests, no model switching.
   (default install places it under `~/.opencode/bin/`).
 - At least one provider connected (`opencode providers login` in the
   terminal or `/connect` in the TUI).
-- Verified only on Linux; macOS/Windows paths are untested (blocker B4).
+- Executable resolution verified on Linux, macOS, and Windows, both install-script and npm-global installs (blocker B4 resolved for resolution; see below). Priced/unpriced provider listings with a real account verified on Linux only; macOS/Windows CI runs are credential-free and see only the free tier.
 
 ## Availability semantics
 
@@ -247,7 +247,5 @@ boundary).
 - **B3 — Tier-shape volatility:** `tiers[]`/`experimentalOver200K` naming
   suggests the CLI schema may change; the adapter needs a version-tolerant
   schema guard with fallback to base rates.
-- **B4 — Platform coverage:** verification was Linux-only; macOS/Windows
-  binary resolution and at least one smoke run per platform (or an explicit
-  unsupported statement) are outstanding.
+- **B4 — Platform coverage (resolved for resolution and free-tier discovery, 2026-09-14):** a credential-free CI smoke (`scripts/opencode-smoke.ts`, `opencode-smoke` job) ran the real 1.18.30 CLI on Linux, macOS, and Windows, both `npm install -g opencode-ai` and the install script (script excluded on Windows; its shell target). It found and fixed a real gap: `npm install -g` on Windows leaves only `.cmd`/`.ps1` shims on PATH, with the actual `opencode.exe` under that package's own `node_modules\opencode-ai\bin\`; `executableCandidates` now probes that path too. All cells green on run [34817372006](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34817372006), including a real executable at a path containing spaces on every OS. Remaining gap: CI has no provider credentials, so only the Zen free tier (`opencode/*`, 17 rows, 13 variants) is exercised on macOS/Windows — provider-billed pricing (`opencode-go`, `openai`) stays verified on Linux only (see `docs/testing.md`).
 - **B5 — Catalog freshness (superseded):** live CLI rates on every discovery replaced the proposed static OpenCode price catalog, so there is no `catalogDate` to maintain for OpenCode pricing. Only `opencodeBenchmarkFamilies` aliases are static. If a future provider's rates cannot be discovered live, scope a static addition explicitly rather than reviving a full catalog.
