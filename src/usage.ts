@@ -388,9 +388,9 @@ function medianOf(values: number[]): number {
   return Math.min(100000000, Math.max(0, Math.round(median)));
 }
 function quantileOf(values: number[], q: number): number | null {
-  const positive = values.filter((v) => v > 0).sort((a, b) => a - b);
-  if (!positive.length) return null;
-  return positive[Math.min(positive.length - 1, Math.ceil(q * positive.length) - 1)];
+  const priced = values.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b);
+  if (!priced.length) return null;
+  return priced[Math.min(priced.length - 1, Math.ceil(q * priced.length) - 1)];
 }
 function stripCopilotPrefix(modelId: string | null): string | null {
   if (!modelId) return null;
@@ -492,7 +492,7 @@ export function aggregateUsage(
   }
   const premiumP90 = quantileOf(premiums, 0.9);
   const creditP90 = quantileOf(credits, 0.9);
-  const creditSample = credits.filter((v) => v > 0).length;
+  const creditSample = credits.length;
   return {
     scannedAt,
     fileCount: totalFiles,

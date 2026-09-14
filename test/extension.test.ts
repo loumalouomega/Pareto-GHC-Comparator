@@ -1,4 +1,4 @@
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,11 @@ test("extension discovers Copilot models, serves cached data, validates messages
   const commands = new Map<string, () => unknown>();
   const messages: unknown[] = [];
   const copied: string[] = [];
+  const kicks: (() => void)[] = [];
+  const writes: string[] = [];
+  let pauseWrite: (() => Promise<void>) | undefined;
+  let deleted = false;
+  let deleteError = false;
   let receiver: (m: unknown) => Promise<void> = async () => {},
     discoveryChanged = () => {};
   let discoveredVendor = "",
@@ -29,6 +34,12 @@ test("extension discovers Copilot models, serves cached data, validates messages
       },
     ],
   };
+  cache.models.push({
+    ...cache.models[0],
+    id: "other",
+    slug: "other",
+    name: "Other (high)",
+  });
   assert.ok(validSnapshot(cache));
   const prevCache = {
     version: "4.2",
@@ -85,13 +96,32 @@ test("extension discovers Copilot models, serves cached data, validates messages
       showInformationMessage: async () => "Scan locally",
     },
     workspace: {
+      createFileSystemWatcher: () => ({
+        onDidChange: (fn: () => void) => {
+          kicks.push(fn);
+        },
+        onDidCreate() {},
+        onDidDelete: (fn: () => void) => {
+          kicks.push(fn);
+        },
+        dispose() {},
+      }),
       fs: {
         readFile: async (uri: { path: string }) =>
           Buffer.from(
             JSON.stringify(uri.path.includes("prev") ? prevCache : cache),
           ),
         createDirectory: async () => {},
-        writeFile: async () => {},
+        writeFile: async (uri: { path: string }) => {
+          writes.push(uri.path);
+          await pauseWrite?.();
+        },
+        delete: async (uri: { path: string }) => {
+          if (uri.path.endsWith("/usage.json")) {
+            if (deleteError) throw new Error("write denied");
+            deleted = true;
+          }
+        },
         rename: async () => {},
       },
     },
@@ -140,7 +170,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
           }));
           b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
             contents:
-              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env}=mock;",
+              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern}=mock;",
             loader: "js",
           }));
         },
@@ -184,6 +214,30 @@ test("extension discovers Copilot models, serves cached data, validates messages
   assert.deepEqual(copied, ["GPT-5 mini"]);
   await receiver({ type: "options", options: { preset: "bad" } });
   assert.match(last().message, /Could not apply/);
+  await receiver({ type: "pin", id: "gpt-5-mini", benchmarkId: "aa" });
+  await receiver({ type: "pin", id: "gpt-5-mini", benchmarkId: "other" });
+  const leaves = () =>
+    last().groups.flatMap((g: any) => g.models.flatMap((m: any) => m.leaves));
+  const variantIds = leaves().map((leaf: any) => leaf.id);
+  assert.equal(variantIds.length, 2);
+  await receiver({
+    type: "options",
+    options: { ...last().options, onlyMine: true },
+  });
+  assert.equal(last().rows.length, 0);
+  assert.deepEqual(
+    leaves().map((leaf: any) => leaf.id),
+    variantIds,
+  );
+  await receiver({ type: "excludeMany", ids: variantIds, excluded: true });
+  assert.deepEqual((state.get("excluded") as any).copilot, variantIds);
+  await receiver({ type: "excludeMany", ids: variantIds, excluded: false });
+  await receiver({
+    type: "options",
+    options: { ...last().options, onlyMine: false },
+  });
+  await receiver({ type: "unpin", id: "gpt-5-mini", benchmarkId: "aa" });
+  await receiver({ type: "unpin", id: "gpt-5-mini", benchmarkId: "other" });
   await receiver({ type: "mapping", id: "gpt-5-mini", benchmarkId: "aa" });
   assert.deepEqual(state.get("mappings"), { "gpt-5-mini": "aa" });
   const byokRates = {
@@ -245,11 +299,49 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(last().usage.requestCount, 0);
     assert.equal(last().usage.fileCount, 0);
     assert.match(last().message, /Local usage ready/);
+    assert.equal(last().usageWatching, true);
+    assert.ok(
+      writes.every((path) => /usage.json\.[a-f0-9]+\.tmp.json$/.test(path)),
+    );
+    vi.useFakeTimers();
+    kicks[0]();
     await receiver({ type: "clearUsage" });
+    const writeCount = writes.length;
+    await vi.advanceTimersByTimeAsync(1100);
+    assert.equal(writes.length, writeCount);
+    assert.equal(last().usageWatching, false);
+    vi.useRealTimers();
+
+    // Clearing while a scan is writing waits for it, then deletes its result.
+    let release!: () => void;
+    let writing!: () => void;
+    const started = new Promise<void>((resolve) => {
+      writing = resolve;
+    });
+    pauseWrite = () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+        writing();
+      });
+    const scanning = commands.get("paretoGhc.scanUsage")!() as Promise<void>;
+    await started;
+    deleted = false;
+    const clearing = commands.get("paretoGhc.clearUsage")!() as Promise<void>;
+    await Promise.resolve();
+    assert.equal(deleted, false);
+    release();
+    await Promise.all([scanning, clearing]);
+    assert.equal(deleted, true);
+    assert.equal(last().usageWatching, false);
     assert.equal(last().usage, null);
     assert.equal(state.get("usageConsent"), false);
     assert.match(last().message, /erased/);
+    deleteError = true;
+    await receiver({ type: "clearUsage" });
+    assert.match(last().message, /could not be erased/);
+    assert.equal(state.get("usageConsent"), false);
   } finally {
+    vi.useRealTimers();
     if (home === undefined) delete process.env.HOME;
     else process.env.HOME = home;
     if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;

@@ -60,13 +60,21 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.workspace.fs.createDirectory(context.globalStorageUri);
     const temporary = vscode.Uri.joinPath(
       context.globalStorageUri,
-      "benchmarks.tmp.json",
+      `${basename(uri.path)}.${randomBytes(8).toString("hex")}.tmp.json`,
     );
-    await vscode.workspace.fs.writeFile(
-      temporary,
-      Buffer.from(JSON.stringify(value)),
-    );
-    await vscode.workspace.fs.rename(temporary, uri, { overwrite: true });
+    try {
+      await vscode.workspace.fs.writeFile(
+        temporary,
+        Buffer.from(JSON.stringify(value)),
+      );
+      await vscode.workspace.fs.rename(temporary, uri, { overwrite: true });
+    } finally {
+      try {
+        await vscode.workspace.fs.delete(temporary);
+      } catch {
+        // Successful rename already removed it; cleanup must not mask errors.
+      }
+    }
   };
   const service = new BenchmarkService({
     read: async () =>
@@ -112,6 +120,8 @@ export function activate(context: vscode.ExtensionContext) {
   );
   let usage: UsageSummary | null = null,
     usageScanning = false,
+    usageGeneration = 0,
+    usagePending: Promise<void> | undefined,
     usageWatchers: vscode.Disposable[] = [],
     usageTimer: ReturnType<typeof setTimeout> | undefined;
   const readStoredUsage = async (): Promise<StoredUsageFile | undefined> => {
@@ -128,13 +138,17 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const setupUsageWatchers = () => {
     if (
+      !context.globalState.get("usageConsent", false) ||
       usageWatchers.length ||
       typeof vscode.workspace.createFileSystemWatcher !== "function" ||
       typeof vscode.RelativePattern !== "function"
     )
       return;
     for (const root of storageCandidates()) {
-      for (const pattern of ["**/chatSessions/*.jsonl", "**/chatSessions/*.json"]) {
+      for (const pattern of [
+        "**/chatSessions/*.jsonl",
+        "**/chatSessions/*.json",
+      ]) {
         try {
           const watcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(root, pattern),
@@ -145,6 +159,7 @@ export function activate(context: vscode.ExtensionContext) {
           };
           watcher.onDidChange(kick);
           watcher.onDidCreate(kick);
+          watcher.onDidDelete(kick);
           usageWatchers.push(watcher);
           context.subscriptions.push(watcher);
         } catch {
@@ -155,70 +170,101 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const ensureUsageConsent = async (): Promise<boolean> => {
     if (context.globalState.get("usageConsent", false)) return true;
+    const generation = usageGeneration;
     const choice = await vscode.window.showInformationMessage(
       "Scan local Copilot chat sessions for usage totals? Files stay on this machine; nothing is uploaded.",
+      { modal: true },
       "Scan locally",
       "Not now",
     );
-    if (choice !== "Scan locally") return false;
+    if (choice !== "Scan locally" || generation !== usageGeneration)
+      return false;
     await context.globalState.update("usageConsent", true);
     return true;
   };
   const runUsageScan = async () => {
-    if (usageScanning) return;
-    usageScanning = true;
-    message = "Scanning local Copilot sessions…";
-    render();
-    try {
-      const candidates = await discoverUsageFiles();
-      const stored = await readStoredUsage();
-      const index = stored?.index ?? blankUsageIndex();
-      const { changed, deleted } = selectChangedFiles(candidates, index);
-      const files: StoredUsageFile["files"] = { ...(stored?.files ?? {}) };
-      for (const gone of deleted) delete files[gone];
-      for (const candidate of changed) {
-        try {
-          const text = await readLocalFile(candidate.filePath, "utf8");
-          const stem = basename(candidate.filePath, extname(candidate.filePath));
-          const parsed = candidate.legacy
-            ? parseUsageLegacyJson(text, candidate.workspaceId, stem)
-            : parseUsageJsonl(text, candidate.workspaceId, stem);
-          files[candidate.filePath] = {
-            workspaceId: candidate.workspaceId,
-            workspacePath: candidate.workspacePath,
-            requests: parsed.requests,
-          };
-          index.files[candidate.filePath] = {
-            size: candidate.size,
-            mtime: candidate.mtime,
-            parser: 1,
-          };
-        } catch {
-          // Unreadable files are skipped without failing the scan.
-        }
-      }
-      const scannedAt = Date.now();
-      usage = aggregateUsage(Object.values(files), scannedAt);
-      await writeSnapshotFile(usageSummaryUri, {
-        version: 1,
-        scannedAt,
-        index,
-        files,
-      });
-      setupUsageWatchers();
-      message =
-        `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
-        "Local estimates only, not a bill.";
-    } catch {
-      message = "Local usage scan failed. Retry when Copilot chat sessions exist.";
-    } finally {
-      usageScanning = false;
+    if (usageScanning || !context.globalState.get("usageConsent", false))
+      return;
+    const generation = usageGeneration;
+    const current = () =>
+      generation === usageGeneration &&
+      context.globalState.get("usageConsent", false);
+    usagePending = scan();
+    await usagePending;
+    async function scan() {
+      usageScanning = true;
+      message = "Scanning local Copilot sessions…";
       render();
+      try {
+        const candidates = await discoverUsageFiles();
+        if (!current()) return;
+        const stored = await readStoredUsage();
+        if (!current()) return;
+        const index = stored?.index ?? blankUsageIndex();
+        const { changed, deleted } = selectChangedFiles(candidates, index);
+        const files: StoredUsageFile["files"] = { ...(stored?.files ?? {}) };
+        for (const gone of deleted) {
+          delete files[gone];
+          delete index.files[gone];
+        }
+        for (const candidate of changed) {
+          if (!current()) return;
+          try {
+            const text = await readLocalFile(candidate.filePath, "utf8");
+            const stem = basename(
+              candidate.filePath,
+              extname(candidate.filePath),
+            );
+            const parsed = candidate.legacy
+              ? parseUsageLegacyJson(text, candidate.workspaceId, stem)
+              : parseUsageJsonl(text, candidate.workspaceId, stem);
+            files[candidate.filePath] = {
+              workspaceId: candidate.workspaceId,
+              workspacePath: candidate.workspacePath,
+              requests: parsed.requests,
+            };
+            index.files[candidate.filePath] = {
+              size: candidate.size,
+              mtime: candidate.mtime,
+              parser: 1,
+            };
+          } catch {
+            // Unreadable files are skipped without failing the scan.
+          }
+        }
+        if (!current()) return;
+        const scannedAt = Date.now();
+        usage = aggregateUsage(Object.values(files), scannedAt);
+        await writeSnapshotFile(usageSummaryUri, {
+          version: 1,
+          scannedAt,
+          index,
+          files,
+        });
+        if (!current()) return;
+        setupUsageWatchers();
+        message =
+          `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
+          "Local estimates only, not a bill.";
+      } catch {
+        if (current())
+          message =
+            "Local usage scan failed. Retry when Copilot chat sessions exist.";
+      } finally {
+        usageScanning = false;
+        render();
+      }
     }
   };
   const loadUsage = async () => {
+    const generation = usageGeneration;
+    if (!context.globalState.get("usageConsent", false)) return;
     const stored = await readStoredUsage();
-    if (stored) {
+    if (
+      stored &&
+      generation === usageGeneration &&
+      context.globalState.get("usageConsent", false)
+    ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
       if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
     }
@@ -278,7 +324,7 @@ export function activate(context: vscode.ExtensionContext) {
     const structureRows = compare(
       available,
       benchmarks,
-      { ...options, filter: "" },
+      { ...options, filter: "", onlyMine: false, freeOnly: false },
       overrides,
       undefined,
       { pins },
@@ -307,11 +353,11 @@ export function activate(context: vscode.ExtensionContext) {
       undefined,
       { pins, excluded: excludedFor(options.source), byok, usedCounts },
     );
-    const comparable = rows.filter(
-      (r) => r.cost !== null && r.score !== null,
-    );
+    const comparable = rows.filter((r) => r.cost !== null && r.score !== null);
     const bestOverall = comparable.length
-      ? [...comparable].sort((a, b) => b.score! - a.score! || a.cost! - b.cost!)[0]
+      ? [...comparable].sort(
+          (a, b) => b.score! - a.score! || a.cost! - b.cost!,
+        )[0]
       : undefined;
     const freeSpotlightState = options.freeOnly
       ? {
@@ -472,17 +518,29 @@ export function activate(context: vscode.ExtensionContext) {
   };
   if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
   const clearUsageData = async () => {
+    usageGeneration++;
+    clearTimeout(usageTimer);
     for (const watcher of usageWatchers) watcher.dispose();
     usageWatchers = [];
     usage = null;
     await context.globalState.update("usageConsent", false);
+    await usagePending;
     try {
       await vscode.workspace.fs.delete(usageSummaryUri);
-    } catch {
-      // No stored scan to erase.
+    } catch (error) {
+      if (!(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "FileNotFound"
+      )) {
+        message =
+          "Local usage watching stopped, but stored data could not be erased. Retry Erase Local Copilot Usage.";
+        render();
+        return;
+      }
     }
-    message =
-      "Local usage data erased. Rescanning will ask for consent again.";
+    message = "Local usage data erased. Rescanning will ask for consent again.";
     render();
   };
   const openPanel = () => {
@@ -552,8 +610,7 @@ export function activate(context: vscode.ExtensionContext) {
               else render();
             } else if (m.type === "clearUsage") {
               await clearUsageData();
-            }
-            else if (m.type === "key") await setKey();
+            } else if (m.type === "key") await setKey();
             else if (m.type === "source") {
               if (m.source !== options.source) {
                 // Invalidate in-flight discovery before switching (B2).
@@ -626,9 +683,7 @@ export function activate(context: vscode.ExtensionContext) {
             ) {
               const modelId = m.id.split("::")[0];
               if (
-                availableBySource[options.source].some(
-                  (a) => a.id === modelId,
-                )
+                availableBySource[options.source].some((a) => a.id === modelId)
               ) {
                 if (m.id.includes("::")) {
                   const [base, bench] = m.id.split("::");
@@ -818,8 +873,9 @@ export function activate(context: vscode.ExtensionContext) {
               render();
             } else if (m.type === "exportPng") {
               try {
-                const match =
-                  /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(m.png);
+                const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(
+                  m.png,
+                );
                 if (!match) throw new Error("Invalid PNG payload.");
                 const uri = await vscode.window.showSaveDialog({
                   filters: { "PNG images": ["png"] },

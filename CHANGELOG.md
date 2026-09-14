@@ -17,6 +17,14 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Budget from reality: a suggested budget from p90 observed costs (premium requests for legacy billing, AI credits for credit billing) with its sample and window cited; applying it is explicit and manual budgets always win. No suggestion for USD, since local history covers Copilot requests only.
 - Per-workspace breakdown: the usage card shows up to 20 workspaces with basename-only labels by default (full paths on toggle, kept in tooltips), and storage ids with an inline unmapped-workspace explanation when `workspace.json` is missing or unreadable; the model table grows to 12 rows.
 
+### Fixed
+
+- Include zero-cost requests in usage budget percentiles and priced sample counts, avoiding inflated suggestions for mixed free/paid history.
+
+- Erasing local usage cancels queued scans and waits for active writes before deleting data; stale scans cannot restore history or watchers. Session deletions now trigger an incremental refresh, and deletion failures report that stored data could not be erased.
+- Keep thinking-level checklist selections available while **Only my models** or free-only filtering hides comparison rows.
+- Isolate temporary cache files so concurrent usage and benchmark writes cannot overwrite each other.
+
 ## 0.11.0
 
 ### Added

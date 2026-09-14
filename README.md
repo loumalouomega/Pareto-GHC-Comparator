@@ -28,6 +28,10 @@ Requires VS Code 1.100 or newer with GitHub Copilot Chat. See [Getting started](
 2. Run **Pareto GHC: Open Model Comparison** and set your [Artificial Analysis Free API key](https://artificialanalysis.ai/data-api).
 3. Pick a source (Copilot, OpenCode, Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Aider, or Amazon Q), task, billing mode, and token workload, then select a chart point or table row to inspect the tradeoff. The default chart mirrors Artificial Analysis (Intelligence vs. cost per task with the most attractive quadrant highlighted); switch to Quality vs. workload cost for your own token mix. Use the grouped model checklist (family → model → thinking level, with search and bulk selection), chart display settings, cost breakdown, CSV/snapshot/badge/PNG exports, cost-per-quality table sort, pricing-freshness alerts, benchmark score drift, and (for OpenCode) the free-tier spotlight plus explicit BYOK rates for provider-billed models. **Scan Local Copilot Usage** optionally reports your own on-machine request and token totals (opt-in, local-only, erasable).
 
+Local usage scanning requires consent in a modal prompt. **Erase Local Copilot Usage** stops queued and active scans before completing deletion; session deletions also refresh watched totals. **Only my models** filters comparison results while preserving all thinking-level checklist selections.
+
+Usage-based budget suggestions include free requests in the percentile and can suggest a zero budget.
+
 ## Guides
 
 - [Website](https://loumalouomega.github.io/Pareto-GHC-Comparator/) — project landing page.

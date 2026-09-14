@@ -48,3 +48,20 @@ Add regression coverage for meaningful new behavior and failure cases.
 ## What automation does not prove
 
 Automated tests use fixtures, synthetic model data, and a mocked host. They do not prove real-account model discovery or real API access: a real smoke test requires Copilot sign-in and a user-provided Artificial Analysis key. Record missing prerequisites as unperformed validation, never as passing checks.
+
+## Roadmap completion audit
+
+The completed roadmap is covered by the following implementation and regression suites:
+
+| Feature group | Evidence |
+| --- | --- |
+| Chart controls, task/workload costs, quadrant, zero-cost scale | `test/roadmap.test.ts`, `test/webview.spec.ts` |
+| Static registries, source switching, missing/expired prices | `test/roadmap.test.ts`, `test/source.test.ts`, `test/compare.test.ts` |
+| Thinking variants, pins, exclusions, saved profiles | `test/groups.test.ts`, `test/selection.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
+| Efficiency sort, freshness, snapshot/badge exports | `test/roadmap.test.ts`, `test/webview.spec.ts`; host exports reuse the displayed comparison inputs and sort |
+| Benchmark drift, failed refreshes, stale data | `test/roadmap.test.ts`, `test/api.test.ts`, `test/extension.test.ts` |
+| BYOK validation, provenance, billing isolation | `test/roadmap.test.ts`, `test/opencode.test.ts`, `test/extension.test.ts` |
+| Usage parsing, incremental scans, workspace labels, consent and erase races | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
+| Workload prefill, used-model filtering, budget percentiles including free requests | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
+
+The audit preserves the roadmap's completed status. It does not certify current provider prices, real-account discovery, or Marketplace publication; those require separate external verification.

@@ -1093,11 +1093,11 @@ test("usage budget suggestions handle empty and unpriced windows", () => {
     { workspaceId: "w", workspacePath: "/r", requests: [req("copilot/auto"), req("copilot/auto")] },
   ]);
   assert.equal(free.medianSample, 2);
-  assert.equal(free.premiumP90, null);
+  assert.equal(free.premiumP90, 0);
   assert.equal(free.dateRange, null);
   const legacyNote = suggestBudget(free, "legacy");
-  assert.equal(legacyNote?.value, null);
-  assert.match(legacyNote?.note ?? "", /No priced legacy/);
+  assert.equal(legacyNote?.value, 0);
+  assert.match(legacyNote?.note ?? "", /p90 of 2 requests/);
   const mystery = aggregateUsage([
     { workspaceId: "w", workspacePath: "/r", requests: [req("copilot/mystery")] },
   ]);
@@ -1337,4 +1337,22 @@ test("coverage: webview shell exposes new controls and CSP", async () => {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");
+});
+
+
+test("usage p90 includes free requests in mixed and all-free samples", () => {
+  const requests = Array.from({ length: 10 }, (_, i) => ({
+    sessionId: "s", workspaceId: "w", requestIndex: i,
+    modelId: i === 9 ? "copilot/gpt-5.4" : "copilot/auto",
+    timestampMs: Date.parse("2026-09-01"), promptTokens: 100, outputTokens: 50,
+    toolCallRounds: 0, tokensEstimated: false,
+  }));
+  const summary = aggregateUsage([{ workspaceId: "w", workspacePath: "/r", requests }]);
+  assert.equal(summary.premiumP90, 0);
+  assert.equal(suggestBudget(summary, "legacy")?.value, 0);
+  const entry = { name: "Auto", provider: "Test", benchmarkFamilies: [], ids: ["auto"], rates: { input: 0, read: 0, write: null, output: 0 } };
+  const free = aggregateUsage([{ workspaceId: "w", workspacePath: "/r", requests: requests.slice(0, 9) }], Date.now(), [entry]);
+  assert.equal(free.creditP90, 0);
+  assert.equal(free.creditSample, 9);
+  assert.equal(suggestBudget(free, "credits")?.value, 0);
 });

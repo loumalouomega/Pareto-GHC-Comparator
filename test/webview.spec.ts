@@ -225,7 +225,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       const structure = compare(
         listed,
         state.models,
-        { ...state.options, filter: "" },
+        { ...state.options, filter: "", onlyMine: false, freeOnly: false },
         mappings,
       );
       state.groups = buildGroups(listed as never, [...excluded], state.rows, structure);
@@ -551,9 +551,11 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
     // Only-my-models filter, workload prefill, and budget suggestion.
     await expect(page.locator("#usage-prefill-note")).toContainText("Median 150 prompt + 75 output");
+    const selectionLeaves = await page.locator(".check-leaf-row").allTextContents();
     await page.locator("#only-mine").check();
     await expect(page.locator("#count")).toHaveText("1 plotted / 1 models");
     await expect(page.locator("#rows")).toContainText("2 used");
+    expect((await page.locator(".check-leaf-row").allTextContents()).length).toBe(selectionLeaves.length);
     await page.locator("#only-mine").uncheck();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await page.locator("#usage-prefill").click();
