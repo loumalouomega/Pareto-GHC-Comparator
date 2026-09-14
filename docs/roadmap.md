@@ -17,30 +17,18 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 Per-model chart controls, static known-model registries, comparator-depth features (freshness alerts, efficiency sort, snapshot/badge exports, benchmark drift, OpenCode BYOK rates), and personal-usage features (history, workload prefill, used-model filtering, budget suggestions, workspace breakdown) are implemented. Verified behavior is recorded in AGENTS.md and user-visible changes in CHANGELOG.md; the completion-audit evidence is in [Testing](testing.md#roadmap-completion-audit).
 
-## Tier 1 — Comparison and integration reliability
+## Tier 1 — Outstanding integration validation
 
-Admission criterion: build on the existing comparator without requiring inference execution or new account integrations.
+Admission criterion: validate external environments that local automation cannot prove.
 
-### Mode to compare between options — M
+### OpenCode macOS/Windows and real-provider smoke validation — S
 
-- **Gap:** The view compares models within one active source and configuration. Switching sources or applying a saved workload replaces that context, making alternatives difficult to compare directly.
-- **Deliverables:** A side-by-side mode for two named options, each with its own source, model/variant selection, billing, and workload settings; initialize from the current view or saved workloads. Show settings differences, quality, estimated cost, and recommendations for each option. Preserve source identity, availability labels, pricing provenance, and benchmark snapshot dates in the view and exports.
-- **Dependencies:** Existing source adapters, comparison logic, saved workloads, and exports. The first version needs no currency conversion or execution integration.
-- **Acceptance:** Users can compare sources or two configurations of the same source without overwriting their saved workloads. Each side retains its own filters and selections. Use a shared benchmark snapshot and score preset for direct quality comparisons. Show cost deltas only for matching units and cost bases; differing workloads remain explicitly labeled scenario estimates. Keep separate frontiers for incompatible units or workloads. Missing prices/scores remain unknown, and failure to discover one source does not clear the other side. Exports identify both options and their assumptions.
+- **Gap:** Native executable resolution, provider fixtures, failure handling, and a three-platform CI job are implemented; local native-process validation ran on Linux only. A configured CI job is not evidence of a successful remote run or actual provider discovery.
+- **Deliverables:** Run the platform CI matrix and record real OpenCode discovery smoke results by OS, installation method, CLI version, and provider category; retain only sanitized diagnostics.
+- **Dependencies:** macOS/Windows runners or machines and user-provided OpenCode installations/accounts. No inference requests are required.
+- **Acceptance:** Document actual pass/fail evidence for executable paths with spaces, native PATH/fallback discovery, priced/unpriced/free-tier listings, and variant identity. Keep unavailable environments explicitly unverified and fix demonstrated compatibility gaps.
 
-### OpenCode provider and platform coverage — M
-
-- **Gap:** CLI discovery and pricing support exist, but macOS/Windows binary resolution and provider-specific output need an explicit compatibility matrix. CLI-priced providers and user-supplied BYOK fallbacks must remain distinguishable.
-- **Deliverables:** Platform-specific discovery tests and documented smoke-test results; sanitized fixtures for priced, unpriced, free-tier, and reasoning-variant providers; actionable guidance for missing binaries and unsupported output.
-- **Dependencies:** Existing OpenCode discovery and BYOK handling; platform environments for real smoke tests.
-- **Acceptance:** Tests cover paths with spaces, missing binaries, timeout/command errors, malformed output, and retained previous listings. Record unavailable platforms as unverified. Use CLI rates when present and explicit BYOK rates when eligible; never turn missing prices into zero.
-
-### Local usage schema resilience — M
-
-- **Gap:** Incremental parsing is implemented, but upstream session formats can change and incomplete data can be mistaken for a complete usage history.
-- **Deliverables:** A sanitized stable/Insiders fixture matrix, visible skipped/unsupported-file diagnostics, and parser-version invalidation when extraction changes. Explain which totals are observed, estimated, or unavailable without exposing chat content.
-- **Dependencies:** Existing consented scanning, incremental index, and usage panel.
-- **Acceptance:** Cover malformed/truncated sessions, unknown fields, deleted files, missing workspace metadata, and schema changes requiring a rescan. Preserve consent and erase behavior. Disclose missing token information and legacy text estimates; unsupported formats must not silently appear as verified zero usage.
+The two-option comparison mode and usage-schema resilience are implemented. A shared A/B editor persists its pair independently, and usage storage version 2 records token provenance and completeness diagnostics. See AGENTS.md and [Testing](testing.md#tier-1-validation).
 
 ## Tier 2 — Explicit assumptions and cost scenarios
 
@@ -57,14 +45,14 @@ Admission criterion: extend comparison using documented or user-supplied inputs,
 
 - **Gap:** Token estimates and history percentiles do not model subscription fees, included allowances, remaining balances, or negotiated rates.
 - **Deliverables:** Optional what-if inputs for expected usage, plan fees, allowances, and overage rates. Report estimated ranges and assumptions separately from observed history and per-task token costs; label user inputs versus provider-verified data.
-- **Dependencies:** Mode to compare between options; documented billing rules for each supported plan. Account balance integration is a separate investigation, not a prerequisite for manual scenarios.
+- **Dependencies:** Implemented option-comparison mode; documented billing rules for each supported plan. Account balance integration is a separate investigation, not a prerequisite for manual scenarios.
 - **Acceptance:** Cover zero usage, allowance boundaries, missing plan data, and rate changes. Do not double-count subscriptions or describe projections as actual bills or measured task-completion costs. Unsupported plans remain unavailable rather than approximated from another provider.
 
 ### Comparable cost normalization — M
 
 - **Gap:** Credits, premium requests, and USD cannot currently share a meaningful cost frontier.
 - **Deliverables:** An optional common-currency estimate only where a documented conversion or explicit plan scenario supplies the needed assumptions. Retain original units and show conversion provenance, date, and allowance treatment.
-- **Dependencies:** Mode to compare between options; Plan-aware spending scenarios for allowance-dependent conversions.
+- **Dependencies:** Implemented option-comparison mode; Plan-aware spending scenarios for allowance-dependent conversions.
 - **Acceptance:** No implicit universal credit/request exchange rate. Missing or incompatible assumptions keep options in separate panels/frontiers. Test conversion arithmetic and allowance boundaries, and preserve original and converted values in exports.
 
 ## Tier 3 — Feasibility investigations

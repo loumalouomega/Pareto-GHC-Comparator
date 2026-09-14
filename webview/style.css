@@ -380,3 +380,10 @@ a {
   margin-left: 26px;
   font-weight: 400;
 }
+
+.comparison-controls { display:flex; flex-wrap:wrap; gap:1rem; margin-bottom:1rem; }
+.comparison-panels { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; }
+.comparison-panels[hidden] { display:none; }
+.comparison-panel { min-width:0; overflow:auto; border:1px solid var(--vscode-panel-border); padding:1rem; }
+.comparison-chart { height:280px; position:relative; }
+@media(max-width:900px) { .comparison-panels { grid-template-columns:minmax(0,1fr); } }

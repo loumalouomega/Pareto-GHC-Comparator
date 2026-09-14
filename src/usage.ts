@@ -13,9 +13,18 @@ import {
   type UsageModelStat,
   type UsageRequest,
   type UsageSummary,
+  type UsageDiagnostics,
   type UsageWorkspaceStat,
 } from "./types";
-export const usageParserVersion = 1;
+export const usageParserVersion = 2;
+export const emptyUsageDiagnostics = (): UsageDiagnostics => ({
+  malformed: 0,
+  unsupported: 0,
+  unreadable: 0,
+  stale: 0,
+  missingTokens: 0,
+  estimatedTokens: 0,
+});
 export interface UsageCandidate {
   workspaceId: string;
   workspacePath: string;
@@ -29,10 +38,15 @@ export function storageCandidates(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   let base: string;
-  if (platform === "win32") base = env.APPDATA || join(homedir(), "AppData", "Roaming");
-  else if (platform === "darwin") base = join(homedir(), "Library", "Application Support");
+  if (platform === "win32")
+    base = env.APPDATA || join(homedir(), "AppData", "Roaming");
+  else if (platform === "darwin")
+    base = join(homedir(), "Library", "Application Support");
   else base = env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  return [join(base, "Code", "User", "workspaceStorage"), join(base, "Code - Insiders", "User", "workspaceStorage")];
+  return [
+    join(base, "Code", "User", "workspaceStorage"),
+    join(base, "Code - Insiders", "User", "workspaceStorage"),
+  ];
 }
 export function uriToPath(uri: string, storageRoot: string): string {
   if (uri.startsWith("file://")) {
@@ -76,10 +90,18 @@ export async function resolveWorkspace(
           .map((f) => {
             if (!f || typeof f !== "object") return "";
             const rec = f as Record<string, unknown>;
-            const ref = typeof rec.uri === "string" ? rec.uri : typeof rec.path === "string" ? rec.path : "";
+            const ref =
+              typeof rec.uri === "string"
+                ? rec.uri
+                : typeof rec.path === "string"
+                  ? rec.path
+                  : "";
             if (!ref) return "";
             const p = uriToPath(ref, storageRoot);
-            return ref.startsWith("file:///") || ref.includes("://") || p.startsWith("/") || /^[a-zA-Z]:/.test(p)
+            return ref.startsWith("file:///") ||
+              ref.includes("://") ||
+              p.startsWith("/") ||
+              /^[a-zA-Z]:/.test(p)
               ? p
               : join(dirname(resolved), p);
           })
@@ -94,6 +116,7 @@ export async function resolveWorkspace(
 }
 export async function discoverUsageFiles(
   roots: string[] = storageCandidates(),
+  unreadable: string[] = [],
 ): Promise<UsageCandidate[]> {
   const out: UsageCandidate[] = [];
   const seen = new Set<string>();
@@ -101,7 +124,9 @@ export async function discoverUsageFiles(
     let dirs: string[];
     try {
       dirs = await readdir(root);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        unreadable.push(root);
       continue;
     }
     for (const dir of dirs) {
@@ -109,7 +134,9 @@ export async function discoverUsageFiles(
       let entries: string[];
       try {
         entries = await readdir(join(dirPath, "chatSessions"));
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+          unreadable.push(join(dirPath, "chatSessions"));
         continue;
       }
       const { path: workspacePath } = await resolveWorkspace(dirPath, root);
@@ -129,8 +156,9 @@ export async function discoverUsageFiles(
             mtime: s.mtimeMs,
             legacy: entry.endsWith(".json"),
           });
-        } catch {
-          // Unreadable files are skipped, never fatal.
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+            unreadable.push(filePath);
         }
       }
     }
@@ -145,36 +173,74 @@ export function blankUsageIndex(): UsageIndex {
   return { version: 1, files: {} };
 }
 export interface StoredUsageFile {
-  version: 1;
+  version: 2;
   scannedAt: number;
   index: UsageIndex;
   files: Record<
     string,
-    { workspaceId: string; workspacePath: string; requests: UsageRequest[] }
+    {
+      workspaceId: string;
+      workspacePath: string;
+      requests: UsageRequest[];
+      diagnostics?: UsageDiagnostics;
+    }
   >;
 }
 export function validUsageFile(v: unknown): v is StoredUsageFile {
-  if (!recordOf(v) || v.version !== 1) return false;
-  if (typeof v.scannedAt !== "number" || !Number.isFinite(v.scannedAt)) return false;
-  const index = v.index;
-  if (!recordOf(index) || !recordOf(index.files)) return false;
-  for (const entry of Object.values(index.files)) {
+  if (
+    !recordOf(v) ||
+    v.version !== 2 ||
+    !validTime(v.scannedAt) ||
+    !recordOf(v.index) ||
+    v.index.version !== 1 ||
+    !recordOf(v.index.files) ||
+    !recordOf(v.files)
+  )
+    return false;
+  for (const entry of Object.values(v.index.files)) {
     if (
       !recordOf(entry) ||
-      typeof entry.size !== "number" ||
-      typeof entry.mtime !== "number" ||
-      typeof entry.parser !== "number"
+      token(entry.size) === undefined ||
+      !validTime(entry.mtime) ||
+      !Number.isSafeInteger(entry.parser) ||
+      (entry.parser as number) < 1
     )
       return false;
   }
-  if (!recordOf(v.files)) return false;
   for (const file of Object.values(v.files)) {
-    if (!recordOf(file) || !Array.isArray(file.requests)) return false;
+    if (
+      !recordOf(file) ||
+      typeof file.workspaceId !== "string" ||
+      typeof file.workspacePath !== "string" ||
+      !Array.isArray(file.requests)
+    )
+      return false;
+    if (
+      !recordOf(file.diagnostics) ||
+      Object.keys(emptyUsageDiagnostics()).some(
+        (k) =>
+          token((file.diagnostics as Record<string, unknown>)[k]) === undefined,
+      )
+    )
+      return false;
     for (const r of file.requests) {
       if (
         !recordOf(r) ||
-        typeof r.promptTokens !== "number" ||
-        typeof r.outputTokens !== "number"
+        typeof r.sessionId !== "string" ||
+        typeof r.workspaceId !== "string" ||
+        token(r.requestIndex) === undefined ||
+        token(r.promptTokens) === undefined ||
+        token(r.outputTokens) === undefined ||
+        token(r.toolCallRounds) === undefined ||
+        typeof r.tokensEstimated !== "boolean" ||
+        (r.modelId !== null && typeof r.modelId !== "string") ||
+        (r.timestampMs !== null && !validTime(r.timestampMs)) ||
+        !["observed", "estimated", "missing"].includes(
+          r.promptProvenance as string,
+        ) ||
+        !["observed", "estimated", "missing"].includes(
+          r.outputProvenance as string,
+        )
       )
         return false;
     }
@@ -200,13 +266,21 @@ export function selectChangedFiles(
 }
 const recordOf = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
+const validTime = (v: unknown): v is number =>
+  typeof v === "number" &&
+  Number.isFinite(v) &&
+  v >= 0 &&
+  v <= 8640000000000000;
 const numOr = (v: unknown): number | undefined =>
-  typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  validTime(v) ? v : undefined;
+const token = (v: unknown): number | undefined =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
 function normaliseResolvedModel(raw: string): string | null {
   if (!raw) return null;
   return `copilot/${raw.replace(/(-\d+)-(\d+)$/, "$1.$2")}`;
 }
 export interface ParsedUsageFile {
+  diagnostics: UsageDiagnostics;
   anchor: { sessionId: string; creationDate?: number; modelId?: string };
   requests: UsageRequest[];
 }
@@ -215,10 +289,15 @@ export function parseUsageJsonl(
   workspaceId: string,
   fileStem: string,
 ): ParsedUsageFile {
+  const diagnostics = emptyUsageDiagnostics();
+  let recognized = false;
   let sessionId = fileStem;
   let creationDate: number | undefined;
   let anchorModel: string | undefined;
-  const appends = new Map<number, { modelId?: string; requestId?: string; timestamp?: number }>();
+  const appends = new Map<
+    number,
+    { modelId?: string; requestId?: string; timestamp?: number }
+  >();
   const results: { index: number; value: Record<string, unknown> }[] = [];
   let nextIndex = 0;
   for (const line of text.split("\n")) {
@@ -227,27 +306,46 @@ export function parseUsageJsonl(
     try {
       obj = JSON.parse(line);
     } catch {
+      diagnostics.malformed++;
       continue;
     }
-    if (!recordOf(obj)) continue;
+    if (!recordOf(obj)) {
+      diagnostics.malformed++;
+      continue;
+    }
     const kind = obj.kind;
     const v = recordOf(obj.v) ? obj.v : recordOf(obj) ? obj : undefined;
     if (kind === 0 && v) {
-      if (typeof v.sessionId === "string" && v.sessionId) sessionId = v.sessionId;
+      recognized = true;
+      if (typeof v.sessionId === "string" && v.sessionId)
+        sessionId = v.sessionId;
       const cd = numOr(v.creationDate);
       if (cd !== undefined) creationDate = cd;
       const inputState = recordOf(v.inputState) ? v.inputState : undefined;
-      const selected = inputState && recordOf(inputState.selectedModel) ? inputState.selectedModel : undefined;
-      if (selected && typeof selected.identifier === "string") anchorModel = selected.identifier;
-    } else if (kind === 2 && Array.isArray(obj.k) && obj.k.length === 1 && obj.k[0] === "requests" && Array.isArray(obj.v)) {
+      const selected =
+        inputState && recordOf(inputState.selectedModel)
+          ? inputState.selectedModel
+          : undefined;
+      if (selected && typeof selected.identifier === "string")
+        anchorModel = selected.identifier;
+    } else if (
+      kind === 2 &&
+      Array.isArray(obj.k) &&
+      obj.k.length === 1 &&
+      obj.k[0] === "requests" &&
+      Array.isArray(obj.v)
+    ) {
+      recognized = true;
       for (const item of obj.v) {
         if (!recordOf(item)) {
+          diagnostics.malformed++;
           nextIndex++;
           continue;
         }
         appends.set(nextIndex, {
           modelId: typeof item.modelId === "string" ? item.modelId : undefined,
-          requestId: typeof item.requestId === "string" ? item.requestId : undefined,
+          requestId:
+            typeof item.requestId === "string" ? item.requestId : undefined,
           timestamp: numOr(item.timestamp),
         });
         nextIndex++;
@@ -261,19 +359,37 @@ export function parseUsageJsonl(
       obj.k[2] === "result" &&
       recordOf(obj.v)
     ) {
-      results.push({ index: obj.k[1] as number, value: obj.v });
+      recognized = true;
+      if (token(obj.k[1]) === undefined) {
+        diagnostics.malformed++;
+        continue;
+      }
+      const requestIndex = obj.k[1] as number;
+      const existing = results.findIndex((r) => r.index === requestIndex);
+      const result = { index: obj.k[1] as number, value: obj.v };
+      if (existing >= 0) results[existing] = result;
+      else results.push(result);
     }
   }
+  if (!recognized) diagnostics.unsupported = 1;
   const requests: UsageRequest[] = results.map(({ index, value }) => {
     const md = recordOf(value.metadata) ? value.metadata : {};
     const usage = recordOf(value.usage) ? value.usage : {};
-    const promptTokens = numOr(md.promptTokens) || numOr(usage.promptTokens) || 0;
-    const outputTokens = numOr(md.outputTokens) || numOr(usage.completionTokens) || 0;
+    const promptValue = token(md.promptTokens) ?? token(usage.promptTokens);
+    const promptTokens = promptValue ?? 0;
+    const outputValue = token(md.outputTokens) ?? token(usage.completionTokens);
+    const outputTokens = outputValue ?? 0;
     const timings = recordOf(value.timings) ? value.timings : {};
     const rounds = Array.isArray(md.toolCallRounds) ? md.toolCallRounds : [];
-    const firstRound = rounds.length > 0 && recordOf(rounds[0]) ? (rounds[0] as Record<string, unknown>) : {};
+    const firstRound =
+      rounds.length > 0 && recordOf(rounds[0])
+        ? (rounds[0] as Record<string, unknown>)
+        : {};
     const append = appends.get(index) ?? {};
-    const resolved = typeof md.resolvedModel === "string" ? normaliseResolvedModel(md.resolvedModel) : null;
+    const resolved =
+      typeof md.resolvedModel === "string"
+        ? normaliseResolvedModel(md.resolvedModel)
+        : null;
     return {
       sessionId,
       workspaceId,
@@ -295,14 +411,24 @@ export function parseUsageJsonl(
       promptTokens,
       outputTokens,
       toolCallRounds: rounds.length,
+      promptProvenance: promptValue === undefined ? "missing" : "observed",
+      outputProvenance: outputValue === undefined ? "missing" : "observed",
       tokensEstimated: false,
     };
   });
-  return { anchor: { sessionId, creationDate, modelId: anchorModel }, requests };
+  diagnostics.missingTokens = requests.filter(
+    (r) => r.promptProvenance === "missing" || r.outputProvenance === "missing",
+  ).length;
+  return {
+    anchor: { sessionId, creationDate, modelId: anchorModel },
+    requests,
+    diagnostics,
+  };
 }
 function legacyText(value: unknown): string {
   if (typeof value === "string") return value;
-  if (recordOf(value) && typeof value.content === "string") return value.content;
+  if (recordOf(value) && typeof value.content === "string")
+    return value.content;
   return "";
 }
 export function parseUsageLegacyJson(
@@ -310,46 +436,81 @@ export function parseUsageLegacyJson(
   workspaceId: string,
   fileStem: string,
 ): ParsedUsageFile {
+  const diagnostics = emptyUsageDiagnostics();
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { anchor: { sessionId: fileStem }, requests: [] };
+    return {
+      anchor: { sessionId: fileStem },
+      requests: [],
+      diagnostics: { ...diagnostics, unsupported: 1, malformed: 1 },
+    };
   }
-  if (!recordOf(parsed)) return { anchor: { sessionId: fileStem }, requests: [] };
-  const sessionId = typeof parsed.sessionId === "string" && parsed.sessionId ? parsed.sessionId : fileStem;
+  if (!recordOf(parsed) || !Array.isArray(parsed.requests))
+    return {
+      anchor: { sessionId: fileStem },
+      requests: [],
+      diagnostics: { ...diagnostics, unsupported: 1 },
+    };
+  const sessionId =
+    typeof parsed.sessionId === "string" && parsed.sessionId
+      ? parsed.sessionId
+      : fileStem;
   const creationDate = numOr(parsed.creationDate);
   const selected = recordOf(parsed.selectedModel) ? parsed.selectedModel : {};
   const anchorModel =
-    typeof selected.id === "string" ? selected.id : typeof selected.identifier === "string" ? selected.identifier : undefined;
+    typeof selected.id === "string"
+      ? selected.id
+      : typeof selected.identifier === "string"
+        ? selected.identifier
+        : undefined;
   const list = Array.isArray(parsed.requests) ? parsed.requests : [];
   const requests: UsageRequest[] = [];
   list.forEach((item, index) => {
-    if (!recordOf(item)) return;
+    if (!recordOf(item)) {
+      diagnostics.malformed++;
+      return;
+    }
     const message = recordOf(item.message) ? item.message : {};
     const variables =
-      recordOf(item.variableData) && Array.isArray(item.variableData.variables) ? item.variableData.variables : [];
+      recordOf(item.variableData) && Array.isArray(item.variableData.variables)
+        ? item.variableData.variables
+        : [];
     const promptText = [typeof message.text === "string" ? message.text : ""]
-      .concat(variables.map((x) => (recordOf(x) && typeof x.value === "string" ? x.value : "")))
+      .concat(
+        variables.map((x) =>
+          recordOf(x) && typeof x.value === "string" ? x.value : "",
+        ),
+      )
       .join("\n");
     const response = item.response;
-    const result = recordOf(response) && recordOf(response.result) ? response.result : {};
+    const result =
+      recordOf(response) && recordOf(response.result) ? response.result : {};
     const md = recordOf(result.metadata) ? result.metadata : {};
     const usage = recordOf(result.usage) ? result.usage : {};
-    let promptTokens = numOr(md.promptTokens) || numOr(usage.promptTokens) || 0;
-    let outputTokens = numOr(md.outputTokens) || numOr(usage.completionTokens) || 0;
+    const promptValue = token(md.promptTokens) ?? token(usage.promptTokens);
+    let promptTokens = promptValue ?? 0;
+    let promptProvenance: UsageRequest["promptProvenance"] =
+      promptValue === undefined ? "missing" : "observed";
+    const outputValue = token(md.outputTokens) ?? token(usage.completionTokens);
+    let outputTokens = outputValue ?? 0;
+    let outputProvenance: UsageRequest["outputProvenance"] =
+      outputValue === undefined ? "missing" : "observed";
     let tokensEstimated = false;
-    if (!promptTokens || !outputTokens) {
+    if (promptValue === undefined || outputValue === undefined) {
       const respText = Array.isArray(response)
         ? response.map(legacyText).join("\n")
         : typeof result.value === "string"
           ? result.value
           : "";
-      if (!promptTokens && promptText.trim()) {
+      if (promptValue === undefined && promptText.trim()) {
+        promptProvenance = "estimated";
         promptTokens = Math.max(1, Math.floor(promptText.length / 4));
         tokensEstimated = true;
       }
-      if (!outputTokens && respText.trim()) {
+      if (outputValue === undefined && respText.trim()) {
+        outputProvenance = "estimated";
         outputTokens = Math.max(1, Math.floor(respText.length / 4));
         tokensEstimated = true;
       }
@@ -360,18 +521,39 @@ export function parseUsageLegacyJson(
       sessionId,
       workspaceId,
       requestIndex: index,
-      modelId: (typeof md.modelId === "string" && md.modelId) || anchorModel || null,
-      timestampMs: numOr(timings.requestSent) ?? numOr(timings.firstTokenReceived) ?? creationDate ?? null,
+      modelId:
+        (typeof md.modelId === "string" && md.modelId) || anchorModel || null,
+      timestampMs:
+        numOr(timings.requestSent) ??
+        numOr(timings.firstTokenReceived) ??
+        creationDate ??
+        null,
       promptTokens,
       outputTokens,
       toolCallRounds: rounds.length,
+      promptProvenance,
+      outputProvenance,
       tokensEstimated,
     });
   });
-  return { anchor: { sessionId, creationDate, modelId: anchorModel }, requests };
+  diagnostics.missingTokens = requests.filter(
+    (r) => r.promptProvenance === "missing" || r.outputProvenance === "missing",
+  ).length;
+  diagnostics.estimatedTokens = requests.filter(
+    (r) => r.tokensEstimated,
+  ).length;
+  return {
+    anchor: { sessionId, creationDate, modelId: anchorModel },
+    requests,
+    diagnostics,
+  };
 }
-export function premiumForRequest(request: UsageRequest): { value: number; estimated: boolean } {
-  if (request.promptTokens + request.outputTokens <= 0) return { value: 0, estimated: false };
+export function premiumForRequest(request: UsageRequest): {
+  value: number;
+  estimated: boolean;
+} {
+  if (request.promptTokens + request.outputTokens <= 0)
+    return { value: 0, estimated: false };
   const auto = request.modelId === "copilot/auto";
   return usageMultiplier(request.modelId, request.timestampMs, auto);
 }
@@ -388,22 +570,35 @@ function medianOf(values: number[]): number {
   return Math.min(100000000, Math.max(0, Math.round(median)));
 }
 function quantileOf(values: number[], q: number): number | null {
-  const priced = values.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b);
+  const priced = values
+    .filter((v) => Number.isFinite(v) && v >= 0)
+    .sort((a, b) => a - b);
   if (!priced.length) return null;
   return priced[Math.min(priced.length - 1, Math.ceil(q * priced.length) - 1)];
 }
 function stripCopilotPrefix(modelId: string | null): string | null {
   if (!modelId) return null;
-  return modelId.startsWith("copilot/") ? modelId.slice("copilot/".length) : modelId;
+  return modelId.startsWith("copilot/")
+    ? modelId.slice("copilot/".length)
+    : modelId;
 }
 export function normalizeUsageModelId(modelId: string | null): string | null {
   return stripCopilotPrefix(modelId);
 }
 export function aggregateUsage(
-  files: { workspaceId: string; workspacePath: string; requests: UsageRequest[] }[],
+  files: {
+    workspaceId: string;
+    workspacePath: string;
+    requests: UsageRequest[];
+    diagnostics?: UsageDiagnostics;
+  }[],
   scannedAt = Date.now(),
   entries: CatalogEntry[] = catalog,
 ): UsageSummary {
+  const diagnostics = emptyUsageDiagnostics();
+  for (const file of files)
+    for (const key of Object.keys(diagnostics) as (keyof UsageDiagnostics)[])
+      diagnostics[key] += file.diagnostics?.[key] ?? 0;
   const models = new Map<string, UsageModelStat & { key: string }>();
   const days = new Map<string, UsageDayStat>();
   const workspaces = new Map<string, UsageWorkspaceStat>();
@@ -416,9 +611,22 @@ export function aggregateUsage(
     from: number | null = null,
     to: number | null = null;
   const bump = (
-    map: Map<string, { requests: number; promptTokens: number; outputTokens: number; premiumEstimate: number }>,
+    map: Map<
+      string,
+      {
+        requests: number;
+        promptTokens: number;
+        outputTokens: number;
+        premiumEstimate: number;
+      }
+    >,
     key: string,
-    make: () => { requests: number; promptTokens: number; outputTokens: number; premiumEstimate: number },
+    make: () => {
+      requests: number;
+      promptTokens: number;
+      outputTokens: number;
+      premiumEstimate: number;
+    },
     r: UsageRequest,
     premium: number,
   ) => {
@@ -436,7 +644,14 @@ export function aggregateUsage(
   for (const file of files) {
     let ws = workspaces.get(file.workspaceId);
     if (!ws) {
-      ws = { id: file.workspaceId, path: file.workspacePath, requests: 0, promptTokens: 0, outputTokens: 0, premiumEstimate: 0 };
+      ws = {
+        id: file.workspaceId,
+        path: file.workspacePath,
+        requests: 0,
+        promptTokens: 0,
+        outputTokens: 0,
+        premiumEstimate: 0,
+      };
       workspaces.set(file.workspaceId, ws);
     }
     for (const r of file.requests) {
@@ -452,9 +667,35 @@ export function aggregateUsage(
       premiumEstimate += premium.value;
       if (premium.estimated && r.modelId) unknown.add(r.modelId);
       const key = r.modelId ?? "unknown";
-      bump(models, key, () => ({ key, modelId: key, requests: 0, promptTokens: 0, outputTokens: 0, premiumEstimate: 0 }), r, premium.value);
+      bump(
+        models,
+        key,
+        () => ({
+          key,
+          modelId: key,
+          requests: 0,
+          promptTokens: 0,
+          outputTokens: 0,
+          premiumEstimate: 0,
+        }),
+        r,
+        premium.value,
+      );
       const day = dayOf(r.timestampMs);
-      if (day) bump(days, day, () => ({ date: day, requests: 0, promptTokens: 0, outputTokens: 0, premiumEstimate: 0 }), r, premium.value);
+      if (day)
+        bump(
+          days,
+          day,
+          () => ({
+            date: day,
+            requests: 0,
+            promptTokens: 0,
+            outputTokens: 0,
+            premiumEstimate: 0,
+          }),
+          r,
+          premium.value,
+        );
       ws.requests++;
       ws.promptTokens += r.promptTokens;
       ws.outputTokens += r.outputTokens;
@@ -469,7 +710,11 @@ export function aggregateUsage(
   const credits: number[] = [];
   for (const file of files) {
     for (const r of file.requests) {
-      if (r.promptTokens + r.outputTokens <= 0) continue;
+      if (
+        r.promptProvenance !== "observed" ||
+        r.outputProvenance !== "observed"
+      )
+        continue;
       prompts.push(r.promptTokens);
       outputs.push(r.outputTokens);
       const premium = premiumForRequest(r);
@@ -495,6 +740,7 @@ export function aggregateUsage(
   const creditSample = credits.length;
   return {
     scannedAt,
+    diagnostics,
     fileCount: totalFiles,
     requestCount,
     promptTokens,
@@ -511,7 +757,9 @@ export function aggregateUsage(
     creditSample,
     models: [...models.values()]
       .map((m) => ({ ...m, premiumEstimate: round2(m.premiumEstimate) }))
-      .sort((a, b) => b.requests - a.requests || a.modelId.localeCompare(b.modelId)),
+      .sort(
+        (a, b) => b.requests - a.requests || a.modelId.localeCompare(b.modelId),
+      ),
     days: [...days.values()]
       .map((d) => ({ ...d, premiumEstimate: round2(d.premiumEstimate) }))
       .sort((a, b) => (a.date < b.date ? -1 : 1)),
@@ -525,13 +773,15 @@ export function suggestBudget(
   billing: Billing,
 ): BudgetSuggestion | null {
   if (!summary || summary.medianSample === 0) return null;
-  const window =
-    summary.dateRange
-      ? `${new Date(summary.dateRange.from).toLocaleDateString()} – ${new Date(summary.dateRange.to).toLocaleDateString()}`
-      : "undated requests";
+  const window = summary.dateRange
+    ? `${new Date(summary.dateRange.from).toLocaleDateString()} – ${new Date(summary.dateRange.to).toLocaleDateString()}`
+    : "undated requests";
   if (billing === "legacy") {
     if (summary.premiumP90 === null)
-      return { value: null, note: `No priced legacy requests in ${summary.medianSample} sampled requests.` };
+      return {
+        value: null,
+        note: `No priced legacy requests in ${summary.medianSample} sampled requests.`,
+      };
     return {
       value: summary.premiumP90,
       note: `p90 of ${summary.medianSample} requests · ${window}.`,
@@ -539,7 +789,10 @@ export function suggestBudget(
   }
   if (billing === "credits") {
     if (summary.creditP90 === null)
-      return { value: null, note: `No priced credit requests in ${summary.medianSample} sampled requests.` };
+      return {
+        value: null,
+        note: `No priced credit requests in ${summary.medianSample} sampled requests.`,
+      };
     return {
       value: summary.creditP90,
       note: `p90 of ${summary.creditSample} priced requests · ${window}.`,

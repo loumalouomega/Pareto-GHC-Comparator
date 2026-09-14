@@ -1016,16 +1016,16 @@ test("usage file index selects changed files and reports deletions", () => {
   });
   const index = blankUsageIndex();
   assert.equal(index.version, 1);
-  assert.equal(usageParserVersion, 1);
-  index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: 1 };
-  index.files["/gone.jsonl"] = { size: 1, mtime: 1, parser: 1 };
+  assert.equal(usageParserVersion, 2);
+  index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: usageParserVersion };
+  index.files["/gone.jsonl"] = { size: 1, mtime: 1, parser: usageParserVersion };
   const { changed, deleted } = selectChangedFiles(
     [cand("/a.jsonl", 10, 100), cand("/b.jsonl", 5, 50)],
     index,
   );
   assert.deepEqual(changed.map((c) => c.filePath), ["/b.jsonl"]);
   assert.deepEqual(deleted, ["/gone.jsonl"]);
-  index.files["/a.jsonl"] = { size: 11, mtime: 100, parser: 1 };
+  index.files["/a.jsonl"] = { size: 11, mtime: 100, parser: usageParserVersion };
   assert.equal(selectChangedFiles([cand("/a.jsonl", 12, 100)], index).changed.length, 1);
   index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: 0 };
   assert.equal(selectChangedFiles([cand("/a.jsonl", 10, 100)], index).changed.length, 1);
@@ -1049,7 +1049,7 @@ test("usage aggregation totals requests with per-event premium eras", () => {
         {
           sessionId: "s", workspaceId: "w1", requestIndex: 0, modelId: "copilot/gpt-5-mini",
           timestampMs: Date.parse("2026-05-01"), promptTokens: 100, outputTokens: 50,
-          toolCallRounds: 0, tokensEstimated: false,
+          toolCallRounds: 0, tokensEstimated: false, promptProvenance: "observed" as const, outputProvenance: "observed" as const,
         },
         {
           sessionId: "s", workspaceId: "w1", requestIndex: 1, modelId: "copilot/gpt-5-mini",
@@ -1059,7 +1059,7 @@ test("usage aggregation totals requests with per-event premium eras", () => {
         {
           sessionId: "s", workspaceId: "w1", requestIndex: 2, modelId: "copilot/mystery",
           timestampMs: null, promptTokens: 10, outputTokens: 5,
-          toolCallRounds: 0, tokensEstimated: false,
+          toolCallRounds: 0, tokensEstimated: false, promptProvenance: "observed" as const, outputProvenance: "observed" as const,
         },
       ],
     },
@@ -1076,9 +1076,9 @@ test("usage aggregation totals requests with per-event premium eras", () => {
   assert.equal(summary.workspaces[0].id, "w1");
   assert.deepEqual(premiumForRequest({
     sessionId: "s", workspaceId: "w", requestIndex: 0, modelId: "x",
-    timestampMs: null, promptTokens: 0, outputTokens: 0, toolCallRounds: 0, tokensEstimated: false,
+    timestampMs: null, promptTokens: 0, outputTokens: 0, toolCallRounds: 0, tokensEstimated: false, promptProvenance: "observed" as const, outputProvenance: "observed" as const,
   }), { value: 0, estimated: false });
-  assert.ok(validUsageFile({ version: 1, scannedAt: 1, index: blankUsageIndex(), files: {} }));
+  assert.ok(validUsageFile({ version: 2, scannedAt: 1, index: blankUsageIndex(), files: {} }));
   assert.equal(validUsageFile({ version: 2 }), false);
   assert.equal(validUsageFile(null), false);
 });
@@ -1087,7 +1087,7 @@ test("usage budget suggestions handle empty and unpriced windows", () => {
   const req = (modelId: string | null) => ({
     sessionId: "s", workspaceId: "w", requestIndex: 0, modelId,
     timestampMs: null as number | null, promptTokens: 100, outputTokens: 50,
-    toolCallRounds: 0, tokensEstimated: false,
+    toolCallRounds: 0, tokensEstimated: false, promptProvenance: "observed" as const, outputProvenance: "observed" as const,
   });
   const free = aggregateUsage([
     { workspaceId: "w", workspacePath: "/r", requests: [req("copilot/auto"), req("copilot/auto")] },
@@ -1127,17 +1127,17 @@ test("usage medians and p90s summarize priced requests", () => {
   const req = (promptTokens: number, outputTokens: number, modelId: string | null = "copilot/gpt-5-mini") => ({
     sessionId: "s", workspaceId: "w", requestIndex: 0, modelId,
     timestampMs: Date.parse("2026-09-01"), promptTokens, outputTokens,
-    toolCallRounds: 0, tokensEstimated: false,
+    toolCallRounds: 0, tokensEstimated: false, promptProvenance: "observed" as const, outputProvenance: "observed" as const,
   });
   const summary = aggregateUsage([
     { workspaceId: "w", workspacePath: "/r", requests: [req(0, 0), req(100, 50), req(200, 100), req(300, 150)] },
   ]);
-  assert.equal(summary.medianPrompt, 200);
-  assert.equal(summary.medianOutput, 100);
-  assert.equal(summary.medianSample, 3);
+  assert.equal(summary.medianPrompt, 150);
+  assert.equal(summary.medianOutput, 75);
+  assert.equal(summary.medianSample, 4);
   assert.ok((summary.premiumP90 ?? 0) > 0);
   assert.ok((summary.creditP90 ?? 0) > 0);
-  assert.equal(summary.creditSample, 3);
+  assert.equal(summary.creditSample, 4);
   const empty = aggregateUsage([]);
   assert.equal(empty.medianSample, 0);
   assert.equal(empty.premiumP90, null);
@@ -1145,7 +1145,7 @@ test("usage medians and p90s summarize priced requests", () => {
   assert.equal(suggestBudget(empty, "credits"), null);
   const legacy = suggestBudget(summary, "legacy");
   assert.equal(legacy?.value, summary.premiumP90);
-  assert.match(legacy?.note ?? "", /p90 of 3 requests/);
+  assert.match(legacy?.note ?? "", /p90 of 4 requests/);
   const credits = suggestBudget(summary, "credits");
   assert.equal(credits?.value, summary.creditP90);
   const usd = suggestBudget(summary, "usd");
@@ -1261,7 +1261,7 @@ test("usage resolution tolerates malformed workspace metadata", async () => {
   assert.ok(!validUsageFile({
     version: 1,
     scannedAt: 1,
-    index: { version: 1, files: { f: { size: "x", mtime: 1, parser: 1 } } },
+    index: { version: 1, files: { f: { size: "x", mtime: 1, parser: usageParserVersion } } },
     files: {},
   }));
 });
@@ -1345,7 +1345,7 @@ test("usage p90 includes free requests in mixed and all-free samples", () => {
     sessionId: "s", workspaceId: "w", requestIndex: i,
     modelId: i === 9 ? "copilot/gpt-5.4" : "copilot/auto",
     timestampMs: Date.parse("2026-09-01"), promptTokens: 100, outputTokens: 50,
-    toolCallRounds: 0, tokensEstimated: false,
+    toolCallRounds: 0, tokensEstimated: false, promptProvenance: "observed" as const, outputProvenance: "observed" as const,
   }));
   const summary = aggregateUsage([{ workspaceId: "w", workspacePath: "/r", requests }]);
   assert.equal(summary.premiumP90, 0);

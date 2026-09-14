@@ -1,6 +1,6 @@
 import { test, vi } from "vitest";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
@@ -12,6 +12,8 @@ test("extension discovers Copilot models, serves cached data, validates messages
   const copied: string[] = [];
   const kicks: (() => void)[] = [];
   const writes: string[] = [];
+  const exports: string[] = [];
+  const storageFiles = new Map<string, Uint8Array>();
   let pauseWrite: (() => Promise<void>) | undefined;
   let deleted = false;
   let deleteError = false;
@@ -93,6 +95,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
         reveal() {},
       }),
       showInputBox: async () => secret,
+      showSaveDialog: async () => ({ path: "/exports/data" }),
       showInformationMessage: async () => "Scan locally",
     },
     workspace: {
@@ -108,12 +111,16 @@ test("extension discovers Copilot models, serves cached data, validates messages
       }),
       fs: {
         readFile: async (uri: { path: string }) =>
+          storageFiles.get(uri.path) ??
           Buffer.from(
             JSON.stringify(uri.path.includes("prev") ? prevCache : cache),
           ),
         createDirectory: async () => {},
-        writeFile: async (uri: { path: string }) => {
+        writeFile: async (uri: { path: string }, data: Uint8Array) => {
+          if (uri.path === "/exports/data")
+            exports.push(Buffer.from(data).toString());
           writes.push(uri.path);
+          storageFiles.set(uri.path, data);
           await pauseWrite?.();
         },
         delete: async (uri: { path: string }) => {
@@ -121,8 +128,12 @@ test("extension discovers Copilot models, serves cached data, validates messages
             if (deleteError) throw new Error("write denied");
             deleted = true;
           }
+          storageFiles.delete(uri.path);
         },
-        rename: async () => {},
+        rename: async (from: { path: string }, to: { path: string }) => {
+          storageFiles.set(to.path, storageFiles.get(from.path)!);
+          storageFiles.delete(from.path);
+        },
       },
     },
     lm: {
@@ -286,6 +297,79 @@ test("extension discovers Copilot models, serves cached data, validates messages
   assert.ok(!JSON.stringify(messages).includes(secret));
   await commands.get("paretoGhc.clearApiKey")!();
   assert.equal(last().hasKey, false);
+  const originalOptions = structuredClone(last().options);
+  const originalProfile = structuredClone(state.get("profiles"));
+  await receiver({ type: "comparison", enabled: true });
+  assert.equal(last().comparison.active, "A");
+  await receiver({
+    type: "target",
+    side: "A",
+    action: { type: "pin", id: "gpt-5-mini", benchmarkId: "other" },
+  });
+  assert.equal(last().comparison.sides.A.rows[0].benchmark.id, "other");
+  assert.equal(last().comparison.sides.B.rows[0].benchmark.id, "aa");
+  await receiver({
+    type: "target",
+    side: "A",
+    action: { type: "unpin", id: "gpt-5-mini", benchmarkId: "other" },
+  });
+
+  await receiver({ type: "comparison", active: "B", name: "Alternative" });
+  await receiver({
+    type: "target",
+    side: "B",
+    action: { type: "source", source: "codex" },
+  });
+  assert.equal(last().comparison.sides.A.options.source, "copilot");
+  assert.equal(last().comparison.sides.B.options.source, "codex");
+  await receiver({
+    type: "target",
+    side: "B",
+    action: {
+      type: "options",
+      options: { ...last().options, filter: "", preset: "coding" },
+    },
+  });
+  assert.equal(last().comparison.sides.A.options.preset, "coding");
+  assert.deepEqual(state.get("options"), originalOptions);
+  await receiver({
+    type: "target",
+    side: "A",
+    action: { type: "excludeAll", excluded: true },
+  });
+  assert.equal(last().comparison.sides.A.rows.length, 0);
+  assert.ok(last().comparison.sides.B.rows.length > 0);
+  await receiver({
+    type: "target",
+    side: "B",
+    action: { type: "exportSnapshot" },
+  });
+  const snapshotExport = JSON.parse(exports.at(-1)!);
+  assert.equal(snapshotExport.version, 2);
+  assert.equal(snapshotExport.options.length, 2);
+  assert.deepEqual(
+    snapshotExport.options[1].rows,
+    JSON.parse(JSON.stringify(last().comparison.sides.B.rows)),
+  );
+  await receiver({ type: "target", side: "B", action: { type: "exportCsv" } });
+  assert.match(exports.at(-1)!, /option,assumptions/);
+  assert.match(exports.at(-1)!, /\nA,/);
+  assert.match(exports.at(-1)!, /\nB,/);
+  await receiver({
+    type: "target",
+    side: "B",
+    action: { type: "profile", change: { action: "apply", id: profileId } },
+  });
+  assert.equal(last().comparison.sides.B.options.source, "copilot");
+  assert.deepEqual(state.get("profiles"), originalProfile);
+  await receiver({ type: "comparison", enabled: false });
+  assert.deepEqual(last().options, originalOptions);
+  assert.equal(last().comparison, undefined);
+  await receiver({ type: "comparison", enabled: true });
+  assert.equal(last().comparison.sides.B.name, "Alternative");
+  assert.equal(last().comparison.sides.A.rows.length, 0);
+  await receiver({ type: "comparison", enabled: false });
+  writes.length = 0;
   const home = process.env.HOME;
   const xdg = process.env.XDG_CONFIG_HOME;
   const appdata = process.env.APPDATA;
@@ -300,6 +384,47 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(last().usage.fileCount, 0);
     assert.match(last().message, /Local usage ready/);
     assert.equal(last().usageWatching, true);
+    const sessionDir = join(
+      empty,
+      "xdg",
+      "Code",
+      "User",
+      "workspaceStorage",
+      "ws",
+      "chatSessions",
+    );
+    mkdirSync(sessionDir, { recursive: true });
+    const sessionPath = join(sessionDir, "fixture.jsonl");
+    const session = JSON.stringify({
+      kind: 1,
+      k: ["requests", 0, "result"],
+      v: {
+        metadata: {
+          modelId: "copilot/gpt-5-mini",
+          promptTokens: 0,
+          outputTokens: 12,
+        },
+      },
+    });
+    writeFileSync(sessionPath, session);
+    await receiver({ type: "scanUsage" });
+    assert.equal(last().usage.requestCount, 1);
+    assert.equal(last().usage.medianSample, 1);
+    writeFileSync(sessionPath, '{"unsupported":true}');
+    await receiver({ type: "scanUsage" });
+    assert.equal(last().usage.requestCount, 1);
+    assert.equal(last().usage.diagnostics.stale, 1);
+    assert.equal(last().usage.diagnostics.unsupported, 1);
+    writeFileSync(sessionPath, session + "\n{truncated");
+    await receiver({ type: "scanUsage" });
+    assert.equal(last().usage.requestCount, 1);
+    assert.equal(last().usage.diagnostics.malformed, 1);
+    unlinkSync(sessionPath);
+    await receiver({ type: "scanUsage" });
+    assert.equal(last().usage.requestCount, 0);
+    assert.equal(last().usage.diagnostics.stale, 0);
+    assert.equal(last().usage.diagnostics.malformed, 0);
+
     assert.ok(
       writes.every((path) => /usage.json\.[a-f0-9]+\.tmp.json$/.test(path)),
     );

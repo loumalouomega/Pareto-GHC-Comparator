@@ -1,3 +1,11 @@
+import {
+  loadComparison,
+  optionResult,
+  comparisonDelta,
+  type ComparisonOption,
+  type ComparisonStore,
+  type Side,
+} from "./comparison";
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
@@ -13,7 +21,7 @@ import {
 import { discoverOpenCode, OpenCodeError } from "./opencode";
 import { staticModels, staticRegistryDate } from "./staticSources";
 import { buildGroups } from "./groups";
-import { defaultBilling } from "./sources";
+import { defaultBilling, sources } from "./sources";
 import { exportBadge, exportCsv, exportSnapshot } from "./export";
 import { html } from "./html";
 import { recommend } from "./recommend";
@@ -31,10 +39,12 @@ import {
   storageCandidates,
   suggestBudget,
   validUsageFile,
+  usageParserVersion,
+  emptyUsageDiagnostics,
   type StoredUsageFile,
 } from "./usage";
 import { readFile as readLocalFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import { basename, extname, sep } from "node:path";
 import type {
   AvailableModel,
   ByokStore,
@@ -196,16 +206,44 @@ export function activate(context: vscode.ExtensionContext) {
       message = "Scanning local Copilot sessions…";
       render();
       try {
-        const candidates = await discoverUsageFiles();
+        const unreadable: string[] = [];
+        const candidates = await discoverUsageFiles(undefined, unreadable);
         if (!current()) return;
         const stored = await readStoredUsage();
         if (!current()) return;
         const index = stored?.index ?? blankUsageIndex();
         const { changed, deleted } = selectChangedFiles(candidates, index);
         const files: StoredUsageFile["files"] = { ...(stored?.files ?? {}) };
-        for (const gone of deleted) {
-          delete files[gone];
+        for (const gone of new Set([
+          ...deleted,
+          ...Object.keys(files).filter(
+            (p) => !candidates.some((c) => c.filePath === p),
+          ),
+        ])) {
+          if (unreadable.some((p) => gone === p || gone.startsWith(p + sep))) {
+            files[gone] = {
+              ...files[gone],
+              diagnostics: {
+                ...emptyUsageDiagnostics(),
+                unreadable: 1,
+                stale: 1,
+              },
+            };
+          } else delete files[gone];
           delete index.files[gone];
+        }
+        for (const path of unreadable) {
+          if (
+            !Object.keys(files).some(
+              (p) => p === path || p.startsWith(path + sep),
+            )
+          )
+            files[path] = {
+              workspaceId: "unreadable",
+              workspacePath: "",
+              requests: [],
+              diagnostics: { ...emptyUsageDiagnostics(), unreadable: 1 },
+            };
         }
         for (const candidate of changed) {
           if (!current()) return;
@@ -218,25 +256,50 @@ export function activate(context: vscode.ExtensionContext) {
             const parsed = candidate.legacy
               ? parseUsageLegacyJson(text, candidate.workspaceId, stem)
               : parseUsageJsonl(text, candidate.workspaceId, stem);
+            if (
+              parsed.diagnostics.unsupported &&
+              files[candidate.filePath]?.requests.length
+            ) {
+              files[candidate.filePath] = {
+                ...files[candidate.filePath],
+                diagnostics: { ...parsed.diagnostics, stale: 1 },
+              };
+              delete index.files[candidate.filePath];
+              continue;
+            }
             files[candidate.filePath] = {
               workspaceId: candidate.workspaceId,
               workspacePath: candidate.workspacePath,
               requests: parsed.requests,
+              diagnostics: parsed.diagnostics,
             };
             index.files[candidate.filePath] = {
               size: candidate.size,
               mtime: candidate.mtime,
-              parser: 1,
+              parser: usageParserVersion,
             };
+            if (parsed.diagnostics.unsupported || parsed.diagnostics.malformed)
+              delete index.files[candidate.filePath];
           } catch {
-            // Unreadable files are skipped without failing the scan.
+            const previous = files[candidate.filePath];
+            files[candidate.filePath] = {
+              workspaceId: candidate.workspaceId,
+              workspacePath: candidate.workspacePath,
+              requests: previous?.requests ?? [],
+              diagnostics: {
+                ...emptyUsageDiagnostics(),
+                unreadable: 1,
+                stale: previous?.requests.length ? 1 : 0,
+              },
+            };
+            delete index.files[candidate.filePath];
           }
         }
         if (!current()) return;
         const scannedAt = Date.now();
         usage = aggregateUsage(Object.values(files), scannedAt);
         await writeSnapshotFile(usageSummaryUri, {
-          version: 1,
+          version: 2,
           scannedAt,
           index,
           files,
@@ -262,12 +325,22 @@ export function activate(context: vscode.ExtensionContext) {
     const stored = await readStoredUsage();
     if (
       stored &&
+      Object.values(stored.index.files).some(
+        (v) => v.parser !== usageParserVersion,
+      )
+    ) {
+      await runUsageScan();
+      return;
+    }
+    if (
+      stored &&
       generation === usageGeneration &&
       context.globalState.get("usageConsent", false)
     ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
       if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
     }
+    if (!stored && generation === usageGeneration) await runUsageScan();
     render();
   };
   const availableBySource: Record<Source, AvailableModel[]> = {
@@ -283,7 +356,9 @@ export function activate(context: vscode.ExtensionContext) {
   };
   // Generation counter: switching sources invalidates in-flight discovery so
   // late results from the previous source can never render.
-  let discoveryGen = 0;
+  const discoveryGen: Partial<Record<Source, number>> = {};
+  const discoveryErrors: Partial<Record<Source, string>> = {};
+  const discoveryPending: Partial<Record<Source, Promise<void>>> = {};
   let overrides = context.globalState.get<Record<string, string>>(
       "mappings",
       {},
@@ -297,11 +372,51 @@ export function activate(context: vscode.ExtensionContext) {
     selected: string | undefined,
     loading = false,
     message = "",
-    discoveryError = "",
     exportNote = "",
     hasKey = false;
   let profileStore = loadProfiles(context.globalState.get("profiles"));
   let optionsRevision = 0;
+  let comparison = loadComparison(context.globalState.get("comparison"));
+  const capture = (name = "Option"): ComparisonOption =>
+    structuredClone({
+      name,
+      options,
+      mappings: overrides,
+      pins,
+      excluded,
+      selected,
+    });
+  let singleView = capture();
+  const useOption = (value: ComparisonOption) => {
+    const v = structuredClone(value);
+    options = v.options;
+    overrides = v.mappings;
+    pins = v.pins;
+    excluded = v.excluded;
+    selected = v.selected;
+    optionsRevision++;
+  };
+  const captureActive = () => {
+    if (!comparison?.enabled) return;
+    comparison.sides[comparison.active] = capture(
+      comparison.sides[comparison.active].name,
+    );
+    for (const side of ["A", "B"] as const) {
+      comparison.sides[side].options.preset = options.preset;
+      comparison.sides[side].options.display.chart = options.display.chart;
+    }
+  };
+  const persist = async (key: string, value: unknown) => {
+    if (
+      comparison?.enabled &&
+      ["options", "mappings", "pins", "excluded"].includes(key)
+    ) {
+      captureActive();
+      await context.globalState.update("comparison", comparison);
+    } else await context.globalState.update(key, value);
+  };
+  if (comparison?.enabled) useOption(comparison.sides[comparison.active]);
+
   /** Row ids from the last render, for validating variant-level exclusions. */
   let lastStructureIds = new Set<string>();
   const excludedFor = (source: Source): string[] => excluded[source] ?? [];
@@ -319,32 +434,17 @@ export function activate(context: vscode.ExtensionContext) {
     const available = availableBySource[options.source];
     const benchmarks = snapshot?.models ?? [];
     const usedCounts = usedCountsFor();
-    // Structure rows ignore the text filter and exclusions so every thinking
-    // level stays selectable (unchecked leaves remain visible).
-    const structureRows = compare(
+    captureActive();
+    const result = optionResult(
+      capture(),
       available,
       benchmarks,
-      { ...options, filter: "", onlyMine: false, freeOnly: false },
-      overrides,
-      undefined,
-      { pins },
+      byok,
+      usedCounts,
     );
-    lastStructureIds = new Set([
-      ...available.map((a) => a.id),
-      ...structureRows.map((r) => r.id),
-    ]);
-    const unsorted = compare(
-      available,
-      benchmarks,
-      options,
-      overrides,
-      undefined,
-      { pins, excluded: excludedFor(options.source), byok, usedCounts },
-    );
-    const rows =
-      options.display.sort === "efficiency"
-        ? sortRowsByEfficiency(unsorted)
-        : unsorted;
+    lastStructureIds = new Set(result.structureIds);
+    const rows = result.rows;
+    if (comparison?.enabled) selected = result.selected;
     const spotlight = freeSpotlight(
       available,
       snapshot?.models ?? [],
@@ -384,7 +484,7 @@ export function activate(context: vscode.ExtensionContext) {
       included: !excludedList.includes(m.id),
       rowCount: rows.filter((r) => r.modelId === m.id).length,
     }));
-    const groups = buildGroups(available, excludedList, rows, structureRows);
+    const groups = result.groups;
     const state: ViewState = {
       source: options.source,
       options,
@@ -406,7 +506,9 @@ export function activate(context: vscode.ExtensionContext) {
       usageWatching: usageWatchers.length > 0,
       budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
-      message: [message, discoveryError].filter(Boolean).join(" "),
+      message: [message, discoveryErrors[options.source]]
+        .filter(Boolean)
+        .join(" "),
       hasKey,
       catalogDate,
       staticRegistryDate,
@@ -415,63 +517,106 @@ export function activate(context: vscode.ExtensionContext) {
       freeSpotlight: freeSpotlightState,
       exportNote: exportNote || undefined,
     };
+    if (comparison?.enabled) {
+      captureActive();
+      const sides = Object.fromEntries(
+        (["A", "B"] as const).map((side) => {
+          const option = comparison!.sides[side];
+          const result = optionResult(
+            option,
+            availableBySource[option.options.source],
+            benchmarks,
+            byok,
+            usedCounts,
+          );
+          option.selected = result.selected;
+          return [
+            side,
+            {
+              ...result,
+              discoveryError: discoveryErrors[option.options.source],
+            },
+          ];
+        }),
+      ) as unknown as Record<Side, ReturnType<typeof optionResult>>;
+      state.comparison = {
+        active: comparison.active,
+        sides,
+        delta: comparisonDelta(sides.A, sides.B),
+      };
+    }
     void panel?.webview.postMessage({ type: "state", state });
   };
   const discoverCopilot = async (gen: number) => {
     try {
       const models = await vscode.lm.selectChatModels({ vendor: "copilot" });
-      if (gen !== discoveryGen) return;
-      availableBySource.copilot = models.map(
-        ({ id, name, family, maxInputTokens }) => ({
-          id,
-          name,
-          family,
-          maxInputTokens,
-          source: "copilot" as const,
-        }),
-      );
-      discoveryError = availableBySource.copilot.length
+      if (gen !== discoveryGen.copilot) return;
+      const discovered = models.map(({ id, name, family, maxInputTokens }) => ({
+        id,
+        name,
+        family,
+        maxInputTokens,
+        source: "copilot" as const,
+      }));
+      if (discovered.length) availableBySource.copilot = discovered;
+      discoveryErrors.copilot = discovered.length
         ? ""
         : "No Copilot models are exposed. Sign in to GitHub Copilot, enable Copilot Chat, and refresh.";
     } catch {
-      if (gen !== discoveryGen) return;
-      availableBySource.copilot = [];
-      discoveryError =
-        "Could not discover Copilot models. Check Copilot sign-in and refresh.";
+      if (gen !== discoveryGen.copilot) return;
+      discoveryErrors.copilot =
+        "Could not discover Copilot models. Check Copilot sign-in and refresh." +
+        (availableBySource.copilot.length
+          ? " Previous listing retained (stale)."
+          : "");
     }
     render();
   };
   const discoverOpencode = async (gen: number) => {
     try {
       const models = await discoverOpenCode();
-      if (gen !== discoveryGen) return;
+      if (gen !== discoveryGen.opencode) return;
       availableBySource.opencode = models;
-      discoveryError = "";
+      discoveryErrors.opencode = "";
     } catch (error) {
-      if (gen !== discoveryGen) return;
+      if (gen !== discoveryGen.opencode) return;
       if (error instanceof OpenCodeError) {
-        // Retain the previous listing on command/parse failures; clear only
-        // when the error reports a genuinely empty or missing setup.
-        if (error.kind === "missing" || error.kind === "empty")
-          availableBySource.opencode = [];
-        discoveryError = error.message;
+        // A discovery failure does not erase a previously successful listing.
+        discoveryErrors.opencode =
+          error.message +
+          (availableBySource.opencode.length
+            ? " Previous listing retained (stale)."
+            : "");
       } else {
-        discoveryError =
+        discoveryErrors.opencode =
           "OpenCode discovery failed. Retry; the previous listing is retained.";
       }
     }
     render();
   };
+  const discoverSource = (source: Source, force = false): Promise<void> => {
+    if (!force && discoveryPending[source]) return discoveryPending[source]!;
+    const gen = (discoveryGen[source] ?? 0) + 1;
+    discoveryGen[source] = gen;
+    const pending =
+      source === "copilot"
+        ? discoverCopilot(gen)
+        : source === "opencode"
+          ? discoverOpencode(gen)
+          : Promise.resolve();
+    discoveryPending[source] = pending.finally(() => {
+      if (discoveryGen[source] === gen) delete discoveryPending[source];
+    });
+    return discoveryPending[source]!;
+  };
   const discover = async () => {
-    const gen = ++discoveryGen;
-    if (options.source === "opencode") await discoverOpencode(gen);
-    else if (options.source === "copilot") await discoverCopilot(gen);
-    else {
-      // Static registries need no discovery; clear stale errors.
-      discoveryError = "";
-      if (gen !== discoveryGen) return;
-      render();
-    }
+    const needed = comparison?.enabled
+      ? [comparison.sides.A.options.source, comparison.sides.B.options.source]
+      : [options.source];
+    await Promise.all(
+      [...new Set(needed)].map((source) => discoverSource(source)),
+    );
+    render();
   };
   const refresh = async (force = false) => {
     if (loading) return;
@@ -599,7 +744,44 @@ export function activate(context: vscode.ExtensionContext) {
       const receiver = webview.onDidReceiveMessage((raw: unknown) => {
         messageQueue = messageQueue.then(async () => {
           try {
-            const m = parseMessage(raw);
+            let m = parseMessage(raw);
+            if (m.type === "comparison") {
+              captureActive();
+              if (m.enabled === true && !comparison?.enabled) {
+                singleView = capture();
+                comparison ??= {
+                  version: 1,
+                  enabled: false,
+                  active: "A",
+                  sides: { A: capture("Option A"), B: capture("Option B") },
+                };
+                comparison.enabled = true;
+                useOption(comparison.sides[comparison.active]);
+              } else if (m.enabled === false && comparison?.enabled) {
+                comparison.enabled = false;
+                useOption(singleView);
+              }
+              if (comparison?.enabled && m.active) {
+                comparison.active = m.active;
+                useOption(comparison.sides[m.active]);
+              }
+              if (comparison?.enabled && m.name)
+                comparison.sides[comparison.active].name = m.name.trim();
+              await context.globalState.update("comparison", comparison);
+              render();
+              await discover();
+              return;
+            }
+            if (m.type === "target") {
+              if (!comparison?.enabled)
+                throw Error("Comparison is not active.");
+              captureActive();
+              comparison.active = m.side;
+              useOption(comparison.sides[m.side]);
+              m = m.action;
+              render();
+            }
+
             if (m.type === "ready") {
               render();
               await refresh();
@@ -614,7 +796,7 @@ export function activate(context: vscode.ExtensionContext) {
             else if (m.type === "source") {
               if (m.source !== options.source) {
                 // Invalidate in-flight discovery before switching (B2).
-                discoveryGen++;
+                /* Source-specific discovery cannot overwrite another source. */
                 options = {
                   ...options,
                   source: m.source,
@@ -622,27 +804,32 @@ export function activate(context: vscode.ExtensionContext) {
                   freeOnly: false,
                 };
                 selected = undefined;
-                await context.globalState.update("options", options);
+                await persist("options", options);
                 optionsRevision++;
                 render();
                 await discover();
               }
             } else if (m.type === "options") {
               options = parseOptions(m.options);
-              await context.globalState.update("options", options);
+              await persist("options", options);
               render();
             } else if (m.type === "profile") {
+              if (comparison?.enabled && m.change.action !== "apply")
+                throw Error(
+                  "Load a saved workload, or leave comparison mode to manage profiles.",
+                );
               const previousSource = options.source;
               const prevDisplay = options.display;
               const next = changeProfile(profileStore, options, m.change);
-              await context.globalState.update("profiles", next.store);
+              if (!comparison?.enabled)
+                await context.globalState.update("profiles", next.store);
               const withDisplay = { ...next.options, display: prevDisplay };
-              await context.globalState.update("options", withDisplay);
-              profileStore = next.store;
+              await persist("options", withDisplay);
+              if (!comparison?.enabled) profileStore = next.store;
               options = withDisplay;
               if (m.change.action === "apply") optionsRevision++;
               if (options.source !== previousSource) {
-                discoveryGen++;
+                /* Source-specific discovery cannot overwrite another source. */
                 selected = undefined;
               } else if (
                 selected &&
@@ -694,7 +881,7 @@ export function activate(context: vscode.ExtensionContext) {
                     overrides = { ...overrides };
                     if (m.benchmarkId) overrides[base] = m.benchmarkId;
                     else delete overrides[base];
-                    await context.globalState.update("mappings", overrides);
+                    await persist("mappings", overrides);
                     if (selected === m.id)
                       selected = m.benchmarkId ? base : m.id;
                   } else {
@@ -713,13 +900,13 @@ export function activate(context: vscode.ExtensionContext) {
                       if (selected === m.id)
                         selected = `${base}::${m.benchmarkId}`;
                     }
-                    await context.globalState.update("pins", pins);
+                    await persist("pins", pins);
                   }
                 } else {
                   overrides = { ...overrides };
                   if (m.benchmarkId) overrides[m.id] = m.benchmarkId;
                   else delete overrides[m.id];
-                  await context.globalState.update("mappings", overrides);
+                  await persist("mappings", overrides);
                 }
                 render();
               }
@@ -734,7 +921,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const list = pins[modelId] ?? [];
                 if (!list.includes(m.benchmarkId)) {
                   pins = { ...pins, [modelId]: [...list, m.benchmarkId] };
-                  await context.globalState.update("pins", pins);
+                  await persist("pins", pins);
                 }
                 selected = `${modelId}::${m.benchmarkId}`;
                 render();
@@ -748,7 +935,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (list.length) next[modelId] = list;
                 else delete next[modelId];
                 pins = next;
-                await context.globalState.update("pins", pins);
+                await persist("pins", pins);
                 if (selected === `${modelId}::${bench}`) selected = modelId;
                 render();
               }
@@ -766,7 +953,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (m.excluded) current.add(m.id);
                 else current.delete(m.id);
                 excluded = { ...excluded, [options.source]: [...current] };
-                await context.globalState.update("excluded", excluded);
+                await persist("excluded", excluded);
               }
               render();
             } else if (m.type === "excludeMany") {
@@ -778,7 +965,7 @@ export function activate(context: vscode.ExtensionContext) {
                 else current.delete(id);
               }
               excluded = { ...excluded, [options.source]: [...current] };
-              await context.globalState.update("excluded", excluded);
+              await persist("excluded", excluded);
               render();
             } else if (m.type === "excludeAll") {
               excluded = {
@@ -787,7 +974,7 @@ export function activate(context: vscode.ExtensionContext) {
                   ? availableBySource[options.source].map((a) => a.id)
                   : [],
               };
-              await context.globalState.update("excluded", excluded);
+              await persist("excluded", excluded);
               render();
             } else if (
               m.type === "exportCsv" ||
@@ -796,23 +983,13 @@ export function activate(context: vscode.ExtensionContext) {
             ) {
               try {
                 const available = availableBySource[options.source];
-                const unsorted = compare(
+                const rows = optionResult(
+                  capture(),
                   available,
                   snapshot?.models ?? [],
-                  options,
-                  overrides,
-                  undefined,
-                  {
-                    pins,
-                    excluded: excludedFor(options.source),
-                    byok,
-                    usedCounts: usedCountsFor(),
-                  },
-                );
-                const rows =
-                  options.display.sort === "efficiency"
-                    ? sortRowsByEfficiency(unsorted)
-                    : unsorted;
+                  byok,
+                  usedCountsFor(),
+                ).rows;
                 const recommended = new Set(recommend(rows, options).modelIds);
                 const uri = await vscode.window.showSaveDialog(
                   m.type === "exportCsv"
@@ -836,7 +1013,8 @@ export function activate(context: vscode.ExtensionContext) {
                         ? "Snapshot export cancelled."
                         : "Badge export cancelled.";
                 } else {
-                  const payload =
+                  let exportedRows = rows.length;
+                  let payload =
                     m.type === "exportCsv"
                       ? exportCsv(rows, options, recommended)
                       : m.type === "exportSnapshot"
@@ -853,6 +1031,82 @@ export function activate(context: vscode.ExtensionContext) {
                             source: options.source,
                             preset: options.preset,
                           });
+                  if (comparison?.enabled && m.type !== "exportBadge") {
+                    captureActive();
+                    const pair = (["A", "B"] as const).map((side) => {
+                      const option = comparison!.sides[side];
+                      const result = optionResult(
+                        option,
+                        availableBySource[option.options.source],
+                        snapshot?.models ?? [],
+                        byok,
+                        usedCountsFor(),
+                      );
+                      return {
+                        side,
+                        ...result,
+                        availabilityNote:
+                          sources[option.options.source].availabilityNote,
+                        pricingNote: sources[option.options.source].pricingNote,
+                        discoveryError:
+                          discoveryErrors[option.options.source] ?? "",
+                        catalogDate,
+                        staticRegistryDate,
+                        benchmarkVersion: snapshot?.version,
+                        benchmarkFetchedAt: snapshot?.fetchedAt,
+                      };
+                    });
+                    exportedRows = pair.reduce(
+                      (sum, p) => sum + p.rows.length,
+                      0,
+                    );
+                    payload =
+                      m.type === "exportSnapshot"
+                        ? JSON.stringify(
+                            {
+                              version: 2,
+                              disclaimer:
+                                "Illustrative comparison, not measured task cost or an account bill.",
+                              options: pair,
+                            },
+                            null,
+                            2,
+                          )
+                        : "option,assumptions," +
+                          exportCsv([], options).trimEnd() +
+                          "\n" +
+                          pair
+                            .map((p) => {
+                              const label = JSON.stringify({
+                                side: p.side,
+                                name: p.name,
+                                options: p.options,
+                                discoveryError: p.discoveryError,
+                                availabilityNote: p.availabilityNote,
+                                pricingNote: p.pricingNote,
+                                catalogDate,
+                                staticRegistryDate,
+                                benchmarkVersion: snapshot?.version,
+                                benchmarkFetchedAt: snapshot?.fetchedAt,
+                              });
+                              if (!p.rows.length)
+                                return `${p.side},"${label.replace(/"/g, '""')}",${Array(14).fill("").join(",")}\n`;
+                              return p.rows
+                                .map((row) => {
+                                  const csv = exportCsv(
+                                    [row],
+                                    p.options,
+                                    new Set(p.recommendation.modelIds),
+                                  );
+                                  return (
+                                    `${p.side},"${label.replace(/"/g, '""')}",` +
+                                    csv.slice(csv.indexOf("\n") + 1)
+                                  );
+                                })
+                                .join("");
+                            })
+                            .join("");
+                  }
                   await vscode.workspace.fs.writeFile(
                     uri,
                     Buffer.from(payload),
@@ -860,7 +1114,7 @@ export function activate(context: vscode.ExtensionContext) {
                   exportNote =
                     m.type === "exportBadge"
                       ? "Exported badge."
-                      : `Exported ${rows.length} rows.`;
+                      : `Exported ${exportedRows} rows.`;
                 }
               } catch {
                 exportNote =
@@ -907,6 +1161,11 @@ export function activate(context: vscode.ExtensionContext) {
                 ? error.message
                 : "Check input values and try again.");
             render();
+          } finally {
+            if (comparison?.enabled) {
+              captureActive();
+              await context.globalState.update("comparison", comparison);
+            }
           }
         });
         return messageQueue;
@@ -921,7 +1180,15 @@ export function activate(context: vscode.ExtensionContext) {
       );
     }),
     vscode.lm.onDidChangeChatModels(() => {
-      if (panel && options.source === "copilot") void discover();
+      if (
+        panel &&
+        (options.source === "copilot" ||
+          (comparison?.enabled &&
+            Object.values(comparison.sides).some(
+              (s) => s.options.source === "copilot",
+            )))
+      )
+        void discoverSource("copilot", true);
     }),
   );
 }

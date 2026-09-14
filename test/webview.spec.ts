@@ -1,3 +1,4 @@
+import { optionResult, comparisonDelta, type ComparisonStore } from "../src/comparison";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
@@ -64,6 +65,7 @@ const usageFixture = {
   dateRange: { from: Date.parse("2026-09-01"), to: Date.parse("2026-09-03") },
   medianPrompt: 150,
   medianOutput: 75,
+  diagnostics: {malformed:1,unsupported:1,unreadable:0,stale:1,missingTokens:1,estimatedTokens:0},
   medianSample: 3,
   premiumP90: 2,
   creditP90: 0.5,
@@ -137,11 +139,28 @@ for (const theme of ["light", "dark", "high-contrast"])
       freeSpotlight: { enabled: false, explanation: "" },
     };
     let profiles: ProfileStore = { version: 1, items: [] };
-    const mappings: Record<string, string> = {};
-    const excluded = new Set<string>();
+    let mappings: Record<string, string> = {};
+    let excluded = new Set<string>();
+    let comparison: ComparisonStore | undefined;
+    let single: ViewState;
     const messages: Record<string, unknown>[] = [];
     await page.exposeBinding("hostMessage", async (_, m) => {
       messages.push(m);
+      const saveActive=()=>{ if(comparison?.enabled) comparison.sides[comparison.active]={...comparison.sides[comparison.active],options:structuredClone(state.options),mappings:structuredClone(mappings),excluded:{[state.source]:[...excluded]},selected:state.selected}; };
+      const useActive=()=>{const s=comparison!.sides[comparison!.active];state.options=structuredClone(s.options);state.source=s.options.source;state.selected=s.selected;mappings=structuredClone(s.mappings);excluded=new Set(s.excluded[s.options.source] ?? []);state.optionsRevision++;};
+      if(m.type==='comparison') {
+        saveActive();
+        if(m.enabled===true) {
+          single=structuredClone(state);
+          comparison ??= {version:1,enabled:true,active:'A',sides:{A:{name:'Option A',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}},B:{name:'Option B',options:structuredClone(state.options),mappings:{...mappings},pins:{},excluded:{[state.source]:[...excluded]}}}};
+          comparison.enabled=true;useActive();
+        }
+        if(m.enabled===false && comparison) {comparison.enabled=false;state=structuredClone(single);state.optionsRevision++;}
+        if(comparison?.enabled && m.active) {comparison.active=m.active;useActive();}
+        if(comparison?.enabled && m.name) comparison.sides[comparison.active].name=m.name;
+      }
+      if(m.type==='target' && comparison?.enabled){saveActive();comparison.active=m.side;useActive();m=m.action;}
+
       if (m.type === "options") state.options = m.options;
       if (m.type === "source") {
         state.source = m.source;
@@ -233,6 +252,12 @@ for (const theme of ["light", "dark", "high-contrast"])
       state.profiles = profiles.items.map(({ id, name }) => ({ id, name }));
       state.activeProfileId = profiles.activeId;
       state.profileModified = profileModified(profiles, state.options);
+      if (comparison?.enabled) {
+        saveActive();
+        for(const side of ['A','B'] as const){comparison.sides[side].options.preset=state.options.preset;comparison.sides[side].options.display.chart=state.options.display.chart;}
+        const calc=(side:'A'|'B')=>optionResult(comparison!.sides[side],comparison!.sides[side].options.source==='opencode'?opencodeAvailable:available,state.models,{},usedCounts);
+        const sides={A:calc('A'),B:calc('B')};state.comparison={active:comparison.active,sides,delta:comparisonDelta(sides.A,sides.B)};
+      } else delete state.comparison;
       await page.evaluate(
         (s) =>
           window.dispatchEvent(
@@ -549,6 +574,8 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-workspaces")).not.toContainText("/home/user/myrepo");
     await expect(page.locator("#usage-unknown")).toContainText("copilot/mystery");
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
+    await expect(page.locator("#usage-diagnostics")).toContainText("1 malformed records");
+    await expect(page.locator("#usage-diagnostics")).toContainText("1 stale contributions");
     // Only-my-models filter, workload prefill, and budget suggestion.
     await expect(page.locator("#usage-prefill-note")).toContainText("Median 150 prompt + 75 output");
     const selectionLeaves = await page.locator(".check-leaf-row").allTextContents();
@@ -567,5 +594,23 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#usage-clear").click();
     expect(messages.some((m) => m.type === "clearUsage")).toBeTruthy();
     await expect(page.locator("#usage-summary")).toHaveText(/No local scan yet/);
+    await page.locator('#comparison-enabled').check();
+    await expect(page.locator('.comparison-panel')).toHaveCount(2);
+    await page.locator('#comparison-active').selectOption('B');
+    await page.locator('#comparison-name').fill('Other provider');
+    await page.locator('#comparison-name').press('Tab');
+    await page.locator('#source').selectOption('opencode');
+    await expect(page.locator('.comparison-panel').nth(1)).toContainText('Other provider');
+    await expect(page.locator('#comparison-delta')).toContainText('Different billing units');
+    await expect(page.locator('.comparison-panel').first()).toContainText('GitHub Copilot');
+    await page.locator('#export-png').click();
+    expect(messages.some(m=>m.type==='target' && (m.action as any)?.type==='exportPng')).toBeTruthy();
+    await page.setViewportSize({width:700,height:1000});
+    const a=await page.locator('.comparison-panel').first().boundingBox(),b=await page.locator('.comparison-panel').nth(1).boundingBox();
+    expect(b!.y).toBeGreaterThan(a!.y+a!.height);
+    await page.locator('#comparison-active').selectOption('A');
+    await expect(page.locator('#source')).toHaveValue('copilot');
+    await page.locator('#comparison-enabled').uncheck();
+    await expect(page.locator('#comparison-panels')).toBeHidden();
     expect(errors).toEqual([]);
   });

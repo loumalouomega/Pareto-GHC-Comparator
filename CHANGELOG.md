@@ -6,6 +6,11 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ### Added
 
+- Two-option comparison mode with independent A/B settings, shared editor, separate charts/frontiers, selected-row deltas, saved-pair restoration, and two-option CSV/snapshot/PNG exports. Badge export targets the active option.
+- Usage completeness diagnostics and version-2 storage distinguish observed, estimated, and missing tokens. Partially malformed files retain valid records; unsupported or unreadable updates retain visibly stale contributions until recovery or deletion.
+- Native OpenCode executable resolution for Linux/macOS/Windows, explicit timeout guidance, platform process tests, and a three-platform CI discovery job. Real provider and macOS/Windows smoke results remain unverified locally.
+
+
 - Cost-per-quality table sort: an optional **Cost per quality** ordering (cost per index point, unpriced or unscored rows last with reasons) in chart display settings, with a matching table column; existing discovery order remains the default and saved settings migrate without losing user choices.
 - Shareable exports: snapshot JSON (displayed rows plus source, task, billing, catalog/registry dates, and benchmark version with an illustrative-figures disclaimer) and shields-compatible badge JSON (highest-scoring displayed model), alongside the existing CSV/PNG exports via the save dialog.
 - Pricing-freshness alert: the footer shows both the pricing catalog and static registry dates and nudges toward `docs/catalog.md` when either is older than 90 days, without blocking the comparison.
@@ -18,6 +23,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Per-workspace breakdown: the usage card shows up to 20 workspaces with basename-only labels by default (full paths on toggle, kept in tooltips), and storage ids with an inline unmapped-workspace explanation when `workspace.json` is missing or unreadable; the model table grows to 12 rows.
 
 ### Fixed
+
+- Preserve explicit zero token observations and exclude missing or text-estimated pairs from workload prefill and credit-budget samples. Old usage caches require a consent-gated rescan.
+- Isolate source discovery errors and retain previous listings on failures; concurrent panels using one source share discovery.
+
 
 - Include zero-cost requests in usage budget percentiles and priced sample counts, avoiding inflated suggestions for mixed free/paid history.
 

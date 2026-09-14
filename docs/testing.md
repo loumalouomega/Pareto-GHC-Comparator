@@ -25,7 +25,7 @@ npx vitest run test/selection.test.ts -t "budget recommendation"
 
 ## Coverage
 
-`npm run test:coverage` prints a per-file table to the terminal and writes `coverage/lcov.info` (gitignored; uploaded from CI on every build run). Global thresholds in `vitest.config.mts` are ratcheted at measured coverage (lines 95, functions 98, branches 89, statements 93, with `src/extension.ts` excluded as unmeasured): any drop fails with an actionable message, e.g. `Coverage for lines (94.1%) does not meet global threshold (95%)`. When a change legitimately raises coverage, bump the corresponding threshold in the same commit; never lower one to make a failing check pass without investigation.
+`npm run test:coverage` prints a per-file table to the terminal and writes `coverage/lcov.info` (gitignored; uploaded from CI on every build run). Global thresholds in `vitest.config.mts` are ratcheted at measured coverage (lines 97, functions 98, branches 92, statements 96, with `src/extension.ts` excluded as unmeasured): any drop fails with an actionable message, e.g. `Coverage for lines (94.1%) does not meet global threshold (95%)`. When a change legitimately raises coverage, bump the corresponding threshold in the same commit; never lower one to make a failing check pass without investigation.
 
 Known gap: `test/extension.test.ts` bundles `src/extension.ts` through esbuild and imports the bundle via a data URL, so the v8 provider reports 0% for `extension.ts` even though the mocked host test exercises it. That file is excluded from coverage thresholds and treated as unmeasured rather than uncovered.
 
@@ -64,4 +64,19 @@ The completed roadmap is covered by the following implementation and regression 
 | Usage parsing, incremental scans, workspace labels, consent and erase races | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
 | Workload prefill, used-model filtering, budget percentiles including free requests | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
 
-The audit preserves the roadmap's completed status. It does not certify current provider prices, real-account discovery, or Marketplace publication; those require separate external verification.
+The earlier completion audit covered the then-completed roadmap. It does not certify current provider prices, real-account discovery, or Marketplace publication; those require separate external verification.
+
+## Tier 1 validation
+
+- `test/tier1.test.ts`: comparison persistence/validation, shared result construction, compatible deltas, targeted messages, usage provenance, version-2 validation, and stable/Insiders/legacy/malformed fixture cases. All fixture content is synthetic.
+- `test/extension.test.ts`: isolated A/B options and exclusions, restoring the single view and last pair, profile-load isolation, export parity, and real temporary-session updates through unsupported, truncated, and deleted states.
+- `test/opencode-platform.test.ts`: native resolution, PATH/home fallback, Windows path rules, timeout limits, and literal process arguments at an executable path with spaces. The native process test copies Node as an executable fixture; it does not invoke real OpenCode providers.
+- `test/webview.spec.ts`: all three themes cover comparison panels, active editor switching, cross-unit explanations, combined PNG messages, narrow layout, and usage diagnostics, alongside existing regression flows.
+
+| Environment | Automated native-process validation | Real OpenCode/provider smoke |
+| --- | --- | --- |
+| Linux, local | Passed; sandbox restrictions required execution outside the sandbox | Unperformed |
+| macOS | CI job configured; remote result not verified here | Unperformed |
+| Windows | CI job configured; remote result not verified here | Unperformed |
+
+Copilot sign-in and Artificial Analysis API smoke tests remain unperformed without user-provided account prerequisites. No inference execution is part of validation.

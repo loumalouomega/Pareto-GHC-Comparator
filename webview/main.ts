@@ -23,7 +23,15 @@ const text = (tag: string, value: string, className?: string) => {
   return node;
 };
 const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
-  vscode.postMessage({ type, ...extra });
+  vscode.postMessage(
+    state?.comparison && !["ready", "comparison", "target"].includes(type)
+      ? {
+          type: "target",
+          side: state.comparison.active,
+          action: { type, ...extra },
+        }
+      : { type, ...extra },
+  );
 const format = (v: number | null) =>
   v === null
     ? "—"
@@ -62,7 +70,9 @@ const color = (provider: string): string => {
   const light =
     document.body.classList.contains("vscode-light") ||
     document.body.classList.contains("vscode-high-contrast-light");
-  return light ? (lightColors[provider] ?? lightColors.Unknown) : (colors[provider] ?? colors.Unknown);
+  return light
+    ? (lightColors[provider] ?? lightColors.Unknown)
+    : (colors[provider] ?? colors.Unknown);
 };
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
@@ -231,8 +241,7 @@ function drawChart() {
   }));
   chart?.destroy();
   const showFrontier = state.options.display.frontier;
-  const showQuadrant =
-    state.options.display.quadrant && rows.length >= 2;
+  const showQuadrant = state.options.display.quadrant && rows.length >= 2;
   const plugins: Plugin<"scatter">[] = [
     ...(state.options.display.labels ? [labels] : []),
     ...(showQuadrant
@@ -418,7 +427,11 @@ function renderDetails() {
     );
     if ((row.requests ?? 0) > 0)
       target.append(
-        text("p", `${row.requests} local requests in the scanned history.`, "hint"),
+        text(
+          "p",
+          `${row.requests} local requests in the scanned history.`,
+          "hint",
+        ),
       );
     const drift = row.benchmark ? state.drift[row.benchmark.id] : undefined;
     if (state.prevVersion && drift) {
@@ -558,10 +571,7 @@ function groupMatches(
   return out;
 }
 
-function visibleLeafIds(
-  groups: ChecklistFamily[],
-  query: string,
-): string[] {
+function visibleLeafIds(groups: ChecklistFamily[], query: string): string[] {
   return groupMatches(groups, query).flatMap((f) =>
     f.models.flatMap((m) => m.leaves.map((l) => l.id)),
   );
@@ -590,10 +600,7 @@ function checkRow(
 function renderChecklist() {
   if (!state) return;
   const source = state.groups?.length ? state.groups : [];
-  const groups =
-    source.length
-      ? groupMatches(source, checklistSearch)
-      : [];
+  const groups = source.length ? groupMatches(source, checklistSearch) : [];
   // Fall back to the flat checklist when grouped data is unavailable
   // (e.g. synthetic states in browser tests that predate grouping).
   const flat = !source.length ? state.checklist : [];
@@ -660,8 +667,7 @@ function renderChecklist() {
     const leaves = family.models.flatMap((m) => m.leaves);
     const visible = leaves.filter((l) => visibleIds.has(l.id));
     const included = visible.filter((l) => l.included).length;
-    const allIncluded =
-      visible.length > 0 && included === visible.length;
+    const allIncluded = visible.length > 0 && included === visible.length;
     const mixed = included > 0 && included < visible.length;
     const row = checkRow(
       searching ? allIncluded : family.state === "checked",
@@ -672,8 +678,7 @@ function renderChecklist() {
         const ids = searching
           ? visible.map((l) => l.id)
           : family.models.flatMap((m) => m.leaves.map((l) => l.id));
-        if (ids.length === 1)
-          send("exclude", { id: ids[0], excluded: !next });
+        if (ids.length === 1) send("exclude", { id: ids[0], excluded: !next });
         else send("excludeMany", { ids, excluded: !next });
       },
     );
@@ -784,11 +789,7 @@ function renderByok() {
   });
   if (!models.length) {
     table.append(
-      text(
-        "p",
-        "No provider-billed models need rates right now.",
-        "hint",
-      ),
+      text("p", "No provider-billed models need rates right now.", "hint"),
     );
     return;
   }
@@ -810,7 +811,13 @@ function renderByok() {
       label.append(
         text(
           "span",
-          field === "input" ? "Input" : field === "read" ? "Cache read" : field === "write" ? "Cache write (blank = input)" : "Output",
+          field === "input"
+            ? "Input"
+            : field === "read"
+              ? "Cache read"
+              : field === "write"
+                ? "Cache write (blank = input)"
+                : "Output",
         ),
       );
       const box = document.createElement("input");
@@ -818,7 +825,10 @@ function renderByok() {
       box.min = "0";
       box.step = "any";
       box.value = draft[field];
-      box.setAttribute("aria-label", `${m.name} ${field} USD per million tokens`);
+      box.setAttribute(
+        "aria-label",
+        `${m.name} ${field} USD per million tokens`,
+      );
       box.addEventListener("input", () => {
         draft[field] = box.value;
       });
@@ -831,6 +841,10 @@ function renderByok() {
 function renderUsage() {
   if (!state) return;
   const u = state.usage;
+  const d = u?.diagnostics;
+  el("usage-diagnostics").textContent = d
+    ? `Completeness: ${d.malformed} malformed records · ${d.unsupported} unsupported files · ${d.unreadable} unreadable files · ${d.stale} stale contributions · ${d.missingTokens} requests missing tokens · ${d.estimatedTokens} estimated requests. Prefill and credit budgets use fully observed token pairs only.`
+    : "";
   el("usage-watching").textContent = state.usageWatching
     ? "Watching for new sessions."
     : "";
@@ -888,7 +902,13 @@ function renderUsage() {
         ["Model", "Requests", "Prompt", "Output", "Premium ≈"],
         u.models
           .slice(0, 12)
-          .map((m) => [m.modelId, String(m.requests), num(m.promptTokens), num(m.outputTokens), String(m.premiumEstimate)]),
+          .map((m) => [
+            m.modelId,
+            String(m.requests),
+            num(m.promptTokens),
+            num(m.outputTokens),
+            String(m.premiumEstimate),
+          ]),
       ),
     );
   if (u.days.length)
@@ -898,7 +918,13 @@ function renderUsage() {
         ["Date", "Requests", "Prompt", "Output", "Premium ≈"],
         u.days
           .slice(-14)
-          .map((d) => [d.date, String(d.requests), num(d.promptTokens), num(d.outputTokens), String(d.premiumEstimate)]),
+          .map((d) => [
+            d.date,
+            String(d.requests),
+            num(d.promptTokens),
+            num(d.outputTokens),
+            String(d.premiumEstimate),
+          ]),
       ),
     );
   if (u.workspaces.length) {
@@ -923,9 +949,236 @@ function renderUsage() {
   if (u.unknownModels.length)
     el("usage-unknown").textContent =
       `Unknown models use a 1.0 fallback multiplier: ${u.unknownModels.slice(0, 10).join(", ")}` +
-      (u.unknownModels.length > 10 ? ` (+${u.unknownModels.length - 10} more)` : "") +
+      (u.unknownModels.length > 10
+        ? ` (+${u.unknownModels.length - 10} more)`
+        : "") +
       ".";
 }
+const comparisonCharts: Chart<"scatter">[] = [];
+function renderComparison() {
+  for (const c of comparisonCharts) c.destroy();
+  comparisonCharts.length = 0;
+  const focused = document.activeElement as HTMLElement | null;
+  const focusSide = focused?.dataset.comparisonSide,
+    focusRow = focused?.dataset.comparisonRow;
+  const pair = state?.comparison;
+  el<HTMLInputElement>("comparison-enabled").checked = !!pair;
+  const singleChart = el("chart").closest<HTMLElement>(".chart-card");
+  if (singleChart) singleChart.hidden = !!pair;
+  el<HTMLSelectElement>("comparison-active").disabled = !pair;
+  el<HTMLInputElement>("comparison-name").disabled = !pair;
+  const panels = el("comparison-panels");
+  panels.hidden = !pair;
+  panels.replaceChildren();
+  const delta = el("comparison-delta");
+  delta.hidden = !pair;
+  for (const id of [
+    "profile-save",
+    "profile-update",
+    "profile-rename",
+    "profile-delete",
+  ])
+    el<HTMLButtonElement>(id).disabled = !!pair;
+  el("export-badge").textContent = pair
+    ? `Export ${pair.active} badge JSON`
+    : "Export badge JSON";
+  if (!pair) return;
+  el<HTMLSelectElement>("comparison-active").value = pair.active;
+  if (document.activeElement !== el("comparison-name"))
+    el<HTMLInputElement>("comparison-name").value =
+      pair.sides[pair.active].name;
+  delta.textContent = `B minus A · Quality: ${format(pair.delta.score)} · Cost: ${format(pair.delta.cost)} ${pair.delta.reason}`;
+  for (const side of ["A", "B"] as const) {
+    const option = pair.sides[side],
+      meta = sources[option.options.source];
+    const card = text("section", "", "comparison-panel");
+    card.append(
+      text("h2", `${side}: ${option.name}`),
+      text(
+        "p",
+        `${meta.label} · ${option.options.billing} · ${option.options.display.chart} · ${option.options.preset}`,
+      ),
+    );
+    card.append(
+      text(
+        "p",
+        `Workload ${Object.entries(option.options.tokens)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(" · ")} · Plan ${option.options.plan}`,
+      ),
+    );
+    card.append(
+      text("p", meta.availabilityNote),
+      text("p", meta.pricingNote),
+      text(
+        "p",
+        `Benchmark ${state?.version ?? "unknown"} · retrieved ${state?.fetchedAt ? new Date(state.fetchedAt).toLocaleString() : "unknown"}`,
+      ),
+    );
+    if (option.discoveryError) card.append(text("p", option.discoveryError));
+    card.append(text("p", option.recommendation.explanation));
+    const wrap = text("div", "", "comparison-chart");
+    const canvas = document.createElement("canvas");
+    canvas.id = `comparison-chart-${side}`;
+    canvas.setAttribute("aria-label", `${side} quality and cost chart`);
+    wrap.append(canvas);
+    card.append(wrap);
+    const plotted = option.rows.filter(
+      (r) => r.cost !== null && r.score !== null,
+    );
+    const table = document.createElement("table");
+    const head = document.createElement("tr");
+    for (const label of ["Model", "Quality", "Cost", "Status"])
+      head.append(text("th", label));
+    table.append(head);
+    for (const row of option.rows) {
+      const tr = document.createElement("tr"),
+        td = document.createElement("td"),
+        button = text("button", row.name);
+      button.dataset.comparisonSide = side;
+      button.dataset.comparisonRow = row.id;
+      button.setAttribute("aria-pressed", String(row.id === option.selected));
+      button.onclick = () =>
+        send("target", { side, action: { type: "select", id: row.id } });
+      td.append(button);
+      tr.append(
+        td,
+        text("td", format(row.score)),
+        text("td", format(row.cost)),
+        text(
+          "td",
+          `${row.frontier ? "Frontier · " : ""}${row.tier ?? ""} ${row.reasons.join(" ")}`,
+        ),
+      );
+      table.append(tr);
+    }
+    card.append(table);
+    if (
+      option.options.display.scale === "log" &&
+      plotted.some((r) => r.cost === 0)
+    )
+      card.append(
+        text("p", "Log scale requested; using linear because a model is free."),
+      );
+    else if (option.options.display.scale !== "auto")
+      card.append(text("p", `Scale override: ${option.options.display.scale}`));
+    panels.append(card);
+    comparisonCharts.push(
+      new Chart(canvas, {
+        type: "scatter",
+        plugins: [
+          ...(option.options.display.quadrant && plotted.length
+            ? [
+                quadrantPlug(
+                  median(plotted.map((r) => r.cost!)),
+                  median(plotted.map((r) => r.score!)),
+                ),
+              ]
+            : []),
+          ...(option.options.display.labels
+            ? [
+                {
+                  id: "optionLabels",
+                  afterDatasetsDraw(c: Chart<"scatter">) {
+                    c.ctx.save();
+                    c.ctx.fillStyle = getComputedStyle(document.body).color;
+                    c.ctx.font = "10px sans-serif";
+                    c.getDatasetMeta(0).data.forEach((point, i) => {
+                      if (plotted[i])
+                        c.ctx.fillText(
+                          plotted[i].name,
+                          point.x + 5,
+                          point.y - 5,
+                        );
+                    });
+                    c.ctx.restore();
+                  },
+                },
+              ]
+            : []),
+        ],
+        data: {
+          datasets: [
+            {
+              label: "Models",
+              data: plotted.map((r) => ({ x: r.cost!, y: r.score! })),
+              backgroundColor: plotted.map(colorForRow),
+              pointRadius: plotted.map((r) =>
+                r.id === option.selected ? 7 : 4,
+              ),
+            },
+            {
+              label: "Frontier",
+              hidden: !option.options.display.frontier,
+              data: plotted
+                .filter((r) => r.frontier)
+                .sort((a, b) => a.cost! - b.cost!)
+                .map((r) => ({ x: r.cost!, y: r.score! })),
+              showLine: true,
+              borderDash: [4, 4],
+              pointRadius: 0,
+            },
+          ],
+        },
+        options: {
+          animation: false,
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: (context) =>
+                  context.datasetIndex === 0
+                    ? `${plotted[context.dataIndex]?.name}: ${context.parsed.y} points, ${context.parsed.x} ${option.options.billing}`
+                    : "Frontier",
+              },
+            },
+          },
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              type:
+                option.options.display.scale === "linear" ||
+                plotted.some((r) => r.cost === 0)
+                  ? "linear"
+                  : "logarithmic",
+              title: { display: true, text: option.options.billing },
+            },
+            y: { title: { display: true, text: option.options.preset } },
+          },
+          onClick: (_event, elements) => {
+            const e = elements[0];
+            if (e?.datasetIndex === 0 && plotted[e.index])
+              send("target", {
+                side,
+                action: { type: "select", id: plotted[e.index].id },
+              });
+          },
+        },
+      }),
+    );
+  }
+  if (focusSide && focusRow)
+    Array.from(panels.querySelectorAll<HTMLButtonElement>("button"))
+      .find(
+        (b) =>
+          b.dataset.comparisonSide === focusSide &&
+          b.dataset.comparisonRow === focusRow,
+      )
+      ?.focus();
+}
+el<HTMLInputElement>("comparison-enabled").onchange = () => {
+  if (state) sendOptions();
+  send("comparison", {
+    enabled: el<HTMLInputElement>("comparison-enabled").checked,
+  });
+};
+el<HTMLSelectElement>("comparison-active").onchange = () => {
+  const active = el<HTMLSelectElement>("comparison-active").value;
+  if (state) sendOptions();
+  send("comparison", { active });
+};
+el<HTMLInputElement>("comparison-name").onchange = () =>
+  send("comparison", { name: el<HTMLInputElement>("comparison-name").value });
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
@@ -945,6 +1198,7 @@ function render(next: ViewState) {
       : null;
   const previousActive = state?.activeProfileId;
   state = next;
+  renderComparison();
   if (!initialized || appliedRevision !== state.optionsRevision) {
     clearTimeout(timer);
     appliedRevision = state.optionsRevision;
@@ -958,7 +1212,13 @@ function render(next: ViewState) {
     el<HTMLInputElement>("score-gap").value = String(
       state.options.recommendation.scoreGap,
     );
-    for (const key of ["preset", "billing", "plan", "filter", "source"] as const)
+    for (const key of [
+      "preset",
+      "billing",
+      "plan",
+      "filter",
+      "source",
+    ] as const)
       el<HTMLInputElement>(key).value = state.options[key];
     for (const key of ["input", "read", "write", "output"] as const)
       el<HTMLInputElement>(key).value = String(state.options.tokens[key]);
@@ -971,9 +1231,7 @@ function render(next: ViewState) {
   el("plan-label").hidden = state.options.billing !== "legacy";
   const meta = sources[state.options.source];
   const allowed = meta.billing;
-  for (const option of Array.from(
-    el<HTMLSelectElement>("billing").options,
-  )) {
+  for (const option of Array.from(el<HTMLSelectElement>("billing").options)) {
     option.hidden = !(allowed as string[]).includes(option.value);
   }
   el("eyebrow").textContent = meta.eyebrow;
@@ -981,8 +1239,7 @@ function render(next: ViewState) {
   el("budget-label").hidden = state.options.recommendation.mode !== "budget";
   el("gap-label").hidden = state.options.recommendation.mode !== "nearBest";
   const perTask =
-    state.options.display.chart === "task" &&
-    state.options.billing !== "legacy"
+    state.options.display.chart === "task" && state.options.billing !== "legacy"
       ? " per task"
       : "";
   el("budget-unit").textContent =
@@ -1005,10 +1262,7 @@ function render(next: ViewState) {
   el<HTMLButtonElement>("refresh").disabled = state.loading;
   el<HTMLButtonElement>("key").disabled = state.loading;
   el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
-  const stale = freshnessAlert(
-    state.catalogDate,
-    state.staticRegistryDate,
-  );
+  const stale = freshnessAlert(state.catalogDate, state.staticRegistryDate);
   el("catalog").textContent =
     `Catalog dated ${state.catalogDate} · Registries dated ${state.staticRegistryDate}` +
     (stale ? ` · ${stale}` : "");
@@ -1022,7 +1276,8 @@ function render(next: ViewState) {
     })(),
     text("span", meta.live ? " · live rates" : " · known-model registry"),
   );
-  el("pricing-note").textContent = `${meta.pricingNote} ${meta.availabilityNote}`;
+  el("pricing-note").textContent =
+    `${meta.pricingNote} ${meta.availabilityNote}`;
   (el("display-labels") as HTMLInputElement).checked =
     state.options.display.labels;
   (el("display-frontier") as HTMLInputElement).checked =
@@ -1031,8 +1286,7 @@ function render(next: ViewState) {
     state.options.display.scale;
   (el("display-chart") as HTMLSelectElement).value =
     state.options.display.chart;
-  (el("display-sort") as HTMLSelectElement).value =
-    state.options.display.sort;
+  (el("display-sort") as HTMLSelectElement).value = state.options.display.sort;
   (el("display-quadrant") as HTMLInputElement).checked =
     state.options.display.quadrant;
   (el("free-only-label") as HTMLElement).hidden =
@@ -1173,6 +1427,18 @@ function renderProfiles(previousActive: string | undefined) {
   updateProfileButtons();
 }
 function updateProfileButtons() {
+  if (state?.comparison) {
+    for (const id of [
+      "profile-save",
+      "profile-update",
+      "profile-rename",
+      "profile-delete",
+    ])
+      el<HTMLButtonElement>(id).disabled = true;
+    el<HTMLButtonElement>("profile-apply").disabled =
+      !el<HTMLSelectElement>("profile").value;
+    return;
+  }
   const chosen = el<HTMLSelectElement>("profile").value;
   for (const id of ["profile-apply", "profile-rename", "profile-delete"])
     el<HTMLButtonElement>(id).disabled = !chosen;
@@ -1187,7 +1453,9 @@ function sendOptions(): boolean {
   const billingSelect = el<HTMLSelectElement>("billing");
   const picked = billingSelect.selectedOptions[0];
   const billing = (
-    picked && picked.hidden && state ? state.options.billing : billingSelect.value
+    picked && picked.hidden && state
+      ? state.options.billing
+      : billingSelect.value
   ) as Options["billing"];
   const mode = el<HTMLSelectElement>("recommendation-mode")
     .value as Options["recommendation"]["mode"];
@@ -1242,10 +1510,13 @@ function sendOptions(): boolean {
     display: {
       labels: (el("display-labels") as HTMLInputElement).checked,
       frontier: (el("display-frontier") as HTMLInputElement).checked,
-      scale: (el("display-scale") as HTMLSelectElement).value as Options["display"]["scale"],
-      chart: (el("display-chart") as HTMLSelectElement).value as Options["display"]["chart"],
+      scale: (el("display-scale") as HTMLSelectElement)
+        .value as Options["display"]["scale"],
+      chart: (el("display-chart") as HTMLSelectElement)
+        .value as Options["display"]["chart"],
       quadrant: (el("display-quadrant") as HTMLInputElement).checked,
-      sort: (el("display-sort") as HTMLSelectElement).value as Options["display"]["sort"],
+      sort: (el("display-sort") as HTMLSelectElement)
+        .value as Options["display"]["sort"],
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
     onlyMine: (el("only-mine") as HTMLInputElement).checked,
@@ -1388,7 +1659,12 @@ el("byok-save").onclick = () => {
   if (!state) return;
   const next: Record<string, unknown> = { ...state.byok };
   for (const [id, d] of Object.entries(byokDraft)) {
-    const raw = { input: d.input.trim(), read: d.read.trim(), write: d.write.trim(), output: d.output.trim() };
+    const raw = {
+      input: d.input.trim(),
+      read: d.read.trim(),
+      write: d.write.trim(),
+      output: d.output.trim(),
+    };
     if (!raw.input && !raw.read && !raw.write && !raw.output) {
       delete next[id];
       delete byokDraft[id];
@@ -1430,13 +1706,33 @@ el("export-png").onclick = () => {
   if (!ctx) return;
   ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
   ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-  ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+  if (state?.comparison) {
+    for (const [index, side] of (["A", "B"] as const).entries()) {
+      ctx.fillStyle = getComputedStyle(document.body).color;
+      ctx.font = "20px sans-serif";
+      ctx.fillText(
+        `${side}: ${state.comparison.sides[side].name} · ${state.comparison.sides[side].options.billing}`,
+        index * 800 + 20,
+        35,
+      );
+      ctx.drawImage(
+        el<HTMLCanvasElement>(`comparison-chart-${side}`),
+        index * 800,
+        60,
+        800,
+        800,
+      );
+    }
+  } else ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
   send("exportPng", { png: exportCanvas.toDataURL("image/png") });
 };
 window.addEventListener("message", (event) => {
   if (event.data?.type === "state") render(event.data.state);
 });
-new MutationObserver(() => drawChart()).observe(document.body, {
+new MutationObserver(() => {
+  drawChart();
+  renderComparison();
+}).observe(document.body, {
   attributes: true,
   attributeFilter: ["class", "style"],
 });

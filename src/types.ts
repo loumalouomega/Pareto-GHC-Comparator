@@ -57,7 +57,14 @@ export const defaults: Options = {
     budgets: { credits: 1, legacy: 1, usd: 1 },
     scoreGap: 3,
   },
-  display: { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" },
+  display: {
+    labels: true,
+    frontier: true,
+    scale: "auto",
+    chart: "task",
+    quadrant: true,
+    sort: "default",
+  },
   freeOnly: false,
   onlyMine: false,
 };
@@ -72,7 +79,18 @@ export interface ScoreDrift {
   prevScore: number | null;
   delta: number | null;
 }
+export type TokenProvenance = "observed" | "estimated" | "missing";
+export interface UsageDiagnostics {
+  malformed: number;
+  unsupported: number;
+  unreadable: number;
+  stale: number;
+  missingTokens: number;
+  estimatedTokens: number;
+}
 export interface UsageRequest {
+  promptProvenance?: TokenProvenance;
+  outputProvenance?: TokenProvenance;
   sessionId: string;
   workspaceId: string;
   requestIndex: number;
@@ -107,6 +125,7 @@ export interface UsageWorkspaceStat {
   premiumEstimate: number;
 }
 export interface UsageSummary {
+  diagnostics?: UsageDiagnostics;
   scannedAt: number;
   fileCount: number;
   requestCount: number;
@@ -240,6 +259,8 @@ export type ProfileAction =
   | { action: "rename"; id: string; name: string }
   | { action: "apply" | "update" | "delete"; id: string };
 export type HostMessage =
+  | { type: "comparison"; enabled?: boolean; active?: "A" | "B"; name?: string }
+  | { type: "target"; side: "A" | "B"; action: HostMessage }
   | { type: "ready" | "refresh" | "key" }
   | { type: "source"; source: Source }
   | { type: "options"; options: Options }
@@ -299,6 +320,14 @@ export interface ChecklistFamily {
   models: ChecklistModel[];
 }
 export interface ViewState {
+  comparison?: {
+    active: import("./comparison").Side;
+    sides: Record<
+      import("./comparison").Side,
+      import("./comparison").OptionResult
+    >;
+    delta: ReturnType<typeof import("./comparison").comparisonDelta>;
+  };
   source: Source;
   options: Options;
   rows: Row[];

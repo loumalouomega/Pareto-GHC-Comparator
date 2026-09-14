@@ -7,6 +7,11 @@ export function html(
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${source}; img-src ${source} data:; font-src ${source};"><link rel="stylesheet" href="${css}"><title>Pareto GHC Comparator</title></head><body>
   <header><div class="eyebrow" id="eyebrow">PARETO / GITHUB COPILOT</div><h1>Find your model’s sweet spot.</h1><p id="subtitle">Compare benchmark quality with estimated Copilot usage. Better value is toward the upper left.</p><div class="actions"><button id="refresh">Refresh data</button><button id="key" class="secondary">Set API key</button></div></header>
  <main>
+ <section class="comparison-controls" aria-label="Option comparison">
+ <label><input id="comparison-enabled" type="checkbox">Compare options</label>
+ <label>Editing<select id="comparison-active"><option value="A">A</option><option value="B">B</option></select></label>
+ <label>Option name<input id="comparison-name" maxlength="60"></label>
+ </section><section id="comparison-panels" class="comparison-panels" hidden aria-label="Comparison results"></section><p id="comparison-delta" role="status" hidden></p>
  <section class="profile-bar" aria-label="Workload profiles">
  <label>Saved workload<select id="profile"><option value="">Custom</option></select></label>
  <button id="profile-apply" class="secondary">Apply</button>
@@ -67,7 +72,7 @@ export function html(
   <button id="usage-clear" class="secondary">Erase local usage</button>
   <label class="checkbox-label"><input id="usage-full-paths" type="checkbox">Show full paths</label>
   <span id="usage-watching" role="status"></span>
-  </div><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
+  </div><p id="usage-diagnostics" role="status"></p><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
   <p id="status" role="status" aria-live="polite"></p>
  <section class="chart-card" aria-labelledby="chart-title"><div class="chart-heading"><h2 id="chart-title">Quality vs. usage cost</h2><span id="count"></span></div><div id="legend" aria-label="Providers"></div><div id="chart-wrap"><canvas id="chart" role="img" aria-label="Model quality and cost scatter plot. The table below provides all values and model selection."></canvas></div><p id="empty" hidden></p><p class="hint">Dotted line: Pareto frontier — no displayed model offers both a lower or equal cost and a higher or equal score, with one strict improvement. Shaded quadrant: most attractive — above-median score at or below median cost.</p></section>
  <div class="results"><section class="table-card" aria-labelledby="table-title"><h2 id="table-title">Models exposed to this extension</h2><div class="table-scroll"><table><caption class="sr-only">Filtered comparison results. Select a model to inspect its benchmark and tradeoffs.</caption><thead><tr><th scope="col">Model</th><th scope="col">Score</th><th id="cost-heading" scope="col">AI credits</th><th id="efficiency-heading" scope="col">Cost / quality</th><th scope="col">Comparison</th></tr></thead><tbody id="rows"></tbody></table></div></section>

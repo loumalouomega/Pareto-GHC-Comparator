@@ -32,6 +32,14 @@ Local usage scanning requires consent in a modal prompt. **Erase Local Copilot U
 
 Usage-based budget suggestions include free requests in the percentile and can suggest a zero budget.
 
+## Compare options
+
+Enable **Compare options** to keep two named alternatives visible. Choose **Editing A / B** to change one option using the existing controls, or load a saved workload into it. Sources, selections, filters, billing, and workloads are independent; the score preset and task/workload chart basis are shared. The last pair is remembered separately, and leaving this mode restores your single view.
+
+Select one row in each panel to see **B minus A** quality and cost differences. Cost differences require matching units and effective workloads; incompatible options retain separate frontiers with an explanation. CSV and snapshot exports include both options and their assumptions, PNG includes both charts, and badge export names the active option.
+
+Usage completeness diagnostics distinguish malformed records, unsupported or unreadable files, stale retained contributions, missing tokens, and legacy text estimates. Prefill and sampled credit budgets use fully observed prompt/output pairs, including explicit zeros. Older usage caches are rescanned only with existing consent. Native OpenCode discovery supports platform-specific PATH resolution and the home-directory fallback; Windows requires `opencode.exe`, not a `.cmd` or `.bat` wrapper.
+
 ## Guides
 
 - [Website](https://loumalouomega.github.io/Pareto-GHC-Comparator/) — project landing page.
