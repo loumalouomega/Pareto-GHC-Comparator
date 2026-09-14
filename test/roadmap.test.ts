@@ -505,8 +505,9 @@ test("CSV export matches rows and escapes hostile values", () => {
   assert.match(csv, /"=cmd\|calc"/);
   assert.match(csv, /,yes,exact,/);
   // A row with no `pricing` (e.g. a hand-built fixture) exports blank
-  // pricing columns rather than throwing.
-  assert.match(csv, /a reason,,\n$/);
+  // pricing columns rather than throwing; provenance tail carries the task
+  // basis with configured and effective mixes, then blank dates/issue.
+  assert.match(csv, /a reason,,,task,1000,0,0,1000,1000,0,0,1000,,,,,\n$/);
 });
 
 test("coverage: source helpers, static guards, and pricing sources", () => {
@@ -924,7 +925,8 @@ test("snapshot and badge exports reflect displayed rows", () => {
       fetchedAt: 1,
     }),
   );
-  assert.equal(snapshot.version, 1);
+  assert.equal(snapshot.version, 3);
+  assert.equal(snapshot.kind, "single");
   assert.equal(snapshot.rows.length, rows.length);
   assert.match(snapshot.disclaimer, /Illustrative/);
   assert.equal(snapshot.catalogDate, "2026-09-10");
@@ -957,10 +959,14 @@ test("snapshot and badge exports reflect displayed rows", () => {
   assert.match(withScenario.scenario.label, /not a bill/);
   const csv = exportCsv(rows, defaults, recommended);
   assert.match(csv, /pricing_status,pricing_source/);
-  assert.ok(csv.includes(`,${rows[0].pricing?.status},${rows[0].pricing?.source}\n`));
+  assert.match(csv, /cost_basis,workload_input,workload_read,workload_write,workload_output/);
+  assert.match(csv, /catalog_date,static_registry_date,benchmark_version,benchmark_fetched_at,pricing_issue/);
+  assert.ok(csv.includes(`,${rows[0].pricing?.status},${rows[0].pricing?.source},task,`));
   const badge = JSON.parse(exportBadge(rows, defaults, { source: "copilot", preset: "general" }));
   assert.equal(badge.schemaVersion, 1);
   assert.match(badge.label, /pareto copilot general/);
+  assert.equal(badge.unit, "AI credits");
+  assert.equal(badge.basis, "task");
   assert.ok(badge.message.length > 0);
   const empty = JSON.parse(exportBadge([], defaults, { source: "copilot", preset: "general" }));
   assert.match(empty.message, /no comparable models/);

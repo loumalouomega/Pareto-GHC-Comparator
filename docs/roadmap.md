@@ -21,17 +21,6 @@ Below, Tier 1 turns each "Requirements across future work" principle into scoped
 
 Admission criterion: current shipped behavior falls short of one of the requirements below; close the gap without expanding scope beyond it.
 
-### Provenance-complete exports — M
-
-- **Gap:**
-  - CSV/JSON exports omit the workload token mix and the active chart/cost basis (`src/export.ts` snapshot and CSV builders).
-  - CSV rows carry no catalog or benchmark-snapshot date, only per-row pricing/mapping status.
-  - Two-option pair exports are built inline in `src/extension.ts` (CSV/snapshot/PNG for Compare tools) rather than in `src/export.ts`, and have no dedicated provenance tests.
-  - Cost-unit-label logic is duplicated across `src/export.ts` and `src/recommend.ts` instead of a single `costUnit()`-style helper, risking drift between what's shown and what's exported.
-- **Deliverables:** add workload (token mix) and chart/cost-basis fields to snapshot JSON and CSV; add catalog/benchmark dates to CSV rows (already present in the JSON snapshot); move the pair export builders into `src/export.ts` alongside the single-option ones; consolidate unit-label logic into one shared function used everywhere a unit is displayed or exported.
-- **Dependencies:** existing snapshot/CSV/badge builders in `src/export.ts`; existing pair-export code path.
-- **Acceptance:** bump the snapshot schema version with a documented migration note; every export (single and pair) round-trips with its cost unit, workload assumption, tested benchmark variant and pricing source intact. Tests assert no export can present two rows on different units without both units labelled.
-
 ### Integration evidence matrix and schema version detection — M
 
 - **Gap:** Copilot chat session files that fail to parse are only counted as `unsupported`, with no detail on what changed or what to do next (`src/usage.ts`'s session parser). The OpenCode CLI's own version is never captured, so a "tier-shape volatility" schema change can't be distinguished from a bug. There's no single place recording which client/platform/version combinations have been verified.

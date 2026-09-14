@@ -8,7 +8,6 @@ import {
   type ComparisonStore,
   type Side,
 } from "./comparison";
-import { normalizeCost } from "./normalize";
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
@@ -32,8 +31,10 @@ import { defaultBilling, sources } from "./sources";
 import {
   exportBadge,
   exportCsv,
+  exportPairCsv,
+  exportPairSnapshot,
   exportSnapshot,
-  scenarioExport,
+  type PairSideInput,
 } from "./export";
 import { html } from "./html";
 import { recommend } from "./recommend";
@@ -1252,19 +1253,22 @@ export function activate(context: vscode.ExtensionContext) {
                         : "Badge export cancelled.";
                 } else {
                   let exportedRows = rows.length;
+                  const provenance = {
+                    catalogDate,
+                    staticRegistryDate,
+                    planRegistryDate,
+                    version: snapshot?.version,
+                    fetchedAt: snapshot?.fetchedAt,
+                  };
                   let payload =
                     m.type === "exportCsv"
-                      ? exportCsv(rows, options, recommended)
+                      ? exportCsv(rows, options, recommended, provenance)
                       : m.type === "exportSnapshot"
                         ? exportSnapshot(rows, options, recommended, {
                             source: options.source,
                             preset: options.preset,
                             billing: options.billing,
-                            catalogDate,
-                            staticRegistryDate,
-                            planRegistryDate,
-                            version: snapshot?.version,
-                            fetchedAt: snapshot?.fetchedAt,
+                            ...provenance,
                             scenario: single.scenario,
                           })
                         : exportBadge(rows, options, {
@@ -1273,7 +1277,7 @@ export function activate(context: vscode.ExtensionContext) {
                           });
                   if (comparison?.enabled && m.type !== "exportBadge") {
                     captureActive();
-                    const pair = (["A", "B"] as const).map((side) => {
+                    const results = (["A", "B"] as const).map((side) => {
                       const option = comparison!.sides[side];
                       const result = optionResult(
                         option,
@@ -1282,111 +1286,47 @@ export function activate(context: vscode.ExtensionContext) {
                         byok,
                         usedCountsFor(),
                       );
-                      return {
+                      return { side, result };
+                    });
+                    const sides: PairSideInput[] = results.map(
+                      ({ side, result }) => ({
                         side,
-                        ...result,
+                        name: result.name,
+                        options: result.options,
+                        rows: result.rows,
+                        recommendation: result.recommendation,
+                        selected: result.selected,
+                        scenario: result.scenario,
                         costNormalization: comparison!.normalize
                           ? selectedCost(result)
                           : ({ status: "off" } as const),
                         availabilityNote:
-                          sources[option.options.source].availabilityNote,
-                        pricingNote: sources[option.options.source].pricingNote,
+                          sources[result.options.source].availabilityNote,
+                        pricingNote:
+                          sources[result.options.source].pricingNote,
                         discoveryError:
-                          discoveryErrors[option.options.source] ?? "",
-                        catalogDate,
-                        staticRegistryDate,
-                        planRegistryDate,
-                        benchmarkVersion: snapshot?.version,
-                        benchmarkFetchedAt: snapshot?.fetchedAt,
-                      };
-                    });
-                    exportedRows = pair.reduce(
-                      (sum, p) => sum + p.rows.length,
+                          discoveryErrors[result.options.source] ?? "",
+                      }),
+                    );
+                    exportedRows = sides.reduce(
+                      (sum, s) => sum + s.rows.length,
                       0,
                     );
-                    const usdCostDelta = comparison!.normalize
-                      ? comparisonDelta(pair[0], pair[1], true).usd
-                      : null;
+                    const pairMeta = {
+                      ...provenance,
+                      normalize: comparison!.normalize,
+                      usdCostDelta: comparison!.normalize
+                        ? comparisonDelta(
+                            results[0].result,
+                            results[1].result,
+                            true,
+                          ).usd
+                        : null,
+                    };
                     payload =
                       m.type === "exportSnapshot"
-                        ? JSON.stringify(
-                            {
-                              version: 2,
-                              disclaimer:
-                                "Illustrative comparison, not measured task cost or an account bill.",
-                              options: pair.map((p) => ({
-                                ...p,
-                                scenario:
-                                  p.scenario.status === "off"
-                                    ? p.scenario
-                                    : scenarioExport(p.scenario),
-                              })),
-                              usdCostDelta,
-                            },
-                            null,
-                            2,
-                          )
-                        : "option,assumptions,usd_equivalent,usd_conversion," +
-                          exportCsv([], options).trimEnd() +
-                          "\n" +
-                          (() => {
-                            // Derived from the header, not hardcoded, so an
-                            // empty-option row always pads to the same width
-                            // as a populated one even if columns are added.
-                            const dataColumns = exportCsv([], options)
-                              .trimEnd()
-                              .split(",").length;
-                            return pair
-                              .map((p) => {
-                                const label = JSON.stringify({
-                                  side: p.side,
-                                  name: p.name,
-                                  options: p.options,
-                                  discoveryError: p.discoveryError,
-                                  availabilityNote: p.availabilityNote,
-                                  pricingNote: p.pricingNote,
-                                  catalogDate,
-                                  staticRegistryDate,
-                                  planRegistryDate,
-                                  scenario:
-                                    p.scenario.status === "off"
-                                      ? p.scenario
-                                      : scenarioExport(p.scenario),
-                                  costNormalization: p.costNormalization,
-                                  usdCostDelta,
-                                  benchmarkVersion: snapshot?.version,
-                                  benchmarkFetchedAt: snapshot?.fetchedAt,
-                                });
-                                if (!p.rows.length)
-                                  return `${p.side},"${label.replace(/"/g, '""')}",,,${Array(dataColumns).fill("").join(",")}\n`;
-                                return p.rows
-                                  .map((row) => {
-                                    const n = comparison!.normalize
-                                      ? normalizeCost(
-                                          row.cost,
-                                          p.options.billing,
-                                          p.options.display.chart,
-                                        )
-                                      : ({ status: "off" } as const);
-                                    const usdEquivalent =
-                                      n.status === "native" ||
-                                      n.status === "converted"
-                                        ? String(n.usd)
-                                        : "";
-                                    const csv = exportCsv(
-                                      [row],
-                                      p.options,
-                                      new Set(p.recommendation.modelIds),
-                                    );
-                                    return (
-                                      `${p.side},"${label.replace(/"/g, '""')}",${usdEquivalent},${n.status},` +
-                                      csv.slice(csv.indexOf("\n") + 1)
-                                    );
-                                  })
-                                  .join("");
-                              })
-                              .join("");
-                          })();
+                        ? exportPairSnapshot(sides, pairMeta)
+                        : exportPairCsv(sides, pairMeta);
                   }
                   await vscode.workspace.fs.writeFile(
                     uri,

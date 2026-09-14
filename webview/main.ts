@@ -12,6 +12,7 @@ import type {
 } from "../src/types";
 import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
+import { costUnit } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert } from "../src/freshness";
@@ -2037,18 +2038,16 @@ function render(next: ViewState) {
     legend.append(item);
   }
   renderChecklist();
+  // Native unit from the shared helper; the legacy table label stays the
+  // short bare "Requests" in both views (the full "premium requests"
+  // appears in exports).
+  const unit = costUnit(state.options.billing);
   el("cost-heading").textContent =
-    state.options.display.chart === "task"
-      ? state.options.billing === "credits"
-        ? "AI credits / task"
-        : state.options.billing === "legacy"
-          ? "Requests"
-          : "USD / task"
-      : state.options.billing === "credits"
-        ? "AI credits"
-        : state.options.billing === "legacy"
-          ? "Requests"
-          : "USD";
+    unit === "premium requests"
+      ? "Requests"
+      : state.options.display.chart === "task"
+        ? `${unit} / task`
+        : unit;
   const body = el("rows");
   body.replaceChildren();
   for (const row of state.rows) {
@@ -2529,7 +2528,7 @@ el("export-png").onclick = () => {
       ctx.fillStyle = getComputedStyle(document.body).color;
       ctx.font = "20px sans-serif";
       ctx.fillText(
-        `A: ${state.comparison.sides.A.name} vs B: ${state.comparison.sides.B.name} · ${state.comparison.overlay.unit}`,
+        `A: ${state.comparison.sides.A.name} vs B: ${state.comparison.sides.B.name} · ${state.comparison.overlay.unit} · ${state.comparison.sides.A.options.display.chart} basis · catalog ${state.catalogDate} · benchmarks ${state.version ?? "unknown"}`,
         20,
         35,
       );
@@ -2542,10 +2541,11 @@ el("export-png").onclick = () => {
       );
     } else if (state?.comparison) {
       for (const [index, side] of (["A", "B"] as const).entries()) {
+        const sideOptions = state.comparison.sides[side].options;
         ctx.fillStyle = getComputedStyle(document.body).color;
         ctx.font = "20px sans-serif";
         ctx.fillText(
-          `${side}: ${state.comparison.sides[side].name} · ${state.comparison.sides[side].options.billing}`,
+          `${side}: ${state.comparison.sides[side].name} · ${costUnit(sideOptions.billing)} · ${sideOptions.display.chart} basis · catalog ${state.catalogDate}`,
           index * 800 + 20,
           35,
         );
@@ -2557,6 +2557,15 @@ el("export-png").onclick = () => {
           800,
         );
       }
+    } else if (state) {
+      ctx.fillStyle = getComputedStyle(document.body).color;
+      ctx.font = "20px sans-serif";
+      ctx.fillText(
+        `Pareto GHC · ${state.options.preset} · ${costUnit(state.options.billing)} · ${state.options.display.chart} basis · catalog ${state.catalogDate} · benchmarks ${state.version ?? "unknown"}`,
+        20,
+        35,
+      );
+      ctx.drawImage(canvas, 0, 60, exportCanvas.width, 820);
     } else ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
     send("exportPng", { png: exportCanvas.toDataURL("image/png") });
   } finally {

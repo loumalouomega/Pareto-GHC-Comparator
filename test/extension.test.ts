@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { validSnapshot } from "../src/api";
+import { snapshotRow } from "../src/export";
 import { planRegistryDate } from "../src/plans";
+import type { Row } from "../src/types";
 
 /** Minimal RFC4180-style splitter (handles quoted fields with "" escapes),
  * for asserting a CSV row's actual column count regardless of embedded commas. */
@@ -452,12 +454,29 @@ test("extension discovers Copilot models, serves cached data, validates messages
     action: { type: "exportSnapshot" },
   });
   const snapshotExport = JSON.parse(exports.at(-1)!);
-  assert.equal(snapshotExport.version, 2);
+  assert.equal(snapshotExport.version, 3);
+  assert.equal(snapshotExport.kind, "comparison");
   assert.equal(snapshotExport.options.length, 2);
+  // Pair rows share the single-snapshot projection (tested variant, mapping
+  // status/reasons, pricing source/issue/provenance), plus per-option unit
+  // and cost basis.
   assert.deepEqual(
     snapshotExport.options[1].rows,
-    JSON.parse(JSON.stringify(last().comparison.sides.B.rows)),
+    last().comparison.sides.B.rows.map((r: Row) =>
+      snapshotRow(
+        r,
+        new Set(last().comparison.sides.B.recommendation.modelIds),
+      ),
+    ),
   );
+  assert.equal(snapshotExport.options[1].unit, "USD");
+  assert.equal(snapshotExport.options[1].costBasis.basis, "task");
+  assert.deepEqual(snapshotExport.options[1].costBasis.effectiveTokens, {
+    input: 1000,
+    read: 0,
+    write: 0,
+    output: 1000,
+  });
   // Side B carries its own scenario in the pair snapshot; switching it to
   // codex (USD billing) makes the copied "copilot-pro" scenario unavailable
   // rather than silently approximated for a different source.

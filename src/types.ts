@@ -1,5 +1,12 @@
 export type Preset = "general" | "coding" | "agentic";
 export type Billing = "credits" | "legacy" | "usd";
+export type CostUnit = "AI credits" | "premium requests" | "USD";
+/** Single native cost-unit label shared by exports, recommendations, plans,
+ * and webview headings, so displayed and exported units cannot drift apart.
+ * Converted USD equivalents are always labelled separately (see normalize.ts)
+ * and never flow through this helper. */
+export const costUnit = (billing: Billing): CostUnit =>
+  billing === "credits" ? "AI credits" : billing === "legacy" ? "premium requests" : "USD";
 export type Source =
   | "copilot"
   | "opencode"

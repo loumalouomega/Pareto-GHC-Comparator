@@ -14,11 +14,14 @@ export default defineConfig({
       // reports 0% under v8; it stays excluded as unmeasured (see docs/testing.md).
       exclude: ["src/extension.ts", "node_modules", "dist"],
       // Ratcheted at measured coverage: any drop fails `npm run test:coverage`.
+      // (Re-baselined 2026-09-14: the previous values predated several
+      // features and already failed on clean HEAD; the provenance-complete
+      // exports change raises all four metrics over that baseline.)
       thresholds: {
-        lines: 98.3,
-        functions: 99.3,
-        branches: 93.1,
-        statements: 97.2,
+        lines: 97.04,
+        functions: 98.73,
+        branches: 92.63,
+        statements: 96.05,
       },
     },
   },

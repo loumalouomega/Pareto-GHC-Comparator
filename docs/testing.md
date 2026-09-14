@@ -77,6 +77,7 @@ The completed roadmap is covered by the following implementation and regression 
 | BYOK validation, provenance, billing isolation | `test/roadmap.test.ts`, `test/opencode.test.ts`, `test/extension.test.ts` |
 | Usage parsing, incremental scans, workspace labels, consent and erase races | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
 | Workload prefill, used-model filtering, budget percentiles including free requests | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
+| Provenance-complete exports (v3 snapshots, pair builders, shared unit labels, PNG annotations) | `test/exports.test.ts`, `test/extension.test.ts`, `test/roadmap.test.ts`, `test/webview.spec.ts` |
 
 The earlier completion audit covered the then-completed roadmap. It does not certify current provider prices, real-account discovery, or Marketplace publication; those require separate external verification.
 

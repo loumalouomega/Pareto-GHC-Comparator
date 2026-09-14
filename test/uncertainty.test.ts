@@ -20,6 +20,8 @@ test("uncatalogued OpenCode name matches stay inferred in exports and manual cho
     source: "opencode", billing: "usd", preset: options.preset, catalogDate: "2026-09-10", staticRegistryDate: "2026-09-10",
   }));
   assert.equal(snapshot.rows[0].mappingStatus, "inferred");
+  assert.equal(snapshot.kind, "single");
+  assert.equal(snapshot.costBasis.unit, "USD");
   assert.equal(compare([model], [benchmark], options, { [model.id]: "new" })[0].mappingStatus, "user");
   assert.equal(compare([model], [benchmark], options, { [model.id]: "gone" })[0].mappingStatus, "missing");
   assert.equal(compare([model], [benchmark], options, {}, [], { pins: { [model.id]: ["new"] } })[0].mappingStatus, "user");
