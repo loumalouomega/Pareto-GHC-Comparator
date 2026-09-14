@@ -195,7 +195,15 @@ export interface UsageRequest {
   toolCallRounds: number;
   tokensEstimated: boolean;
 }
+export interface UsageCompleteness {
+  observedPairs: number;
+  observedZeroPairs: number;
+  missingPairs: number;
+  estimatedPairs: number;
+  fallbackMultipliers: number;
+}
 export interface UsageModelStat {
+  completeness?: UsageCompleteness;
   modelId: string;
   requests: number;
   promptTokens: number;
@@ -203,6 +211,7 @@ export interface UsageModelStat {
   premiumEstimate: number;
 }
 export interface UsageDayStat {
+  completeness?: UsageCompleteness;
   date: string;
   requests: number;
   promptTokens: number;
@@ -210,6 +219,7 @@ export interface UsageDayStat {
   premiumEstimate: number;
 }
 export interface UsageWorkspaceStat {
+  completeness?: UsageCompleteness;
   id: string;
   path: string;
   requests: number;
@@ -218,6 +228,7 @@ export interface UsageWorkspaceStat {
   premiumEstimate: number;
 }
 export interface UsageSummary {
+  completeness?: UsageCompleteness;
   diagnostics?: UsageDiagnostics;
   scannedAt: number;
   fileCount: number;
@@ -305,6 +316,8 @@ export interface CatalogEntry {
   name: string;
   provider: string;
   benchmarkFamilies: string[];
+  /** Aliases derived from a display name rather than an explicit mapping. */
+  benchmarkInferred?: boolean;
   rates?: Rates;
   long?: { threshold: number; rates: Rates };
   legacy?: { pro: number; proPlus: number };
@@ -312,7 +325,7 @@ export interface CatalogEntry {
   /** Zero-cost model (Zen free tier). Priced at 0 with a visible label. */
   freeTier?: boolean;
 }
-export type MappingStatus = "exact" | "user" | "selection" | "missing";
+export type MappingStatus = "exact" | "inferred" | "user" | "selection" | "missing";
 export interface MappingResult {
   status: MappingStatus;
   candidateIds: string[];

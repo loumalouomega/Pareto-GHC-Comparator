@@ -668,6 +668,32 @@ export function aggregateUsage(
   const days = new Map<string, UsageDayStat>();
   const workspaces = new Map<string, UsageWorkspaceStat>();
   const unknown = new Set<string>();
+  const emptyCompleteness = () => ({
+    observedPairs: 0,
+    observedZeroPairs: 0,
+    missingPairs: 0,
+    estimatedPairs: 0,
+    fallbackMultipliers: 0,
+  });
+  const completeness = emptyCompleteness();
+  const count = (c: ReturnType<typeof emptyCompleteness>, r: UsageRequest) => {
+    const observed =
+      r.promptProvenance === "observed" && r.outputProvenance === "observed";
+    if (observed) {
+      c.observedPairs++;
+      if (r.promptTokens === 0 && r.outputTokens === 0) c.observedZeroPairs++;
+    }
+    // Missing and estimated categories may overlap for a partial legacy pair.
+    if (
+      !r.promptProvenance || !r.outputProvenance ||
+      r.promptProvenance === "missing" || r.outputProvenance === "missing"
+    ) c.missingPairs++;
+    if (
+      r.promptProvenance === "estimated" || r.outputProvenance === "estimated" ||
+      r.tokensEstimated
+    ) c.estimatedPairs++;
+    if (premiumForRequest(r).estimated) c.fallbackMultipliers++;
+  };
   let requestCount = 0,
     promptTokens = 0,
     outputTokens = 0,
@@ -683,6 +709,7 @@ export function aggregateUsage(
         promptTokens: number;
         outputTokens: number;
         premiumEstimate: number;
+        completeness?: ReturnType<typeof emptyCompleteness>;
       }
     >,
     key: string,
@@ -701,6 +728,7 @@ export function aggregateUsage(
       map.set(key, row);
     }
     row.requests++;
+    count(row.completeness ??= emptyCompleteness(), r);
     row.promptTokens += r.promptTokens;
     row.outputTokens += r.outputTokens;
     row.premiumEstimate += premium;
@@ -721,6 +749,7 @@ export function aggregateUsage(
     }
     for (const r of file.requests) {
       requestCount++;
+      count(completeness, r);
       promptTokens += r.promptTokens;
       outputTokens += r.outputTokens;
       if (r.tokensEstimated) estimatedTokens++;
@@ -730,7 +759,7 @@ export function aggregateUsage(
       }
       const premium = premiumForRequest(r);
       premiumEstimate += premium.value;
-      if (premium.estimated && r.modelId) unknown.add(r.modelId);
+      if (premium.estimated) unknown.add(r.modelId ?? "unknown (missing model id)");
       const key = r.modelId ?? "unknown";
       bump(
         models,
@@ -762,6 +791,7 @@ export function aggregateUsage(
           premium.value,
         );
       ws.requests++;
+      count(ws.completeness ??= emptyCompleteness(), r);
       ws.promptTokens += r.promptTokens;
       ws.outputTokens += r.outputTokens;
       ws.premiumEstimate += premium.value;
@@ -805,6 +835,7 @@ export function aggregateUsage(
   const creditSample = credits.length;
   return {
     scannedAt,
+    completeness,
     diagnostics,
     fileCount: totalFiles,
     requestCount,
@@ -849,7 +880,9 @@ export function suggestBudget(
       };
     return {
       value: summary.premiumP90,
-      note: `p90 of ${summary.medianSample} requests · ${window}.`,
+      note: `p90 of ${summary.medianSample} requests · ${window}.` +
+        (summary.completeness?.fallbackMultipliers
+          ? " Unknown model — default multiplier applied in usage history." : ""),
     };
   }
   if (billing === "credits") {

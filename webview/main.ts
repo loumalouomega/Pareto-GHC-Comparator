@@ -128,6 +128,7 @@ const collapsedFamilies = new Set<string>();
 const collapsedModels = new Set<string>();
 const mappingLabels = {
   exact: "Exact match",
+  inferred: "Inferred match (unverified)",
   user: "User selected",
   selection: "Needs selection",
   missing: "Missing benchmark",
@@ -1264,6 +1265,11 @@ function renderUsage() {
   }
   const num = (n: number) =>
     new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
+  const completenessNote = (c: NonNullable<typeof u>["completeness"]) => c
+    ? `${c.observedPairs} fully observed pairs (${c.observedZeroPairs} observed zero pairs) · ${c.missingPairs} missing-token requests · ${c.estimatedPairs} estimated requests` +
+      (c.fallbackMultipliers ? ` · Unknown model — default multiplier applied (${c.fallbackMultipliers} requests)` : "")
+    : "Completeness unavailable";
+  el("usage-diagnostics").textContent += ` ${completenessNote(u.completeness)}. Token totals include available fields only; missing fields are not observed zeros.`;
   const range = u.dateRange
     ? `${new Date(u.dateRange.from).toLocaleDateString()} – ${new Date(u.dateRange.to).toLocaleDateString()}`
     : "no dated requests";
@@ -1271,7 +1277,8 @@ function renderUsage() {
     `${u.requestCount} requests · ${num(u.promptTokens)} prompt + ${num(u.outputTokens)} output tokens · ` +
     `≈${num(u.premiumEstimate)} premium requests · ${u.fileCount} files · ${range} · ` +
     `scanned ${new Date(u.scannedAt).toLocaleString()}` +
-    (u.estimatedTokens ? ` · ${u.estimatedTokens} text-estimated` : "");
+    (u.estimatedTokens ? ` · ${u.estimatedTokens} text-estimated` : "") +
+    (u.completeness?.fallbackMultipliers ? " · Unknown model — default multiplier applied" : "");
   const table = (title: string, head: string[], rows: string[][]) => {
     const wrap = document.createElement("div");
     wrap.append(text("h3", title));
@@ -1300,7 +1307,7 @@ function renderUsage() {
     modelsEl.append(
       table(
         "By model",
-        ["Model", "Requests", "Prompt", "Output", "Premium ≈"],
+        ["Model", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
         u.models
           .slice(0, 12)
           .map((m) => [
@@ -1309,6 +1316,7 @@ function renderUsage() {
             num(m.promptTokens),
             num(m.outputTokens),
             String(m.premiumEstimate),
+            completenessNote(m.completeness),
           ]),
       ),
     );
@@ -1316,7 +1324,7 @@ function renderUsage() {
     daysEl.append(
       table(
         "By day",
-        ["Date", "Requests", "Prompt", "Output", "Premium ≈"],
+        ["Date", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
         u.days
           .slice(-14)
           .map((d) => [
@@ -1325,6 +1333,7 @@ function renderUsage() {
             num(d.promptTokens),
             num(d.outputTokens),
             String(d.premiumEstimate),
+            completenessNote(d.completeness),
           ]),
       ),
     );
@@ -1332,13 +1341,14 @@ function renderUsage() {
     const shown = u.workspaces.slice(0, 20);
     const wrap = table(
       "By workspace",
-      ["Workspace", "Requests", "Prompt", "Output", "Premium ≈"],
+      ["Workspace", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
       shown.map((w) => [
         workspaceLabel(w.path, w.id, usageFullPaths),
         String(w.requests),
         num(w.promptTokens),
         num(w.outputTokens),
         String(w.premiumEstimate),
+        completenessNote(w.completeness),
       ]),
     );
     wrap.querySelectorAll("tbody tr").forEach((tr, i) => {

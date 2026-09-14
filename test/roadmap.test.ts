@@ -140,7 +140,7 @@ test("ambiguous benchmark variants expand automatically into thinking rows", () 
   );
   for (const r of rows) {
     assert.equal(r.modelId, "gpt-5.4");
-    assert.equal(r.mappingStatus, "exact");
+    assert.equal(r.mappingStatus, "inferred");
     assert.deepEqual(r.candidateIds.sort(), ["b-high", "b-xhigh"]);
     assert.ok(r.expandedBenchmarkId);
     assert.equal(r.pinnedBenchmarkId, undefined);
@@ -190,7 +190,7 @@ test("models reporting a thinking level resolve to that same level", () => {
   assert.equal(single.length, 1);
   assert.equal(single[0].id, high.id);
   assert.equal(single[0].benchmark?.id, "b-high");
-  assert.equal(single[0].mappingStatus, "exact");
+  assert.equal(single[0].mappingStatus, "inferred");
   // A reported level matching no benchmark still expands every variant.
   const low: AvailableModel = { ...high, id: "opencode:openai/gpt-5.4#low", name: "GPT-5.4 (low)" };
   const expanded = compare([low], benchmarks, options);

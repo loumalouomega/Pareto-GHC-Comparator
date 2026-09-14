@@ -74,6 +74,7 @@ const available = [
   ["unknown-model", "Unmapped model"],
 ].map(([id, name]) => ({ id, name, family: id, maxInputTokens: 1000000 }));
 const usageFixture = {
+  completeness: { observedPairs: 1, observedZeroPairs: 0, missingPairs: 1, estimatedPairs: 1, fallbackMultipliers: 1 },
   scannedAt: Date.now(),
   fileCount: 2,
   requestCount: 3,
@@ -107,6 +108,7 @@ const usageFixture = {
     },
     {
       modelId: "copilot/mystery",
+      completeness: { observedPairs: 1, observedZeroPairs: 0, missingPairs: 0, estimatedPairs: 0, fallbackMultipliers: 1 },
       requests: 1,
       promptTokens: 100,
       outputTokens: 50,
@@ -657,7 +659,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     const mediumRow = page.getByRole("button", { name: /GPT-5\.4.*medium/ });
     await mediumRow.click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Exact match",
+      "Inferred match (unverified)",
     );
     await expect(page.locator("#details")).toContainText(
       "Tested variant: GPT-5.4 (medium)",
@@ -695,7 +697,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       "Will map to GPT-5.4 (medium)",
     );
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Exact match",
+      "Inferred match (unverified)",
     );
     await page.getByRole("button", { name: "Apply mapping" }).click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
@@ -713,7 +715,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Reset to automatic is its own explicit action; it applies immediately.
     await page.getByRole("button", { name: "Reset to automatic" }).click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Exact match",
+      "Inferred match (unverified)",
     );
     await page.locator("#variant-search").fill("");
     await page.locator("#variant-manual").check();
@@ -1004,6 +1006,10 @@ for (const theme of ["light", "dark", "high-contrast"])
       "1 stale contributions",
     );
     // Only-my-models filter, workload prefill, and budget suggestion.
+    await expect(page.locator("#usage-diagnostics")).toContainText("0 observed zero pairs");
+    await expect(page.locator("#usage-diagnostics")).toContainText("1 missing-token requests");
+    await expect(page.locator("#usage-summary")).toContainText("Unknown model — default multiplier applied");
+    await expect(page.locator("#usage-models")).toContainText("Unknown model — default multiplier applied (1 requests)");
     await expect(page.locator("#usage-prefill-note")).toContainText(
       "Median 150 prompt + 75 output",
     );

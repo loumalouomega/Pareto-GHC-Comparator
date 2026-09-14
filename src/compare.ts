@@ -376,7 +376,14 @@ export function resolveBenchmark(
         };
   }
   if (hits.length === 1)
-    return { status: "exact", candidateIds, benchmark: hits[0] };
+    return {
+      status: entry?.benchmarkInferred ? "inferred" : "exact",
+      candidateIds,
+      benchmark: hits[0],
+      ...(entry?.benchmarkInferred
+        ? { reason: "Inferred benchmark from display name; not an explicit mapping." }
+        : {}),
+    };
   return {
     status: hits.length ? "selection" : "missing",
     candidateIds,
@@ -498,6 +505,7 @@ export function compare(
           name: baseName,
           provider,
           benchmarkFamilies: opencodeBenchmarkFamilies[baseRef] ?? [baseName],
+          benchmarkInferred: opencodeBenchmarkFamilies[baseRef] === undefined,
           ...(m.rates ? { rates: m.rates } : {}),
           ...(m.long ? { long: m.long } : {}),
           ...(m.freeTier
@@ -757,7 +765,8 @@ export function compare(
         );
         if (same.length === 1) {
           const matched: MappingResult = {
-            status: "exact",
+            status: "inferred",
+            reason: "Inferred benchmark from reported thinking level; not a user selection.",
             candidateIds: automatic.candidateIds,
             benchmark: same[0],
           };
@@ -770,7 +779,8 @@ export function compare(
       // its own thinking-level checkbox, instead of blocking on manual choice.
       return candidates.map((b) => {
         const matched: MappingResult = {
-          status: "exact",
+          status: "inferred",
+          reason: "Automatically expanded benchmark variant; not a verified model configuration or user selection.",
           candidateIds: automatic.candidateIds,
           benchmark: b,
         };

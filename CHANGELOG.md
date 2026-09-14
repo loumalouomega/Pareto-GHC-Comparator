@@ -4,6 +4,11 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Fixed
+
+- Display-name benchmark matches and automatic thinking-variant matches now show **Inferred match (unverified)** instead of an exact match, with explanations retained in CSV/JSON exports.
+- Usage completeness separates observed zero-token pairs from missing fields and estimates in totals and model/day/workspace breakdowns. Default premium multipliers are labelled on affected estimates, including missing model IDs, and noted in legacy budget suggestions.
+
 ### Added
 
 - Usage-watching pause control: a status bar item (`$(eye) Copilot usage watching`) is now shown whenever the local usage file watcher is active, so watching is visible while another tab is open or the panel is closed. **Pause watching** / **Resume watching** — via the status bar, the `Pareto GHC: Pause/Resume Copilot Usage Watching` commands, or the new button in the Usage tab — stops the watcher without revoking consent or deleting stored data; manual scans still work while paused, and erasing still removes everything including the paused state.

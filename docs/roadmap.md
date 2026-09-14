@@ -21,17 +21,6 @@ Below, Tier 1 turns each "Requirements across future work" principle into scoped
 
 Admission criterion: current shipped behavior falls short of one of the requirements below; close the gap without expanding scope beyond it.
 
-### Explicit unknowns for name-derived mappings and multipliers — M
-
-- **Gap:** several places quietly convert an absence of evidence into a confident-looking answer:
-  - An uncatalogued model's display name becomes its benchmark family (`src/catalog.ts`'s alias fallback, `src/compare.ts` benchmark-family resolution).
-  - Auto-expanded benchmark variants (each thinking-level candidate turned into its own row) are marked `status: "exact"` even though no explicit choice was made (`src/compare.ts`, the per-candidate row builder).
-  - An unrecognized model id gets a silent `1.0` premium-request multiplier, recorded only as an internal `estimated` boolean with no user-visible label (`src/usageMultipliers.ts`).
-  - Usage summaries fold missing prompt/output token fields into `0` (`src/usage.ts`'s request mapping), which reads the same as an observed zero-token request.
-- **Deliverables:** a distinct `inferred` mapping status (separate from `exact`/`user`/`selection`/`missing`) for name-derived and auto-expanded matches, shown differently in the table/details panel; a visible "unknown model — default multiplier applied" label wherever the `1.0` fallback is used; usage completeness counters that separately track observed-zero vs. missing-token requests instead of merging them at `0`.
-- **Dependencies:** existing mapping-status enum in `src/types.ts`, the completeness diagnostics already shown in the Usage tab.
-- **Acceptance:** no name-similarity or auto-expansion match displays as `exact`. Tests cover: an uncatalogued model showing `inferred`, a missing multiplier showing its label, and a missing-token request not being counted as an observed zero in exports or the completeness summary.
-
 ### Provenance-complete exports — M
 
 - **Gap:**
