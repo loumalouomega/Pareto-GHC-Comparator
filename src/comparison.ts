@@ -38,7 +38,7 @@ export interface ComparisonStore {
   active: Side;
   /** Show each side's selected cost as a USD equivalent; off by default. */
   normalize: boolean;
-  /** How the Compare tab renders both options; defaults to "side-by-side". */
+  /** How the Compare tools tab renders both options; defaults to "side-by-side". */
   view: ComparisonView;
   sides: Record<Side, ComparisonOption>;
 }

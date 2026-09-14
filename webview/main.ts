@@ -40,6 +40,14 @@ const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
         }
       : { type, ...extra },
   );
+// Targets a specific side directly, regardless of which one is Editing — for
+// controls on the Compare tools tab (like the Tool A/Tool B pickers) that
+// must be able to set up both sides without switching Editing back and forth.
+const sendToSide = (
+  side: "A" | "B",
+  type: HostMessage["type"],
+  extra: Record<string, unknown> = {},
+) => vscode.postMessage({ type: "target", side, action: { type, ...extra } });
 const format = (v: number | null) =>
   v === null
     ? "—"
@@ -1546,8 +1554,8 @@ function renderComparison() {
     focusRow = focused?.dataset.comparisonRow;
   const pair = state?.comparison;
   el<HTMLInputElement>("comparison-enabled").checked = !!pair;
-  const singleChart = el("chart").closest<HTMLElement>(".chart-card");
-  if (singleChart) singleChart.hidden = !!pair;
+  el<HTMLSelectElement>("comparison-source-a").disabled = !pair;
+  el<HTMLSelectElement>("comparison-source-b").disabled = !pair;
   el<HTMLSelectElement>("comparison-active").disabled = !pair;
   el<HTMLInputElement>("comparison-name").disabled = !pair;
   el<HTMLInputElement>("comparison-normalize").disabled = !pair;
@@ -1575,6 +1583,10 @@ function renderComparison() {
     : "Export badge JSON";
   if (!pair) return;
   if (showOverlay && pair.overlay) drawOverlay(pair, pair.overlay, overlayCard);
+  el<HTMLSelectElement>("comparison-source-a").value =
+    pair.sides.A.options.source;
+  el<HTMLSelectElement>("comparison-source-b").value =
+    pair.sides.B.options.source;
   el<HTMLSelectElement>("comparison-active").value = pair.active;
   if (document.activeElement !== el("comparison-name"))
     el<HTMLInputElement>("comparison-name").value =
@@ -2232,6 +2244,20 @@ el("source").addEventListener("change", () => {
     source: el<HTMLSelectElement>("source").value,
   });
 });
+// Tool A/Tool B on the Compare tools tab pick each side's source directly,
+// without first switching Editing to it (targets that side explicitly).
+el("comparison-source-a").addEventListener("change", () => {
+  clearTimeout(timer);
+  sendToSide("A", "source", {
+    source: el<HTMLSelectElement>("comparison-source-a").value,
+  });
+});
+el("comparison-source-b").addEventListener("change", () => {
+  clearTimeout(timer);
+  sendToSide("B", "source", {
+    source: el<HTMLSelectElement>("comparison-source-b").value,
+  });
+});
 for (const id of [
   "preset",
   "billing",
@@ -2432,15 +2458,17 @@ el("byok-clear").onclick = () => {
   renderByok();
 };
 el("export-png").onclick = () => {
-  // Export lives on the Settings tab, and charts drawn while the Compare tab
-  // is hidden have no size: lay that panel out off-screen and redraw first.
-  const panel = el("panel-compare");
+  // Export lives on the Settings tab, and charts drawn while their panel is
+  // hidden have no size: lay the panel that owns the exported chart(s)
+  // out off-screen and redraw first — Compare tools while comparing (its
+  // chart(s) are what gets exported below), otherwise Tool analysis.
+  const panel = el(state?.comparison ? "panel-tools" : "panel-compare");
   const offscreen = panel.hidden;
   if (offscreen) {
     panel.classList.add("offscreen");
     panel.hidden = false;
-    drawChart();
-    renderComparison();
+    if (state?.comparison) renderComparison();
+    else drawChart();
   }
   try {
     const canvas = el("chart") as HTMLCanvasElement;
@@ -2503,7 +2531,7 @@ new MutationObserver(() => {
   attributes: true,
   attributeFilter: ["class", "style"],
 });
-const sectionTabs = ["compare", "plan", "usage", "settings"] as const;
+const sectionTabs = ["compare", "tools", "plan", "usage", "settings"] as const;
 type SectionTab = (typeof sectionTabs)[number];
 function showTab(tab: SectionTab, focus = false) {
   for (const id of sectionTabs) {
@@ -2517,10 +2545,8 @@ function showTab(tab: SectionTab, focus = false) {
   // Remember the open tab across webview reloads.
   vscode.setState?.({ tab });
   // Charts laid out while their panel was hidden have no size; redraw them.
-  if (tab === "compare" && state) {
-    drawChart();
-    renderComparison();
-  }
+  if (tab === "compare" && state) drawChart();
+  if (tab === "tools" && state) renderComparison();
 }
 sectionTabs.forEach((id, index) => {
   const button = el<HTMLButtonElement>(`tab-${id}`);

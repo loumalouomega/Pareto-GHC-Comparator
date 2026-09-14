@@ -542,13 +542,21 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Secondary features live on other tabs; a control must be visible to use.
     const openTab = (name: string) =>
       page.getByRole("tab", { name, exact: true }).click();
-    // Tabs follow the ARIA pattern: one panel visible, arrow/Home/End keys move.
-    await expect(page.getByRole("tab", { name: "Compare" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    // Tabs follow the ARIA pattern: one panel visible, arrow/Home/End keys
+    // move. Tool analysis (the single-tool view) is first in the tab order
+    // and stays the tab open by default; Compare tools (opt-in comparison)
+    // is second — easy to find without being the default.
+    await expect(
+      page.getByRole("tab", { name: "Tool analysis" }),
+    ).toHaveAttribute("aria-selected", "true");
     await expect(page.locator("#panel-settings")).toBeHidden();
-    await page.getByRole("tab", { name: "Compare" }).focus();
+    await page.getByRole("tab", { name: "Tool analysis" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByRole("tab", { name: "Compare tools" }),
+    ).toBeFocused();
+    await expect(page.locator("#panel-tools")).toBeVisible();
+    await expect(page.locator("#panel-compare")).toBeHidden();
     await page.keyboard.press("ArrowRight");
     await expect(
       page.getByRole("tab", { name: "Plan & budget" }),
@@ -575,7 +583,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // The most-attractive quadrant can be toggled without breaking the chart.
     await openTab("Settings");
     await page.locator("#display-quadrant").uncheck();
-    await openTab("Compare");
+    await openTab("Tool analysis");
     await expect(page.locator("canvas")).toBeVisible();
     await expect
       .poll(() =>
@@ -589,7 +597,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       .toBeTruthy();
     await openTab("Settings");
     await page.locator("#display-quadrant").check();
-    await openTab("Compare");
+    await openTab("Tool analysis");
     const model = page.getByRole("button", { name: "GPT-5.4", exact: true });
     await model.focus();
     await page.keyboard.press("Enter");
@@ -656,7 +664,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       ),
     ).toBeTruthy();
     await mediumLeaf.check();
-    await openTab("Compare");
+    await openTab("Tool analysis");
     await expect(page.locator("#count")).toHaveText("5 plotted / 6 models");
     // The benchmark dropdown stages a choice; nothing applies until the
     // explicit Apply mapping button is clicked.
@@ -707,7 +715,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#profile-save").click();
     await expect(page.locator("#status")).toContainText("already exists");
-    await openTab("Compare");
+    await openTab("Tool analysis");
     // Workload token inputs live in the workload chart view.
     await page.locator("#display-chart").selectOption("workload");
     await expect(page.locator("#chart-title")).toHaveText(
@@ -738,7 +746,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#profile-state")).toHaveText(
       "Debugging · Saved",
     );
-    await openTab("Compare");
+    await openTab("Tool analysis");
     await page.locator("#filter").fill("");
     await page.locator("#score-gap").fill("5");
     await openTab("Plan & budget");
@@ -755,7 +763,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#profile-delete").click();
     await expect(page.locator("#profile-state")).toHaveText("Custom workload");
     await expect(page.locator("#score-gap")).toHaveValue("5");
-    await openTab("Compare");
+    await openTab("Tool analysis");
     await page.screenshot({
       path: testInfo.outputPath(`${theme}.png`),
       fullPage: true,
@@ -856,7 +864,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#count")).toHaveText("3 plotted / 4 models");
     await page.locator("#include-all").click();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
-    await openTab("Compare");
+    await openTab("Tool analysis");
     await page.getByLabel("Filter models", { exact: true }).fill("unmapped");
     await expect(page.locator("#count")).toHaveText("0 plotted / 1 models");
     await expect(page.locator("#empty")).toBeVisible();
@@ -971,7 +979,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#only-mine").uncheck();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
 
-    await openTab("Compare");
+    await openTab("Tool analysis");
     // Monthly spending scenario: plan-aware what-if projection, kept
     // separate from local history and per-task/workload estimates.
     await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
@@ -1019,7 +1027,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#scenario-plan").selectOption("none");
 
-    await openTab("Compare");
+    await openTab("Tool analysis");
     await page.locator("#usage-prefill").click();
     await expect(page.locator("#input")).toHaveValue("150");
     await expect(page.locator("#output")).toHaveValue("75");
@@ -1032,14 +1040,21 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-summary")).toHaveText(
       /No local scan yet/,
     );
-    await openTab("Plan & budget");
+    // Compare tools has its own dedicated tab — but comparison stays off
+    // until explicitly turned on, so opening it does nothing by itself.
+    await openTab("Compare tools");
+    await expect(page.locator(".comparison-panel")).toHaveCount(0);
     await page.locator("#comparison-enabled").check();
     await expect(page.locator(".comparison-panel")).toHaveCount(2);
-    await page.locator("#comparison-active").selectOption("B");
+    // Tool A/Tool B pick each side's source directly, from this tab, without
+    // switching Editing to it first — and doing so switches Editing to that
+    // side as a side effect, same as selecting a row in its panel does.
+    await expect(page.locator("#comparison-source-a")).toHaveValue("copilot");
+    await expect(page.locator("#comparison-source-b")).toHaveValue("copilot");
+    await page.locator("#comparison-source-b").selectOption("opencode");
+    await expect(page.locator("#comparison-active")).toHaveValue("B");
     await page.locator("#comparison-name").fill("Other provider");
     await page.locator("#comparison-name").press("Tab");
-    await openTab("Compare");
-    await page.locator("#source").selectOption("opencode");
     await expect(page.locator(".comparison-panel").nth(1)).toContainText(
       "Other provider",
     );
@@ -1054,7 +1069,6 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator(".comparison-panel").first()).not.toContainText(
       "$0.01/AI credit",
     );
-    await openTab("Plan & budget");
     await page.locator("#comparison-normalize").check();
     await expect(page.locator("#comparison-delta")).toContainText(
       "USD equivalent Δ",
@@ -1075,9 +1089,11 @@ for (const theme of ["light", "dark", "high-contrast"])
       "Spending scenario: off",
     );
     await page.locator("#comparison-active").selectOption("A");
+    await openTab("Plan & budget");
     await page.locator("#scenario-plan").selectOption("copilot-pro");
     await page.locator("#scenario-requests-low").fill("10");
     await page.locator("#scenario-requests-high").fill("10");
+    await openTab("Compare tools");
     await expect(page.locator(".comparison-panel").first()).toContainText(
       "Spending scenario: Copilot Pro",
     );
@@ -1087,7 +1103,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#comparison-delta")).toContainText(
       "Scenario off or unavailable on at least one option.",
     );
+    await openTab("Plan & budget");
     await page.locator("#scenario-plan").selectOption("none");
+    await openTab("Compare tools");
     // Wait for the debounced round trip to settle (an assertion, not a raw
     // timeout) before the comparison-enabled toggle below, so a late state
     // update can't land between that click and Playwright's next sample.
@@ -1097,11 +1115,11 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Overlay view: one shared chart instead of two per-side ones. A (Copilot,
     // credits) and B (Other provider, USD) bill differently, so the axis
     // converts to a USD equivalent — the per-side info cards and tables stay.
+    // The controls and the results they affect now live on the same tab.
     await page.locator("#comparison-view").selectOption("overlay");
     await expect(page.locator(".comparison-panel")).toHaveCount(2);
     await expect(page.locator(".comparison-panel canvas")).toHaveCount(0);
     await expect(page.locator("#comparison-chart-overlay")).toHaveCount(1);
-    await openTab("Compare");
     await expect(page.locator("#comparison-overlay")).toBeVisible();
     await expect(page.locator("#comparison-chart-overlay")).toBeVisible();
     await expect(page.locator("#comparison-overlay")).toContainText(
@@ -1113,12 +1131,9 @@ for (const theme of ["light", "dark", "high-contrast"])
       .first()
       .getByRole("button", { name: "GPT-5.4", exact: true })
       .click();
-    await openTab("Plan & budget");
     await page.locator("#comparison-view").selectOption("side-by-side");
-    await openTab("Compare");
     await expect(page.locator("#comparison-overlay")).toBeHidden();
     await expect(page.locator(".comparison-panel canvas")).toHaveCount(2);
-    await openTab("Plan & budget");
     await openTab("Settings");
     await page.locator("#export-png").click();
     expect(
@@ -1126,7 +1141,7 @@ for (const theme of ["light", "dark", "high-contrast"])
         (m) => m.type === "target" && (m.action as any)?.type === "exportPng",
       ),
     ).toBeTruthy();
-    await openTab("Compare");
+    await openTab("Compare tools");
     await page.setViewportSize({ width: 700, height: 1000 });
     const a = await page.locator(".comparison-panel").first().boundingBox(),
       b = await page.locator(".comparison-panel").nth(1).boundingBox();
@@ -1136,8 +1151,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     // "comparison" message right before the toggle below, racing its
     // render against this click (selectOption dispatches change events
     // even for a same-value reselect, unlike a real user re-picking it).
+    await openTab("Tool analysis");
     await expect(page.locator("#source")).toHaveValue("copilot");
-    await openTab("Plan & budget");
+    await openTab("Compare tools");
     await page.locator("#comparison-enabled").uncheck();
     await expect(page.locator("#comparison-panels")).toBeHidden();
     expect(errors).toEqual([]);

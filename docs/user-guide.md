@@ -4,10 +4,11 @@ How recommendations, saved workloads, and the Pareto chart work.
 
 ## Layout
 
-The panel has four tabs; the status line above them reports messages from any tab.
+The panel has five tabs; the status line above them reports messages from any tab.
 
-- **Compare** — source, task, billing, chart view, and model filter; the token workload (in the workload chart view); **Find a model**; the chart, table, and model details. Model details show the essentials first; **More details** holds the cost breakdown, pricing source and BYOK actions, pinning, and benchmark mapping, and opens by itself when a model has a missing benchmark or an unresolved price.
-- **Plan & budget** — side-by-side options (Compare options), saved workload profiles, and the monthly spending scenario.
+- **Tool analysis** — the default tab, first in the tab order. Source, task, billing, chart view, and model filter; the token workload (in the workload chart view); **Find a model**; the chart, table, and model details. Model details show the essentials first; **More details** holds the cost breakdown, pricing source and BYOK actions, pinning, and benchmark mapping, and opens by itself when a model has a missing benchmark or an unresolved price. While Compare options is on, this tab's controls edit whichever option **Editing** (on Compare tools) currently selects.
+- **Compare tools** — turns on comparing two sources/tools side by side or overlaid (**Compare options**, off by default): **Tool A**/**Tool B** pick each option's source, and once on, this tab shows the results too — per-option panels or the overlaid chart, plus the B-minus-A delta. See "Compare options" below.
+- **Plan & budget** — saved workload profiles and the monthly spending scenario.
 - **Usage** — local Copilot usage, OpenCode BYOK rates, and the free-tier spotlight (the last two for OpenCode only).
 - **Settings** — chart display (labels, frontier line, quadrant, cost scale, table sort, free tier only), included models, and exports.
 
@@ -58,9 +59,9 @@ Under the OpenCode source, the **Provider-billed (BYOK) rates** table lists mode
 
 ## Compare options
 
-**Plan & budget → Compare options** turns on a second, independent set of settings, A and B: each keeps its own source, task, billing, chart view, filters, exclusions, and pinned/overridden mappings. **Editing** picks which option every tab's controls edit; switching it swaps the whole panel to that option's saved settings.
+**Compare tools → Compare options** turns on a second, independent set of settings, A and B: each keeps its own source, task, billing, chart view, filters, exclusions, and pinned/overridden mappings. **Tool A** and **Tool B**, right on this tab, pick each option's source directly. **Editing** picks which option every *other* tab's controls edit (task, billing, filters, workload, and so on); switching it swaps the whole panel to that option's saved settings.
 
-**View** chooses how the Compare tab shows both options. **Side by side** (default) draws two independent charts and tables, one per option. **Overlay** superimposes both options' models on a single chart instead — each option's own Pareto frontier, plus a combined frontier across both — so you can see at a glance which of two tools or models is the better value across the cost range. When the two options bill differently, the overlay's axis switches to a labelled USD equivalent; see `docs/billing.md`'s "Overlay view" section for the conversion rule, what gets excluded (legacy premium requests), and when the combined frontier is withheld instead of drawn.
+**View** chooses how this tab shows both options. **Side by side** (default) draws two independent charts and tables, one per option. **Overlay** superimposes both options' models on a single chart instead — each option's own Pareto frontier, plus a combined frontier across both — so you can see at a glance which of two tools or models is the better value across the cost range. When the two options bill differently, the overlay's axis switches to a labelled USD equivalent; see `docs/billing.md`'s "Overlay view" section for the conversion rule, what gets excluded (legacy premium requests), and when the combined frontier is withheld instead of drawn.
 
 **Show USD equivalents** (off by default) additionally shows each option's selected cost, and the B-minus-A delta, converted to USD when the two options bill differently — see `docs/billing.md`.
 

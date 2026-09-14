@@ -6,9 +6,24 @@ export function html(
 ): string {
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${source}; img-src ${source} data:; font-src ${source};"><link rel="stylesheet" href="${css}"><title>Pareto GHC Comparator</title></head><body>
   <header><div class="eyebrow" id="eyebrow">PARETO / GITHUB COPILOT</div><h1>Find your model’s sweet spot.</h1><p id="subtitle">Compare benchmark quality with estimated Copilot usage. Better value is toward the upper left.</p><div class="actions"><button id="refresh">Refresh data</button><button id="key" class="secondary">Set API key</button></div>
-  <nav class="tabs" role="tablist" aria-label="Sections"><button id="tab-compare" class="tab" role="tab" aria-selected="true" aria-controls="panel-compare">Compare</button><button id="tab-plan" class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" tabindex="-1">Plan &amp; budget</button><button id="tab-usage" class="tab" role="tab" aria-selected="false" aria-controls="panel-usage" tabindex="-1">Usage</button><button id="tab-settings" class="tab" role="tab" aria-selected="false" aria-controls="panel-settings" tabindex="-1">Settings</button></nav></header>
+  <nav class="tabs" role="tablist" aria-label="Sections"><button id="tab-compare" class="tab" role="tab" aria-selected="true" aria-controls="panel-compare">Tool analysis</button><button id="tab-tools" class="tab" role="tab" aria-selected="false" aria-controls="panel-tools" tabindex="-1">Compare tools</button><button id="tab-plan" class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" tabindex="-1">Plan &amp; budget</button><button id="tab-usage" class="tab" role="tab" aria-selected="false" aria-controls="panel-usage" tabindex="-1">Usage</button><button id="tab-settings" class="tab" role="tab" aria-selected="false" aria-controls="panel-settings" tabindex="-1">Settings</button></nav></header>
  <main>
   <p id="status" role="status" aria-live="polite"></p>
+ <div id="panel-tools" class="tab-panel" role="tabpanel" aria-labelledby="tab-tools" hidden>
+ <section class="card comparison-controls" aria-labelledby="comparison-title">
+ <h2 id="comparison-title">Compare tools</h2>
+ <label class="checkbox-label"><input id="comparison-enabled" type="checkbox">Compare options</label>
+ <label>Tool A<select id="comparison-source-a" disabled><option value="copilot">GitHub Copilot</option><option value="opencode">OpenCode</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="gemini-cli">Gemini CLI</option><option value="cursor">Cursor</option><option value="windsurf">Windsurf</option><option value="aider">Aider</option><option value="amazon-q">Amazon Q Developer</option></select></label>
+ <label>Tool B<select id="comparison-source-b" disabled><option value="copilot">GitHub Copilot</option><option value="opencode">OpenCode</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="gemini-cli">Gemini CLI</option><option value="cursor">Cursor</option><option value="windsurf">Windsurf</option><option value="aider">Aider</option><option value="amazon-q">Amazon Q Developer</option></select></label>
+ <label>Editing<select id="comparison-active"><option value="A">A</option><option value="B">B</option></select></label>
+ <label>Option name<input id="comparison-name" maxlength="60"></label>
+ <label class="checkbox-label"><input id="comparison-normalize" type="checkbox" disabled>Show USD equivalents</label>
+ <label>View<select id="comparison-view" disabled><option value="side-by-side">Side by side</option><option value="overlay">Overlay</option></select></label>
+ <p class="hint">Off by default. Tool A and Tool B pick each option's source directly; Task, billing, and the rest stay under Editing on the Tool analysis tab, since every tab's controls edit whichever option Editing selects. Side by side draws two charts; Overlay superimposes both options on one chart, converting to a USD equivalent when their billing units differ, so the same-cost tradeoffs are easier to compare.</p>
+ </section>
+ <section id="comparison-overlay" class="comparison-overlay" hidden aria-label="Overlay comparison"></section>
+ <section id="comparison-panels" class="comparison-panels" hidden aria-label="Comparison results"></section><p id="comparison-delta" role="status" hidden></p>
+ </div>
  <div id="panel-compare" class="tab-panel" role="tabpanel" aria-labelledby="tab-compare">
   <section class="controls" aria-label="Comparison controls">
   <label>Source<select id="source"><option value="copilot">GitHub Copilot</option><option value="opencode">OpenCode</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="gemini-cli">Gemini CLI</option><option value="cursor">Cursor</option><option value="windsurf">Windsurf</option><option value="aider">Aider</option><option value="amazon-q">Amazon Q Developer</option></select></label>
@@ -29,22 +44,11 @@ export function html(
  <label id="gap-label" hidden>Allowed score gap (index points)<input id="score-gap" type="number" required min="0" max="100000000" step="any" value="3"></label>
  <p id="recommendation-result" role="status" aria-live="polite"></p>
   </div><p id="budget-suggestion" class="hint" role="status"></p><button id="budget-apply" class="secondary" hidden>Use suggested budget</button></section>
- <section id="comparison-overlay" class="comparison-overlay" hidden aria-label="Overlay comparison"></section>
- <section id="comparison-panels" class="comparison-panels" hidden aria-label="Comparison results"></section><p id="comparison-delta" role="status" hidden></p>
  <section class="chart-card" aria-labelledby="chart-title"><div class="chart-heading"><h2 id="chart-title">Quality vs. usage cost</h2><span id="count"></span></div><div id="legend" aria-label="Providers"></div><div id="chart-wrap"><canvas id="chart" role="img" aria-label="Model quality and cost scatter plot. The table below provides all values and model selection."></canvas></div><p id="empty" hidden></p><p class="hint">Dotted line: Pareto frontier — no displayed model offers both a lower or equal cost and a higher or equal score, with one strict improvement. Shaded quadrant: most attractive — above-median score at or below median cost. Star markers: recommendations, which consider only the displayed, comparable models.</p></section>
  <div class="results"><section class="table-card" aria-labelledby="table-title"><h2 id="table-title">Models exposed to this extension</h2><div class="table-scroll"><table><caption class="sr-only">Filtered comparison results. Select a model to inspect its benchmark and tradeoffs.</caption><thead><tr><th scope="col">Model</th><th scope="col">Score</th><th id="cost-heading" scope="col">AI credits</th><th id="efficiency-heading" scope="col">Cost / quality</th><th scope="col">Comparison</th></tr></thead><tbody id="rows"></tbody></table></div></section>
  <aside aria-labelledby="details-title"><h2 id="details-title">Model details</h2><div id="details"><p>Select a model in the chart or table.</p></div></aside></div>
  </div>
  <div id="panel-plan" class="tab-panel" role="tabpanel" aria-labelledby="tab-plan" hidden>
- <section class="card comparison-controls" aria-labelledby="comparison-title">
- <h2 id="comparison-title">Side-by-side options</h2>
- <label class="checkbox-label"><input id="comparison-enabled" type="checkbox">Compare options</label>
- <label>Editing<select id="comparison-active"><option value="A">A</option><option value="B">B</option></select></label>
- <label>Option name<input id="comparison-name" maxlength="60"></label>
- <label class="checkbox-label"><input id="comparison-normalize" type="checkbox" disabled>Show USD equivalents</label>
- <label>View<select id="comparison-view" disabled><option value="side-by-side">Side by side</option><option value="overlay">Overlay</option></select></label>
- <p class="hint">While on, the Compare tab shows both options with a B minus A summary, and the controls on every tab edit the option selected in Editing. Side by side draws two charts; Overlay superimposes both options on one chart, converting to a USD equivalent when their billing units differ, so the same-cost tradeoffs are easier to compare.</p>
- </section>
  <section class="card profile-bar" aria-labelledby="profiles-title">
  <h2 id="profiles-title">Saved workloads</h2>
  <label>Saved workload<select id="profile"><option value="">Custom</option></select></label>
