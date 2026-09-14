@@ -7,8 +7,16 @@ const require = createRequire(import.meta.url);
 const { html } = require("../src/html.ts");
 const { validSnapshot } = require("../src/api.ts");
 const { catalog, catalogDate } = require("../src/catalog.ts");
-const { compare } = require("../src/compare.ts");
-const { recommend } = require("../src/recommend.ts");
+const { optionResult } = require("../src/comparison.ts");
+const { freeSpotlight } = require("../src/compare.ts");
+const { driftOf } = require("../src/drift.ts");
+const { loadByokStore } = require("../src/byok.ts");
+const { suggestBudget } = require("../src/usage.ts");
+const {
+  historyScenarioPrefill,
+  planRegistryDate,
+} = require("../src/plans.ts");
+const { staticRegistryDate } = require("../src/staticSources.ts");
 const { defaults } = require("../src/types.ts");
 if (!process.argv[2])
   throw new Error(
@@ -39,25 +47,83 @@ const available = selections.map(([id, name]) => {
   return { id, name: entry.name, family: id, maxInputTokens: 0 };
 });
 const options = structuredClone(defaults);
+const byok = loadByokStore(undefined);
+const usedCounts = new Map();
+const result = optionResult(
+  { name: "preview", options, mappings, pins: {}, excluded: {} },
+  available,
+  snapshot.models,
+  byok,
+  usedCounts,
+);
+const rowProvider = new Map(result.rows.map((r) => [r.modelId, r.provider]));
+const checklist = available.map((m) => ({
+  id: m.id,
+  name: m.name,
+  provider: rowProvider.get(m.id) ?? "Unknown",
+  included: true,
+  rowCount: result.rows.filter((r) => r.modelId === m.id).length,
+}));
+const spotlight = freeSpotlight(available, snapshot.models, options, mappings, undefined, {
+  pins: {},
+  excluded: [],
+  byok,
+  usedCounts,
+});
+const comparableRows = result.rows.filter(
+  (r) => r.cost !== null && r.score !== null,
+);
+const bestOverall = comparableRows.length
+  ? [...comparableRows].sort(
+      (a, b) => b.score - a.score || a.cost - b.cost,
+    )[0]
+  : undefined;
+const freeSpotlightState = options.freeOnly
+  ? {
+      enabled: true,
+      ...spotlight,
+      explanation: spotlight.bestFree
+        ? `Best free: ${spotlight.bestFree.name} at ${spotlight.bestFree.score} points, trailing best overall ${spotlight.bestOverall?.name ?? ""} by ${spotlight.gapPoints ?? 0} points.`
+        : "No free models with scores in the current view.",
+    }
+  : {
+      enabled: false,
+      ...spotlight,
+      explanation:
+        spotlight.bestFree && bestOverall
+          ? `Best free ${spotlight.bestFree.name} (${spotlight.bestFree.score}) trails best overall ${spotlight.bestOverall?.name ?? bestOverall.name} by ${spotlight.gapPoints ?? 0} points.`
+          : "Free-tier spotlight needs OpenCode USD data with free models.",
+    };
 const state = {
+  source: options.source,
   options,
-  rows: compare(available, snapshot.models, options, mappings).sort(
-    (a, b) => a.cost - b.cost,
-  ),
+  rows: result.rows,
   models: snapshot.models,
-  selected: "gpt-5.6-terra",
+  selected: result.selected,
   version: snapshot.version,
   fetchedAt: snapshot.fetchedAt,
+  drift: driftOf(undefined, snapshot.models, options.preset),
+  byok,
+  usage: null,
+  usageWatching: false,
+  budgetSuggestion: suggestBudget(null, options.billing),
   loading: false,
   hasKey: true,
   catalogDate,
+  staticRegistryDate,
+  planRegistryDate,
+  scenario: result.scenario,
+  scenarioPrefill: historyScenarioPrefill(null),
+  recommendation: result.recommendation,
+  profiles: [],
+  profileModified: false,
+  optionsRevision: 0,
+  checklist,
+  groups: result.groups,
+  freeSpotlight: freeSpotlightState,
   message:
     "Live benchmark preview · 10 catalog models with explicitly selected reasoning variants. Copilot account availability has not been queried.",
 };
-state.recommendation = recommend(state.rows, options);
-state.profiles = [];
-state.profileModified = false;
-state.optionsRevision = 0;
 const browser = await chromium.launch({
   executablePath: process.env.PARETO_CHROMIUM_PATH,
 });
