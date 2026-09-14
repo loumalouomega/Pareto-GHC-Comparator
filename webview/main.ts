@@ -360,11 +360,19 @@ function renderDetails() {
     return;
   }
   target.append(text("h3", row.name), text("p", row.id, "hint"));
-  const copy = text("button", "Copy model name") as HTMLButtonElement;
+  const copy = text(
+    "button",
+    row.invocable ? "Copy model ID" : "Copy model name",
+  ) as HTMLButtonElement;
   copy.onclick = () => {
     send("copy", { id: row.id });
   };
   target.append(copy);
+  if (row.invocable) {
+    target.append(
+      text("p", `${row.invocable.ref} — ${row.invocable.usage}`, "hint"),
+    );
+  }
   target.append(
     text(
       "p",

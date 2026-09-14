@@ -281,6 +281,8 @@ export interface AvailableModel {
   freeTier?: boolean;
   /** Visible pricing notes from discovery (e.g. unrecognized tier shape). */
   pricingNotes?: string[];
+  /** Static-source only: the exact id verified against that client's own docs (never derived from name/registry key). Absent when no client id is documented for this model. */
+  invocableId?: string;
 }
 export interface Rates {
   input: number;
@@ -388,6 +390,12 @@ export interface PricingInfo {
   /** A same-identifier registry rate, unverified until the user applies it via byokApply. */
   suggestion?: RegistryRateSuggestion;
 }
+export interface InvocableRef {
+  /** The exact string to paste after the client's model flag/config key. */
+  ref: string;
+  /** Where to paste it, e.g. "codex -m <id> / model in config.toml". */
+  usage: string;
+}
 export interface Row {
   id: string;
   /** Original discovered/static model id (pins share this). */
@@ -415,6 +423,8 @@ export interface Row {
   mapping?: MappingAssist;
   /** Pricing provenance, separate from benchmark mapping; a benchmark choice never sets this. */
   pricing?: PricingInfo;
+  /** A doc-verified id the source client accepts, when one exists; absent means no verified id (Copy falls back to the display name). Independent of mapping/pricing. */
+  invocable?: InvocableRef;
 }
 export interface RecommendationResult {
   modelIds: string[];

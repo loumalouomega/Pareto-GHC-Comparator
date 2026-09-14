@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
 import { driftOf, selectPrevSnapshot } from "./drift";
 import { catalogDate } from "./catalog";
+import { invocableRef } from "./invocable";
 import {
   compare,
   freeSpotlight,
@@ -869,7 +870,17 @@ export function activate(context: vscode.ExtensionContext) {
               const model = availableBySource[options.source].find(
                 (a) => a.id === modelId,
               );
-              if (model) await vscode.env.clipboard.writeText(model.name);
+              if (model) {
+                const invocable = invocableRef(model);
+                if (invocable) {
+                  await vscode.env.clipboard.writeText(invocable.ref);
+                  exportNote = `Copied "${invocable.ref}" — ${invocable.usage}.`;
+                } else {
+                  await vscode.env.clipboard.writeText(model.name);
+                  exportNote = `Copied model name "${model.name}" — no verified invocable id for this source; select it in the client's own model picker.`;
+                }
+                render();
+              }
             } else if (
               m.type === "mapping" &&
               typeof m.id === "string" &&

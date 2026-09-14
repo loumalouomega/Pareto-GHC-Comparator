@@ -249,6 +249,10 @@ test("extension discovers Copilot models, serves cached data, validates messages
   await receiver({ type: "copy", id: "gpt-5-mini" });
   await receiver({ type: "copy", id: "fake" });
   assert.deepEqual(copied, ["GPT-5 mini"]);
+  // Copilot has no verified invocable id: copy falls back to the display
+  // name, with feedback saying so rather than claiming it's pasteable.
+  assert.match(last().exportNote, /Copied model name "GPT-5 mini"/);
+  assert.match(last().exportNote, /no verified invocable id/);
   await receiver({ type: "options", options: { preset: "bad" } });
   assert.match(last().message, /Could not apply/);
   await receiver({ type: "pin", id: "gpt-5-mini", benchmarkId: "aa" });

@@ -603,6 +603,20 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page
       .getByRole("button", { name: "GPT-5.6 Terra", exact: true })
       .click();
+    // Copy now offers the client's own -m provider/model reference (the id
+    // no client actually accepts is the display name, previously copied).
+    await expect(
+      page.getByRole("button", { name: "Copy model ID" }),
+    ).toBeVisible();
+    await expect(page.locator("#details")).toContainText(
+      'openai/gpt-5.6-terra — opencode run -m <id> / "model" in opencode.json',
+    );
+    await page.getByRole("button", { name: "Copy model ID" }).click();
+    expect(
+      messages.some(
+        (m) => m.type === "copy" && m.id === "opencode:openai/gpt-5.6-terra",
+      ),
+    ).toBeTruthy();
     await expect(page.locator("#details")).toContainText("Pricing: Unresolved");
     await expect(page.locator("#details")).toContainText(
       "Codex registry lists GPT-5.6 Terra (codex:gpt-5-6-terra)",

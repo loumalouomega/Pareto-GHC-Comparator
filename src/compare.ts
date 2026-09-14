@@ -1,4 +1,5 @@
 import { catalog } from "./catalog";
+import { invocableRef } from "./invocable";
 import { opencodeBenchmarkFamilies } from "./opencode";
 import { staticEntries, isStaticSource } from "./staticSources";
 import { allowedBilling } from "./sources";
@@ -542,6 +543,9 @@ export function compare(
       // entry gets "registry" provenance.
       const registrySuggestion = registryRateFor(m, now);
       const baseId = baseModelIdOf(m.id);
+      // Same for every row this model produces (mapping/pin/variant never
+      // changes what a client accepts as --model); computed once here.
+      const invocable = invocableRef(m) ?? undefined;
       const buildRow = (
         rowId: string,
         matched: MappingResult,
@@ -685,6 +689,7 @@ export function compare(
             : {}),
           ...(mapping ? { mapping } : {}),
           pricing,
+          ...(invocable ? { invocable } : {}),
           tier:
             byokNote && price.tier ? `${price.tier} · BYOK` : price.tier,
           breakdown: tooLong ? undefined : price.breakdown,

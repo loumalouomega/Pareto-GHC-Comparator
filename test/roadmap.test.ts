@@ -319,6 +319,74 @@ test("static registries expose namespaced models with USD entries", () => {
   assert.ok(rows.every((r) => r.baseModelId.length > 0));
 });
 
+test("Row.invocable only carries a doc-verified client id, never a display name or registry key", () => {
+  // OpenCode: always derivable from the discovered id, variant included.
+  const opencodeRows = compare(
+    [
+      {
+        id: "opencode:openai/gpt-5.4#high",
+        name: "GPT-5.4 (high)",
+        family: "gpt",
+        maxInputTokens: 900000,
+        source: "opencode",
+      },
+    ],
+    benchmarks,
+    { ...defaults, source: "opencode", billing: "usd" },
+  );
+  assert.deepEqual(opencodeRows[0].invocable, {
+    ref: "openai/gpt-5.4#high",
+    usage: 'opencode run -m <id> / "model" in opencode.json',
+  });
+
+  // Codex: staticSources.ts carries a verified invocableId with dots, distinct
+  // from both the display name and the "gpt-5-6-terra" registry key.
+  const codexRows = compare(staticModels("codex"), benchmarks, {
+    ...defaults,
+    source: "codex",
+    billing: "usd",
+  });
+  const terra = codexRows.find((r) => r.modelId === "codex:gpt-5-6-terra")!;
+  assert.equal(terra.invocable?.ref, "gpt-5.6-terra");
+  // Even an unpriced preview model gets its documented dotted id — id
+  // verification is independent of pricing.
+  const spark = codexRows.find((r) => r.modelId === "codex:gpt-5-3-codex-spark")!;
+  assert.equal(spark.invocable?.ref, "gpt-5.3-codex-spark");
+
+  // Gemini CLI: the two unverified/rerouting-bug models stay uncopyable.
+  const geminiRows = compare(staticModels("gemini-cli"), benchmarks, {
+    ...defaults,
+    source: "gemini-cli",
+    billing: "usd",
+  });
+  assert.equal(
+    geminiRows.find((r) => r.modelId === "gemini-cli:gemini-2-5-pro")?.invocable
+      ?.ref,
+    "gemini-2.5-pro",
+  );
+  for (const id of ["gemini-cli:gemini-3-5-flash", "gemini-cli:gemini-3-8-flash"]) {
+    assert.equal(geminiRows.find((r) => r.modelId === id)?.invocable, undefined);
+  }
+
+  // Sources with no documented id surface at all never carry Row.invocable.
+  for (const source of ["cursor", "windsurf", "aider", "amazon-q"] as const) {
+    const rows = compare(staticModels(source), benchmarks, {
+      ...defaults,
+      source,
+      billing: "usd",
+    });
+    assert.ok(rows.every((r) => r.invocable === undefined), source);
+  }
+
+  // Copilot: no external id surface at all.
+  const copilotRows = compare(
+    [{ id: "gpt-5-mini", name: "GPT-5 mini", family: "gpt", maxInputTokens: 400000 }],
+    benchmarks,
+    defaults,
+  );
+  assert.equal(copilotRows[0].invocable, undefined);
+});
+
 test("static source metadata marks registries as known models", () => {
   assert.equal(sources["claude-code"].live, false);
   assert.match(sources["claude-code"].availabilityNote, /not your account/i);

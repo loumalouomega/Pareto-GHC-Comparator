@@ -64,6 +64,7 @@ test("source switching resets billing, namespaces overrides, and guards stale di
   assert.ok(validSnapshot(cache));
   const commands = new Map<string, () => unknown>();
   const messages: unknown[] = [];
+  const copied: string[] = [];
   let receiver: (m: unknown) => Promise<void> = async () => {};
   let discoveryChanged = () => {};
   const state = new Map<string, unknown>();
@@ -139,7 +140,13 @@ test("source switching resets billing, namespaces overrides, and guards stale di
         return disposable;
       },
     },
-    env: { clipboard: { writeText: async () => {} } },
+    env: {
+      clipboard: {
+        writeText: async (value: string) => {
+          copied.push(value);
+        },
+      },
+    },
   };
   (globalThis as any).__paretoVscodeMock = mock;
   try {
@@ -220,6 +227,15 @@ test("source switching resets billing, namespaces overrides, and guards stale di
     assert.ok(kimi);
     assert.equal(kimi.mappingStatus, "exact");
     assert.equal(kimi.cost, (1000 * 0.95 + 1000 * 4) / 1000000);
+    // Copy writes the client's own "-m provider/model" reference, not the
+    // display name — the id no client accepts.
+    assert.deepEqual(kimi.invocable, {
+      ref: "opencode-go/kimi-k2.7-code",
+      usage: 'opencode run -m <id> / "model" in opencode.json',
+    });
+    await receiver({ type: "copy", id: kimi.id });
+    assert.deepEqual(copied, ["opencode-go/kimi-k2.7-code"]);
+    assert.match(last().exportNote, /Copied "opencode-go\/kimi-k2\.7-code"/);
     const gpt = last().rows.find(
       (r: any) => r.id === "opencode:openai/gpt-5.4#low",
     );
