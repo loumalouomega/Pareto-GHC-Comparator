@@ -1,0 +1,20 @@
+{
+  "version": "1",
+  "fetchedAt": 1757836800000,
+  "models": [
+    {
+      "id": "bm-gpt-5-6-luna",
+      "slug": "gpt-5-6-luna",
+      "name": "GPT-5.6 Luna",
+      "provider": "OpenAI",
+      "scores": { "general": 71.4, "coding": 66.2, "agentic": 60.8 }
+    },
+    {
+      "id": "bm-gpt-5-5",
+      "slug": "gpt-5-5",
+      "name": "GPT-5.5",
+      "provider": "OpenAI",
+      "scores": { "general": 68.1, "coding": 63.5, "agentic": 57.9 }
+    }
+  ]
+}

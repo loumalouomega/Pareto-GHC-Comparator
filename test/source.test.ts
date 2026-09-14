@@ -26,6 +26,18 @@ const kimiFixture = [
     limit: { context: 1050000, input: 922000, output: 128000 },
     variants: { low: {}, high: {} },
   }),
+  // Matches the real Codex static registry entry codex:gpt-5-6-terra by
+  // identifier, for the byokApply/byokReset host tests below.
+  kimiBlock("openai/gpt-5.6-terra", {
+    id: "gpt-5.6-terra",
+    providerID: "openai",
+    name: "GPT-5.6 Terra",
+    family: "gpt",
+    status: "active",
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 1050000, input: 922000, output: 128000 },
+    variants: {},
+  }),
 ].join("\n");
 const cache = {
   version: "4.3",
@@ -52,6 +64,7 @@ test("source switching resets billing, namespaces overrides, and guards stale di
   assert.ok(validSnapshot(cache));
   const commands = new Map<string, () => unknown>();
   const messages: unknown[] = [];
+  const copied: string[] = [];
   let receiver: (m: unknown) => Promise<void> = async () => {};
   let discoveryChanged = () => {};
   const state = new Map<string, unknown>();
@@ -127,7 +140,13 @@ test("source switching resets billing, namespaces overrides, and guards stale di
         return disposable;
       },
     },
-    env: { clipboard: { writeText: async () => {} } },
+    env: {
+      clipboard: {
+        writeText: async (value: string) => {
+          copied.push(value);
+        },
+      },
+    },
   };
   (globalThis as any).__paretoVscodeMock = mock;
   try {
@@ -208,12 +227,57 @@ test("source switching resets billing, namespaces overrides, and guards stale di
     assert.ok(kimi);
     assert.equal(kimi.mappingStatus, "exact");
     assert.equal(kimi.cost, (1000 * 0.95 + 1000 * 4) / 1000000);
+    // Copy writes the client's own "-m provider/model" reference, not the
+    // display name — the id no client accepts.
+    assert.deepEqual(kimi.invocable, {
+      ref: "opencode-go/kimi-k2.7-code",
+      usage: 'opencode run -m <id> / "model" in opencode.json',
+    });
+    await receiver({ type: "copy", id: kimi.id });
+    assert.deepEqual(copied, ["opencode-go/kimi-k2.7-code"]);
+    assert.match(last().exportNote, /Copied "opencode-go\/kimi-k2\.7-code"/);
     const gpt = last().rows.find(
       (r: any) => r.id === "opencode:openai/gpt-5.4#low",
     );
     assert.ok(gpt);
     assert.equal(gpt.cost, null);
     assert.match(gpt.reasons.join(" "), /Billed by provider/);
+    assert.equal(gpt.pricing.status, "unresolved");
+    assert.equal(gpt.pricing.issue, "provider-billed-no-rate");
+    assert.equal(gpt.pricing.suggestion, undefined);
+
+    // byokApply computes rates and provenance host-side from the verified
+    // static registry; it never trusts the webview for values.
+    await receiver({ type: "byokApply", ids: ["opencode:openai/gpt-5.4#low"] });
+    assert.match(last().message, /No verified registry rate/);
+    assert.equal(state.get("byokRates"), undefined);
+    await receiver({ type: "byokApply", ids: ["opencode:openai/gpt-5.6-terra"] });
+    assert.match(last().message, /Applied Codex registry rate/);
+    let terra = last().rows.find(
+      (r: any) => r.id === "opencode:openai/gpt-5.6-terra",
+    );
+    assert.equal(terra.pricing.status, "byok");
+    assert.equal(terra.pricing.byok.provenance.kind, "registry");
+    assert.equal(terra.pricing.byok.provenance.registryId, "codex:gpt-5-6-terra");
+    assert.equal(terra.pricing.byok.stale, undefined);
+    assert.ok(terra.cost > 0);
+    assert.ok(terra.tier.includes("BYOK"));
+    const storedByok = state.get("byokRates") as Record<string, { source: { kind: string } }>;
+    assert.equal(storedByok["opencode:openai/gpt-5.6-terra"].source.kind, "registry");
+
+    // byokReset removes it even though the model is still discovered.
+    await receiver({ type: "byokReset", ids: ["opencode:openai/gpt-5.6-terra"] });
+    assert.match(last().message, /Removed 1 BYOK rate/);
+    assert.equal(
+      "opencode:openai/gpt-5.6-terra" in
+        (state.get("byokRates") as Record<string, unknown>),
+      false,
+    );
+    terra = last().rows.find(
+      (r: any) => r.id === "opencode:openai/gpt-5.6-terra",
+    );
+    assert.equal(terra.pricing.status, "unresolved");
+    assert.equal(terra.pricing.issue, "provider-billed-no-rate");
 
     // Overrides are namespaced by source and never collide with Copilot IDs.
     await receiver({

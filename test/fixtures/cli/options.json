@@ -1,0 +1,31 @@
+{
+  "source": "codex",
+  "preset": "general",
+  "billing": "usd",
+  "plan": "pro",
+  "tokens": { "input": 1000, "read": 0, "write": 0, "output": 1000 },
+  "filter": "",
+  "onlyMine": false,
+  "freeOnly": false,
+  "recommendation": {
+    "mode": "budget",
+    "budgets": { "credits": 1, "legacy": 1, "usd": 1 },
+    "scoreGap": 3
+  },
+  "display": {
+    "labels": true,
+    "frontier": true,
+    "scale": "auto",
+    "chart": "task",
+    "quadrant": true,
+    "sort": "default"
+  },
+  "scenario": {
+    "planId": "none",
+    "requestsLow": 0,
+    "requestsHigh": 0,
+    "origin": "user",
+    "history": null,
+    "custom": { "monthlyFeeUsd": null, "allowance": null, "overageUsdPerUnit": null }
+  }
+}

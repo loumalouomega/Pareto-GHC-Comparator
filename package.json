@@ -2,7 +2,7 @@
   "name": "pareto-ghc-comparator",
   "displayName": "Pareto GHC Comparator",
   "description": "Compare available GitHub Copilot models by benchmark quality and estimated usage cost.",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "publisher": "kratos-multiphysics",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -34,6 +34,14 @@
       {
         "command": "paretoGhc.clearApiKey",
         "title": "Pareto GHC: Remove Artificial Analysis API Key"
+      },
+      {
+        "command": "paretoGhc.scanUsage",
+        "title": "Pareto GHC: Scan Local Copilot Usage"
+      },
+      {
+        "command": "paretoGhc.clearUsage",
+        "title": "Pareto GHC: Erase Local Copilot Usage"
       }
     ]
   },

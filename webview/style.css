@@ -20,7 +20,7 @@ main {
 }
 header {
   position: relative;
-  padding-bottom: 25px;
+  padding-bottom: 0;
   border-bottom: 1px solid var(--vscode-panel-border, #80808044);
   margin-bottom: 24px;
 }
@@ -299,10 +299,12 @@ a {
   flex-wrap: wrap;
   gap: 10px;
   align-items: end;
-  padding: 16px;
-  margin-bottom: 20px;
-  border: 1px solid var(--vscode-panel-border, #80808044);
-  border-radius: 8px;
+}
+.profile-bar > h2,
+.comparison-controls > h2,
+.comparison-controls > .hint {
+  width: 100%;
+  margin: 0;
 }
 .profile-bar label {
   min-width: 160px;
@@ -316,11 +318,77 @@ a {
 .recommendation-card {
   border: 1px solid var(--vscode-focusBorder, #77b6ff);
   border-radius: 8px;
-  padding: 18px;
-  margin: 20px 0;
+  padding: 14px 18px;
+  margin: 0 0 18px;
 }
 #recommendation-result {
+  flex: 1;
+  min-width: 240px;
+  margin: 0;
+  align-self: center;
+}
+#budget-suggestion:empty {
+  display: none;
+}
+.card {
+  border: 1px solid var(--vscode-panel-border, #80808044);
+  border-radius: 8px;
+  padding: 20px;
+  margin: 0 0 18px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 18px 0 -1px;
+  overflow-x: auto;
+}
+.tab {
+  background: none;
+  color: var(
+    --vscode-panelTitle-inactiveForeground,
+    var(--vscode-descriptionForeground, #a5aabc)
+  );
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 8px 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tab:hover {
+  background: none;
+  color: var(
+    --vscode-panelTitle-activeForeground,
+    var(--vscode-editor-foreground, #e4e7ee)
+  );
+}
+.tab[aria-selected="true"] {
+  color: var(
+    --vscode-panelTitle-activeForeground,
+    var(--vscode-editor-foreground, #e4e7ee)
+  );
+  border-bottom-color: var(
+    --vscode-panelTitle-activeBorder,
+    var(--vscode-focusBorder, #77b6ff)
+  );
+}
+/* Compare panel laid out invisibly so a chart PNG can be captured from another tab. */
+.tab-panel.offscreen {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: min(1500px, 100vw);
+  visibility: hidden;
+}
+.more-details {
   margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vscode-panel-border, #80808044);
+}
+.more-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 26px;
 }
 .mapping-status {
   display: block;
@@ -379,4 +447,51 @@ a {
 .check-leaf-row {
   margin-left: 26px;
   font-weight: 400;
+}
+
+.comparison-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: end;
+}
+.comparison-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  margin-bottom: 18px;
+}
+.comparison-panels[hidden] {
+  display: none;
+}
+.comparison-panel {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--vscode-panel-border);
+  padding: 1rem;
+}
+.comparison-chart {
+  height: 280px;
+  position: relative;
+}
+@media (max-width: 900px) {
+  .comparison-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.comparison-overlay {
+  min-width: 0;
+  border: 1px solid var(--vscode-panel-border);
+  padding: 1rem;
+  margin-bottom: 18px;
+}
+.comparison-overlay[hidden] {
+  display: none;
+}
+.comparison-overlay-chart {
+  height: 420px;
+  position: relative;
+}
+.comparison-overlay-notice {
+  margin: 4px 0;
 }

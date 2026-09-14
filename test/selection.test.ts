@@ -206,6 +206,44 @@ test("profiles support save, modify, apply, update, rename, delete and round-tri
   assert.equal(deleted.store.activeId, undefined);
   assert.deepEqual(deleted.options, edited);
 });
+test("profiles save, round-trip, and apply a spending scenario; an old profile without one is not modified", () => {
+  const withScenario = {
+    ...defaults,
+    scenario: { ...defaults.scenario, planId: "copilot-pro", requestsLow: 10, requestsHigh: 20 },
+  };
+  const saved = changeProfile(
+    { version: 1, items: [] },
+    withScenario,
+    { action: "saveAs", name: "Budget plan" },
+    () => "profile-scenario",
+  );
+  assert.equal(saved.store.items[0].workload.scenario.planId, "copilot-pro");
+  // Applying it over a different current scenario replaces the scenario,
+  // like every other workload field, while the filter is still preserved.
+  const applied = changeProfile(
+    saved.store,
+    { ...defaults, scenario: { ...defaults.scenario, planId: "copilot-max" }, filter: "kept" },
+    { action: "apply", id: "profile-scenario" },
+  );
+  assert.equal(applied.options.scenario.planId, "copilot-pro");
+  assert.equal(applied.options.scenario.requestsLow, 10);
+  assert.equal(applied.options.filter, "kept");
+  assert.equal(profileModified(applied.store, applied.options), false);
+  // A profile stored before scenarios existed (no scenario key at all) loads
+  // with the default scenario and is not considered modified.
+  const { scenario: _drop, ...legacyWorkload } = withScenario;
+  const legacyStore = loadProfiles({
+    version: 1,
+    items: [{ id: "legacy", name: "Legacy", workload: legacyWorkload }],
+  });
+  assert.deepEqual(legacyStore.items[0].workload.scenario, defaults.scenario);
+  const legacyApplied = changeProfile(
+    legacyStore,
+    defaults,
+    { action: "apply", id: "legacy" },
+  );
+  assert.equal(profileModified(legacyApplied.store, legacyApplied.options), false);
+});
 test("profiles reject invalid names, duplicates, and stale actions; invalid persistence is ignored", () => {
   const store = changeProfile(
     { version: 1, items: [] },

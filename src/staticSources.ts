@@ -20,6 +20,8 @@ interface StaticModel {
   long?: CatalogEntry["long"];
   expires?: string;
   maxInputTokens?: number;
+  /** The exact id this client's own docs (staticInvocableSources) accept for its --model flag/config key. Omit rather than guess from the display name or the registry key above. */
+  invocableId?: string;
 }
 
 function toAvailable(
@@ -32,6 +34,7 @@ function toAvailable(
     family: model.family,
     maxInputTokens: model.maxInputTokens ?? 200000,
     source,
+    ...(model.invocableId ? { invocableId: model.invocableId } : {}),
   };
 }
 
@@ -57,6 +60,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Sonnet 4.5", "Claude 4.5 Sonnet"],
       price: rates(3, 0.3, 3.75, 15),
       maxInputTokens: 200000,
+      invocableId: "claude-sonnet-4-5",
     },
     {
       id: "claude-haiku-4-5",
@@ -66,6 +70,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Haiku 4.5", "Claude 4.5 Haiku"],
       price: rates(1, 0.1, 1.25, 5),
       maxInputTokens: 200000,
+      invocableId: "claude-haiku-4-5",
     },
     {
       id: "claude-sonnet-4-6",
@@ -75,6 +80,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Sonnet 4.6", "Claude 4.6 Sonnet"],
       price: rates(3, 0.3, 3.75, 15),
       maxInputTokens: 1000000,
+      invocableId: "claude-sonnet-4-6",
     },
     {
       id: "claude-opus-4-6",
@@ -84,6 +90,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Opus 4.6", "Claude 4.6 Opus"],
       price: rates(5, 0.5, 6.25, 25),
       maxInputTokens: 1000000,
+      invocableId: "claude-opus-4-6",
     },
     {
       id: "claude-opus-4-7",
@@ -93,6 +100,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Opus 4.7", "Claude 4.7 Opus"],
       price: rates(5, 0.5, 6.25, 25),
       maxInputTokens: 1000000,
+      invocableId: "claude-opus-4-7",
     },
     {
       id: "claude-sonnet-5",
@@ -102,6 +110,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Sonnet 5"],
       price: rates(2, 0.2, 2.5, 10),
       maxInputTokens: 1000000,
+      invocableId: "claude-sonnet-5",
     },
     {
       id: "claude-opus-5",
@@ -111,6 +120,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Opus 5"],
       price: rates(5, 0.5, 6.25, 25),
       maxInputTokens: 1000000,
+      invocableId: "claude-opus-5",
     },
     {
       id: "claude-fable-5",
@@ -120,6 +130,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Fable 5"],
       price: rates(10, 1, 12.5, 50),
       maxInputTokens: 1000000,
+      invocableId: "claude-fable-5",
     },
     {
       id: "claude-fable-5-1",
@@ -129,6 +140,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Claude Fable 5.1"],
       price: rates(10, 0.25, 12.5, 50),
       maxInputTokens: 1000000,
+      invocableId: "claude-fable-5-1",
     },
   ],
   codex: [
@@ -140,6 +152,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["GPT-6 Astra"],
       price: rates(10, 1, 12.5, 50),
       maxInputTokens: 1050000,
+      invocableId: "gpt-6-astra",
     },
     {
       id: "gpt-5-6-sol",
@@ -149,6 +162,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["GPT-5.6 Sol"],
       price: rates(4, 0.4, 5, 20),
       maxInputTokens: 1050000,
+      invocableId: "gpt-5.6-sol",
     },
     {
       id: "gpt-5-6-terra",
@@ -158,6 +172,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["GPT-5.6 Terra"],
       price: rates(2, 0.2, 2.5, 12),
       maxInputTokens: 1050000,
+      invocableId: "gpt-5.6-terra",
     },
     {
       id: "gpt-5-6-luna",
@@ -167,6 +182,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["GPT-5.6 Luna"],
       price: rates(0.2, 0.02, 0.25, 1.2),
       maxInputTokens: 1050000,
+      invocableId: "gpt-5.6-luna",
     },
     {
       id: "gpt-5-5",
@@ -176,6 +192,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["GPT-5.5"],
       price: rates(5, 0.5, null, 30),
       maxInputTokens: 1000000,
+      invocableId: "gpt-5.5",
     },
     {
       id: "gpt-5-3-codex-spark",
@@ -184,6 +201,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       family: "GPT Codex",
       benchmarkFamilies: ["GPT-5.3-Codex-Spark", "GPT-5.3 Codex Spark"],
       maxInputTokens: 200000,
+      invocableId: "gpt-5.3-codex-spark",
     },
   ],
   "gemini-cli": [
@@ -195,6 +213,8 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Gemini 3 Pro"],
       price: rates(2, 0.2, null, 12),
       maxInputTokens: 1000000,
+      // No invocableId: the Gemini API docs mark gemini-3-pro-preview shut
+      // down (2026-03-09); see docs/model-switching-investigation.md.
     },
     {
       id: "gemini-3-flash",
@@ -204,6 +224,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Gemini 3 Flash"],
       price: rates(0.5, 0.05, null, 3),
       maxInputTokens: 1000000,
+      invocableId: "gemini-3-flash-preview",
     },
     {
       id: "gemini-3-5-flash",
@@ -213,6 +234,9 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Gemini 3.5 Flash"],
       price: rates(1.5, 0.15, null, 9),
       maxInputTokens: 1000000,
+      // No invocableId: not in the Gemini CLI docs, and an open CLI bug
+      // (google-gemini/gemini-cli#28859) silently reroutes -flash ids to
+      // this model, so it can't be verified as a targeted, reliable id.
     },
     {
       id: "gemini-3-8-flash",
@@ -223,6 +247,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       price: rates(0.75, 0.075, null, 3.75),
       expires: "2026-12-31",
       maxInputTokens: 1000000,
+      // No invocableId: same undocumented-id/rerouting-bug reason as above.
     },
     {
       id: "gemini-2-5-pro",
@@ -232,6 +257,7 @@ const definitions: Record<StaticSource, StaticModel[]> = {
       benchmarkFamilies: ["Gemini 2.5 Pro"],
       price: rates(1.25, 0.125, null, 10),
       maxInputTokens: 1000000,
+      invocableId: "gemini-2.5-pro",
     },
   ],
   cursor: [
@@ -406,6 +432,19 @@ export const staticPricingSources: Record<StaticSource, string> = {
   windsurf: "https://windsurf.com/pricing",
   aider: "https://openai.com/api/pricing",
   "amazon-q": "https://aws.amazon.com/q/developer/pricing/",
+};
+
+/**
+ * Where each source's --model/config model-id syntax is documented, for
+ * sources with at least one verified `invocableId` above (see
+ * docs/model-switching-investigation.md). Sources with no verified id
+ * (cursor, windsurf, aider, amazon-q) are omitted rather than pointing at a
+ * page that doesn't confirm exact ids for our models.
+ */
+export const staticInvocableSources: Partial<Record<StaticSource, string>> = {
+  "claude-code": "https://code.claude.com/docs/en/model-config",
+  codex: "https://learn.chatgpt.com/docs/models",
+  "gemini-cli": "https://geminicli.com/docs/cli/model/",
 };
 
 export function staticModels(source: StaticSource): AvailableModel[] {

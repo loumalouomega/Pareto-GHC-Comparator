@@ -1,3 +1,4 @@
+import { parseByokFormStore } from "./byok";
 import { parseOptions } from "./compare";
 import type { HostMessage, ProfileAction, Source } from "./types";
 const validSources: Source[] = [
@@ -14,11 +15,63 @@ const validSources: Source[] = [
 export function parseMessage(raw: unknown): HostMessage {
   if (!raw || typeof raw !== "object") throw new Error("Invalid action.");
   const m = raw as Record<string, unknown>;
+  if (m.type === "comparison") {
+    if (
+      (m.enabled !== undefined && typeof m.enabled !== "boolean") ||
+      (m.active !== undefined && m.active !== "A" && m.active !== "B") ||
+      (m.name !== undefined &&
+        (typeof m.name !== "string" || !m.name.trim() || m.name.length > 60)) ||
+      (m.normalize !== undefined && typeof m.normalize !== "boolean") ||
+      (m.view !== undefined &&
+        m.view !== "side-by-side" &&
+        m.view !== "overlay")
+    )
+      throw Error("Invalid comparison.");
+    return {
+      type: "comparison",
+      enabled: m.enabled as boolean | undefined,
+      active: m.active as "A" | "B" | undefined,
+      name: m.name as string | undefined,
+      normalize: m.normalize as boolean | undefined,
+      view: m.view as "side-by-side" | "overlay" | undefined,
+    };
+  }
+  if (m.type === "target") {
+    if (
+      (m.side !== "A" && m.side !== "B") ||
+      !m.action ||
+      typeof m.action !== "object" ||
+      ["target", "comparison", "ready"].includes(
+        (m.action as { type: string }).type,
+      )
+    )
+      throw Error("Invalid target.");
+    return { type: "target", side: m.side, action: parseMessage(m.action) };
+  }
   const string = (v: unknown): v is string =>
     typeof v === "string" && v.length <= 1000;
   if (m.type === "ready" || m.type === "refresh" || m.type === "key")
     return { type: m.type };
   if (m.type === "exportCsv") return { type: "exportCsv" };
+  if (m.type === "exportSnapshot") return { type: "exportSnapshot" };
+  if (m.type === "exportBadge") return { type: "exportBadge" };
+  if (m.type === "byok")
+    return { type: "byok", rates: parseByokFormStore(m.rates) };
+  const idList = (v: unknown): v is string[] =>
+    Array.isArray(v) &&
+    v.length >= 1 &&
+    v.length <= 200 &&
+    v.every((id) => string(id));
+  if (m.type === "byokApply") {
+    if (!idList(m.ids)) throw new Error("Invalid byokApply.");
+    return { type: "byokApply", ids: m.ids };
+  }
+  if (m.type === "byokReset") {
+    if (!idList(m.ids)) throw new Error("Invalid byokReset.");
+    return { type: "byokReset", ids: m.ids };
+  }
+  if (m.type === "scanUsage") return { type: "scanUsage" };
+  if (m.type === "clearUsage") return { type: "clearUsage" };
   if (
     m.type === "exportPng" &&
     typeof m.png === "string" &&
@@ -38,7 +91,12 @@ export function parseMessage(raw: unknown): HostMessage {
     return { type: m.type, id: m.id };
   if (m.type === "mapping" && string(m.id) && string(m.benchmarkId))
     return { type: "mapping", id: m.id, benchmarkId: m.benchmarkId };
-  if (m.type === "pin" && string(m.id) && string(m.benchmarkId) && m.benchmarkId)
+  if (
+    m.type === "pin" &&
+    string(m.id) &&
+    string(m.benchmarkId) &&
+    m.benchmarkId
+  )
     return { type: "pin", id: m.id, benchmarkId: m.benchmarkId };
   if (m.type === "unpin" && string(m.id) && string(m.benchmarkId))
     return { type: "unpin", id: m.id, benchmarkId: m.benchmarkId };
@@ -51,7 +109,11 @@ export function parseMessage(raw: unknown): HostMessage {
     m.ids.every((id) => string(id)) &&
     typeof m.excluded === "boolean"
   )
-    return { type: "excludeMany", ids: [...(m.ids as string[])], excluded: m.excluded };
+    return {
+      type: "excludeMany",
+      ids: [...(m.ids as string[])],
+      excluded: m.excluded,
+    };
   if (m.type === "excludeAll" && typeof m.excluded === "boolean")
     return { type: "excludeAll", excluded: m.excluded };
   if (m.type === "profile" && m.change && typeof m.change === "object") {

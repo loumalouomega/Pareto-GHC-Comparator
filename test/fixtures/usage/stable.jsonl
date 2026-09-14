@@ -1,0 +1,2 @@
+{"kind": 0, "v": {"sessionId": "fixture", "creationDate": 1788220800000}}
+{"kind": 1, "k": ["requests", 0, "result"], "v": {"metadata": {"modelId": "copilot/gpt-5-mini", "promptTokens": 0, "outputTokens": 20}}}

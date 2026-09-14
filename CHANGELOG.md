@@ -4,6 +4,61 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Comparison overlay view: Compare options now has a **View** toggle next to **Show USD equivalents**. **Overlay** superimposes both A/B options' models on one chart instead of two separate ones, drawing each option's own Pareto frontier plus a combined frontier across both, so the better-value tool is visible at a glance. When the two options bill differently, the shared axis converts to a labelled USD equivalent (the one exception to cost units never mixing in a chart); legacy premium requests, which never convert, are dropped from the overlay with a notice instead of being plotted on a unit they don't belong to, and the combined frontier is withheld — with a notice — when the two options' workload or cost basis don't otherwise match. PNG export saves the overlay chart when that view is active. See `docs/billing.md`'s "Overlay view" section.
+
+### Changed
+
+- **Compare tools** is now its own tab: Compare options (the A/B toggle, Tool A/Tool B source pickers, Editing, name, USD equivalents, and the View control) and its results — the per-option panels or the overlay chart, plus the B-minus-A delta — moved off Plan & budget and off Tool analysis onto this dedicated tab, so switching between two tools is easy to find. Comparison stays off by default, and Tool analysis (renamed from "Compare") stays first in the tab order and open by default, now always showing the single active option's chart regardless of whether Compare options is on. **Tool A** and **Tool B** pick each option's source directly from the Compare tools tab, without first switching Editing to it.
+- Simpler default layout: the panel is now split into **Tool analysis** (originally named "Compare"), **Plan & budget**, **Usage**, and **Settings** tabs. Tool analysis keeps the everyday workflow — source, task, billing, chart view, and filter in one row, a compact **Find a model** strip, then the chart, table, and model details. Side-by-side options, saved workloads, and the monthly spending scenario move to Plan & budget; local usage, BYOK rates, and the free-tier spotlight to Usage; chart display, included models, and exports to Settings. Model details show the essentials and put cost breakdowns, pricing sources, pinning, and benchmark mapping behind **More details**, which opens automatically for a model with a missing benchmark or an unresolved price. The last open tab is restored when the panel reloads. Features, saved data, and exports are unchanged.
+
+## 1.0.0
+
+### Added
+
+- Two-option comparison mode with independent A/B settings, shared editor, separate charts/frontiers, selected-row deltas, saved-pair restoration, and two-option CSV/snapshot/PNG exports. Badge export targets the active option.
+- Usage completeness diagnostics and version-2 storage distinguish observed, estimated, and missing tokens. Partially malformed files retain valid records; unsupported or unreadable updates retain visibly stale contributions until recovery or deletion.
+- Native OpenCode executable resolution for Linux/macOS/Windows, including a global npm install's `node_modules\opencode-ai\bin\opencode.exe` layout on Windows, explicit timeout guidance, platform process tests, and a three-platform CI discovery job. A credential-free CI smoke job now verifies real free-tier discovery, variant expansion, and executable resolution (npm and install-script, plus a path containing spaces) on Linux, macOS, and Windows; real-account provider pricing stays verified on Linux only. See `docs/testing.md`.
+- Pricing and reasoning mapping assistance: an unresolved model now explains why (no catalog entry, ambiguous entry, no alias match, or a disappeared selection) and, when a benchmark's Artificial Analysis identifier exactly matches the model's own id, offers it as an unverified suggestion to explicitly apply or reset. An unpriced, provider-billed OpenCode model gets a matching pricing suggestion from the same-identifier static registry (currently OpenAI models against the Codex registry), applied with visible registry provenance via **Apply rate to this model** / **Apply to all N variants**; a rate whose registry entry later changes or disappears keeps working but shows a staleness warning instead of updating silently. A pin whose benchmark disappears is now shown as its own unresolved row instead of being dropped. The benchmark dropdown now stages a choice for explicit **Apply mapping** or **Reset to automatic**, instead of applying on change.
+- Monthly spending scenario: an optional what-if card projecting a documented Copilot plan's monthly fee plus expected usage against its included allowance and overage rate (Pro, Pro+, Max, Business, Enterprise, the legacy annual plan, or your own Custom plan), with every figure labelled provider-verified (with source and date), your input, observed local history, or the displayed per-request estimate — always a projection, never a bill. **Use my request history** fills the expected-requests range from a local scan. Each option in Compare options keeps its own scenario, with a separate delta line; scenarios save with workload profiles. Plans without verified billing rules (Copilot Free/Student, OpenCode Go, every other source) stay explicitly unavailable rather than approximated. Exports include the scenario and the plan-registry date.
+- Comparison-mode USD cost equivalents: an optional **Show USD equivalents** toggle (off by default) converts AI-credit costs to USD at the documented $0.01/credit pay-as-you-go rate — never counting plan allowance or fee — shown per panel alongside the native cost, plus a USD-equivalent delta where the native cost delta today reads "Different billing units." Legacy premium requests are never converted, since a per-interaction multiplier isn't a token-workload cost; the delta still requires the same cost basis and workload as the native comparison. Cost units still never mix within a chart or frontier. Pair CSV exports gain per-row `usd_equivalent`/`usd_conversion` columns and the pair snapshot gains a `costNormalization` entry per option plus a top-level `usdCostDelta`, preserving the original values alongside the converted ones.
+
+### Changed
+
+- **Copy model ID / Copy model name**: for OpenCode models and a doc-verified subset of static-registry models (Claude Code and Codex's full lineups; Gemini CLI's `gemini-2.5-pro`/`gemini-3-flash` only), the button now copies the exact id that client's own `--model`/config key accepts, with a hint showing where to paste it, instead of a display name no client understands. Every other model still copies the display name, now with an explicit "no verified invocable id" note. No client config is read or written, and no model is switched or applied automatically. See `docs/model-switching-investigation.md`.
+- The benchmark-variant dropdown in model details no longer applies a selection immediately on change; it stages the choice ("Will map to …") until **Apply mapping** is clicked, with a separate, always-available **Reset to automatic** button.
+
+
+- Cost-per-quality table sort: an optional **Cost per quality** ordering (cost per index point, unpriced or unscored rows last with reasons) in chart display settings, with a matching table column; existing discovery order remains the default and saved settings migrate without losing user choices.
+- Shareable exports: snapshot JSON (displayed rows plus source, task, billing, catalog/registry dates, and benchmark version with an illustrative-figures disclaimer) and shields-compatible badge JSON (highest-scoring displayed model), alongside the existing CSV/PNG exports via the save dialog.
+- Pricing-freshness alert: the footer shows both the pricing catalog and static registry dates and nudges toward `docs/catalog.md` when either is older than 90 days, without blocking the comparison.
+- Benchmark drift: the previous validated snapshot is retained locally on each successful refresh, and the table shows per-model score changes with the model-details panel citing both snapshot versions and retrieval dates; models without a comparable previous score show unknown, never zero.
+- OpenCode BYOK rates: an explicit per-model rate table (USD per million tokens, webview form under the OpenCode source) prices provider-billed models the CLI leaves unpriced, saved locally with a visible BYOK provenance label; free-tier zero costs are never overridden and invalid entries keep the model unpriced.
+- Local Copilot usage history (opt-in): **Scan Local Copilot Usage** reads `workspaceStorage` chat sessions on this machine only — after an explicit consent prompt, never before — and shows request, token, and premium-request totals by model, day, and workspace with an estimates-are-not-bills disclaimer. Incremental rescans reuse a size/mtime index, an opt-in file watcher refreshes totals with a visible indicator, and **Erase Local Copilot Usage** disables watching and deletes the data. Historical premium estimates use dual-era multipliers around the 2026-06-01 rebase; unknown models fall back to a labeled 1.0 estimate.
+- Usage-aware workload prefill: **Use my average** fills the token inputs from median observed prompt/output tokens with the sample size and date range shown; it composes with saved profiles like any manual edit.
+- Used-models overlay: chart points, tooltips, table rows, and model details mark models seen in local history with request counts, and an **Only my models** filter restricts the comparison (frontier, recommendations, and exports included) to them.
+- Budget from reality: a suggested budget from p90 observed costs (premium requests for legacy billing, AI credits for credit billing) with its sample and window cited; applying it is explicit and manual budgets always win. No suggestion for USD, since local history covers Copilot requests only.
+- Per-workspace breakdown: the usage card shows up to 20 workspaces with basename-only labels by default (full paths on toggle, kept in tooltips), and storage ids with an inline unmapped-workspace explanation when `workspace.json` is missing or unreadable; the model table grows to 12 rows.
+
+### Fixed
+
+- Preserve explicit zero token observations and exclude missing or text-estimated pairs from workload prefill and credit-budget samples. Old usage caches require a consent-gated rescan.
+- Isolate source discovery errors and retain previous listings on failures; concurrent panels using one source share discovery.
+
+
+- Include zero-cost requests in usage budget percentiles and priced sample counts, avoiding inflated suggestions for mixed free/paid history.
+
+- Erasing local usage cancels queued scans and waits for active writes before deleting data; stale scans cannot restore history or watchers. Session deletions now trigger an incremental refresh, and deletion failures report that stored data could not be erased.
+- Keep thinking-level checklist selections available while **Only my models** or free-only filtering hides comparison rows.
+- Isolate temporary cache files so concurrent usage and benchmark writes cannot overwrite each other.
+- Resolve OpenCode's real executable on Windows when installed via `npm install -g opencode-ai`, whose PATH shims are `.cmd`/`.ps1` wrappers rather than `opencode.exe`; found and fixed via real CI discovery evidence.
+- Keep a BYOK-priced OpenCode model listed in the Provider-billed rates form after saving a rate for it, instead of it disappearing (it previously could not be edited or removed from the UI once priced).
+- Stop silently dropping a pin whose benchmark disappeared from the catalog; it now stays visible as an unresolved row you explicitly replace or unpin, matching the existing rule for a stale manual override.
+- Pad an empty comparison option's row in the two-option CSV export to the actual number of data columns instead of a stale hardcoded count, which had fallen out of sync with the header.
+
+History: [v0.11.0...v1.0.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v0.11.0...v1.0.0).
+
 ## 0.11.0
 
 ### Added

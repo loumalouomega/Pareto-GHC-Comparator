@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, win32, posix } from "node:path";
 import type { AvailableModel, Rates } from "./types";
 
 /** Providers whose zero-cost CLI rates mean a documented free tier (Zen gateway). */
@@ -16,10 +16,7 @@ export const opencodeBenchmarkFamilies: Record<string, string[]> = {
 };
 
 export type OpenCodeFailure =
-  | "missing"
-  | "command"
-  | "parse"
-  | "empty";
+  "missing" | "timeout" | "command" | "parse" | "empty";
 
 export class OpenCodeError extends Error {
   constructor(
@@ -39,7 +36,9 @@ const money = (v: unknown): v is number =>
 const variantKey = (v: string): boolean =>
   /^[A-Za-z0-9][\w\-.]*$/.test(v) && v.length <= 100;
 
-function tierRates(raw: unknown): { threshold: number; rates: Rates } | undefined {
+function tierRates(
+  raw: unknown,
+): { threshold: number; rates: Rates } | undefined {
   if (!object(raw)) return undefined;
   const cache = object(raw.cache) ? raw.cache : undefined;
   const tier = object(raw.tier) ? raw.tier : undefined;
@@ -110,7 +109,11 @@ function splitBlocks(output: string): { ref: string; body: string }[] {
       }
       if (started && depth === 0 && !inString) break;
     }
-    if (!started || depth !== 0) throw new OpenCodeError("OpenCode returned unrecognized model data. Retry; the previous listing is retained.", "parse");
+    if (!started || depth !== 0)
+      throw new OpenCodeError(
+        "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
+        "parse",
+      );
     blocks.push({ ref, body: collected.join("\n") });
     i = k + 1;
   }
@@ -123,11 +126,17 @@ function splitBlocks(output: string): { ref: string; body: string }[] {
  */
 export function parseModels(output: unknown): AvailableModel[] {
   if (typeof output !== "string")
-    throw new OpenCodeError("OpenCode returned unrecognized model data. Retry; the previous listing is retained.", "parse");
+    throw new OpenCodeError(
+      "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
+      "parse",
+    );
   if (output.trim() === "") return [];
   const blocks = splitBlocks(output);
   if (!blocks.length)
-    throw new OpenCodeError("OpenCode returned unrecognized model data. Retry; the previous listing is retained.", "parse");
+    throw new OpenCodeError(
+      "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
+      "parse",
+    );
   const models: AvailableModel[] = [];
   const seen = new Set<string>();
   for (const { body } of blocks) {
@@ -135,25 +144,40 @@ export function parseModels(output: unknown): AvailableModel[] {
     try {
       raw = JSON.parse(body);
     } catch {
-      throw new OpenCodeError("OpenCode returned unrecognized model data. Retry; the previous listing is retained.", "parse");
+      throw new OpenCodeError(
+        "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
+        "parse",
+      );
     }
-    if (!object(raw) || !str(raw.id) || !str(raw.providerID, 100) || !str(raw.name)) continue;
+    if (
+      !object(raw) ||
+      !str(raw.id) ||
+      !str(raw.providerID, 100) ||
+      !str(raw.name)
+    )
+      continue;
     if (!/^[\w\-.]+$/.test(raw.providerID)) continue;
     const providerID = raw.providerID;
     const modelId = raw.id;
     const name = raw.name;
     const family =
-      typeof raw.family === "string" && raw.family.length > 0 && raw.family.length <= 200
+      typeof raw.family === "string" &&
+      raw.family.length > 0 &&
+      raw.family.length <= 200
         ? raw.family
         : modelId;
     const baseRef = `${providerID}/${modelId}`;
     const limit = object(raw.limit) ? raw.limit : {};
     const maxInputTokens =
-      (typeof limit.input === "number" && Number.isSafeInteger(limit.input) && limit.input >= 0
+      typeof limit.input === "number" &&
+      Number.isSafeInteger(limit.input) &&
+      limit.input >= 0
         ? limit.input
-        : typeof limit.context === "number" && Number.isSafeInteger(limit.context) && limit.context >= 0
+        : typeof limit.context === "number" &&
+            Number.isSafeInteger(limit.context) &&
+            limit.context >= 0
           ? limit.context
-          : 0);
+          : 0;
     // Pricing from live CLI cost fields (dynamic; no static OpenCode price catalog).
     let rates: Rates | undefined;
     let long: { threshold: number; rates: Rates } | undefined;
@@ -170,7 +194,12 @@ export function parseModels(output: unknown): AvailableModel[] {
       money(cache.write)
     ) {
       const write = cache.write as number;
-      if (cost.input === 0 && cost.output === 0 && cache.read === 0 && write === 0) {
+      if (
+        cost.input === 0 &&
+        cost.output === 0 &&
+        cache.read === 0 &&
+        write === 0
+      ) {
         if (zenGatewayProviders.includes(providerID)) {
           freeTier = true;
           rates = { input: 0, read: 0, write: null, output: 0 };
@@ -211,7 +240,9 @@ export function parseModels(output: unknown): AvailableModel[] {
         maxInputTokens,
         source: "opencode",
         ...(rates ? { rates: { ...rates } } : {}),
-        ...(long ? { long: { threshold: long.threshold, rates: { ...long.rates } } } : {}),
+        ...(long
+          ? { long: { threshold: long.threshold, rates: { ...long.rates } } }
+          : {}),
         ...(freeTier ? { freeTier: true } : {}),
         ...(pricingNotes.length ? { pricingNotes: [...pricingNotes] } : {}),
       });
@@ -232,42 +263,111 @@ export interface OpenCodeRunResult {
 }
 export type OpenCodeRunner = (args: string[]) => Promise<OpenCodeRunResult>;
 
-function execOnce(binary: string, args: string[]): Promise<OpenCodeRunResult> {
+export function execOnce(
+  binary: string,
+  args: string[],
+  execute: typeof execFile = execFile,
+): Promise<OpenCodeRunResult> {
   return new Promise((resolve, reject) => {
-    const child = execFile(binary, args, { timeout: 20000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-        reject(Object.assign(new Error(`ENOENT: ${binary}`), { code: "ENOENT" }));
-        return;
-      }
-      const code =
-        error && typeof (error as { code?: unknown }).code === "number"
-          ? ((error as { code: number }).code ?? 1)
-          : error
-            ? 1
-            : 0;
-      resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
-    });
+    const child = execute(
+      binary,
+      args,
+      { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+          reject(
+            Object.assign(new Error(`ENOENT: ${binary}`), { code: "ENOENT" }),
+          );
+          return;
+        }
+        if (error && error.killed) {
+          reject(
+            new OpenCodeError(
+              "OpenCode discovery timed out after 20 seconds. Retry; the previous listing is retained.",
+              "timeout",
+            ),
+          );
+          return;
+        }
+        const code =
+          error && typeof (error as { code?: unknown }).code === "number"
+            ? ((error as { code: number }).code ?? 1)
+            : error
+              ? 1
+              : 0;
+        resolve({
+          code,
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? ""),
+        });
+      },
+    );
     void child;
   });
 }
 
-function defaultRunner(args: string[]): Promise<OpenCodeRunResult> {
-  const fallback = join(homedir(), ".opencode", "bin", "opencode");
-  return (async () => {
-    for (const binary of ["opencode", fallback]) {
+export function executableCandidates(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home = homedir(),
+): string[] {
+  const paths = platform === "win32" ? win32 : posix;
+  const binary = platform === "win32" ? "opencode.exe" : "opencode";
+  const pathValue =
+    Object.entries(env).find(([key]) =>
+      platform === "win32" ? key.toLowerCase() === "path" : key === "PATH",
+    )?.[1] ?? "";
+  const pathDirs = pathValue
+    .split(platform === "win32" ? ";" : ":")
+    .filter(Boolean)
+    .map((p) => p.replace(/^"|"$/g, ""));
+  // `npm install -g opencode-ai` on Windows only puts .cmd/.ps1 shims on PATH;
+  // the real opencode.exe (per that package's "bin" field) sits under
+  // <npm prefix>\node_modules\opencode-ai\bin\, i.e. directly under each PATH
+  // entry that is itself an npm prefix. Unix npm symlinks a real executable
+  // straight into the PATH bin dir, so no extra candidate is needed there.
+  const dirCandidates = (dir: string) =>
+    platform === "win32"
+      ? [
+          paths.join(dir, binary),
+          paths.join(dir, "node_modules", "opencode-ai", "bin", binary),
+        ]
+      : [paths.join(dir, binary)];
+  return [
+    ...new Set([
+      ...pathDirs.flatMap(dirCandidates),
+      paths.join(home, ".opencode", "bin", binary),
+    ]),
+  ];
+}
+export function createOpenCodeRunner(
+  config: {
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+    execute?: typeof execOnce;
+  } = {},
+): OpenCodeRunner {
+  return async (args) => {
+    for (const binary of executableCandidates(
+      config.platform,
+      config.env,
+      config.home,
+    )) {
       try {
-        return await execOnce(binary, args);
+        return await (config.execute ?? execOnce)(binary, args);
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue;
         throw error;
       }
     }
     throw new OpenCodeError(
-      "OpenCode CLI not found. Install OpenCode 1.18.30 or newer with the `opencode` binary on PATH (default ~/.opencode/bin/), then refresh.",
+      "OpenCode CLI not found. Put the native opencode executable on PATH (opencode.exe on Windows, including npm global installs' node_modules\\opencode-ai\\bin\\opencode.exe) or in ~/.opencode/bin, then refresh. Script-only .cmd/.bat/.ps1 shims are unsupported; expose a native executable.",
       "missing",
     );
-  })();
+  };
 }
+const defaultRunner: OpenCodeRunner = (args) => createOpenCodeRunner()(args);
 
 /** Run discovery and parse the listing; throws OpenCodeError with actionable messages. */
 export async function discoverOpenCode(

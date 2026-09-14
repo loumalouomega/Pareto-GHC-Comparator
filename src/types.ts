@@ -12,12 +12,14 @@ export type Source =
   | "amazon-q";
 export type CostScale = "auto" | "log" | "linear";
 export type ChartType = "workload" | "task";
+export type TableSort = "default" | "efficiency";
 export interface DisplaySettings {
   labels: boolean;
   frontier: boolean;
   scale: CostScale;
   chart: ChartType;
   quadrant: boolean;
+  sort: TableSort;
 }
 export interface Tokens {
   input: number;
@@ -31,6 +33,90 @@ export interface RecommendationSettings {
   budgets: Record<Billing, number>;
   scoreGap: number;
 }
+/** Local-history window a scenario's request range was prefilled from. */
+export interface ScenarioHistory {
+  from: string;
+  to: string;
+  activeDays: number;
+  calendarDays: number;
+  requests: number;
+}
+/**
+ * What-if monthly spending scenario inputs (see src/plans.ts). `planId`
+ * "none" means off. Custom plan fields are user input; null means not entered.
+ */
+export interface ScenarioSettings {
+  planId: string;
+  requestsLow: number;
+  requestsHigh: number;
+  origin: "user" | "history";
+  history: ScenarioHistory | null;
+  custom: {
+    monthlyFeeUsd: number | null;
+    allowance: number | null;
+    overageUsdPerUnit: number | null;
+  };
+}
+export type ScenarioProvenance =
+  | { kind: "provider"; date: string; sources: string[] }
+  | { kind: "user" }
+  | ({ kind: "history" } & ScenarioHistory)
+  | {
+      kind: "estimate";
+      basis: "task" | "workload" | "legacy-multiplier";
+      catalogDate: string;
+    };
+export type ScenarioBoundary = "within-base" | "within-flex" | "over-allowance";
+export interface ScenarioRange {
+  low: number;
+  high: number;
+}
+export type ScenarioResult =
+  | { status: "off" }
+  | {
+      status: "unavailable";
+      planId: string;
+      label: string;
+      reason: string;
+      notes: string[];
+      disclaimer: string;
+    }
+  | {
+      status: "projected";
+      plan: {
+        id: string;
+        label: string;
+        unit: "AI credits" | "premium requests";
+        registryDate: string | null;
+      };
+      row: {
+        id: string;
+        name: string;
+        origin: "selected" | "recommended" | "first-comparable";
+      };
+      perRequest: { value: number; provenance: ScenarioProvenance };
+      requests: ScenarioRange & { provenance: ScenarioProvenance };
+      usage: ScenarioRange;
+      allowance: ScenarioRange & {
+        provenance: ScenarioProvenance;
+        flexVariable: boolean;
+      };
+      overageUnits: ScenarioRange;
+      overageUsd: (ScenarioRange & { provenance: ScenarioProvenance }) | null;
+      feeUsd: {
+        value: number | null;
+        basis: "account" | "seat" | null;
+        provenance: ScenarioProvenance | null;
+      };
+      totalUsd: ScenarioRange | null;
+      boundary: { low: ScenarioBoundary; high: ScenarioBoundary };
+      notes: string[];
+      disclaimer: string;
+    };
+/** Request range derived from local usage history, applied only on demand. */
+export interface ScenarioPrefill extends ScenarioRange, ScenarioHistory {
+  undated: number;
+}
 export interface Options {
   source: Source;
   preset: Preset;
@@ -38,9 +124,11 @@ export interface Options {
   plan: "pro" | "proPlus";
   tokens: Tokens;
   filter: string;
+  onlyMine: boolean;
   recommendation: RecommendationSettings;
   display: DisplaySettings;
   freeOnly: boolean;
+  scenario: ScenarioSettings;
 }
 export const defaults: Options = {
   source: "copilot",
@@ -54,8 +142,24 @@ export const defaults: Options = {
     budgets: { credits: 1, legacy: 1, usd: 1 },
     scoreGap: 3,
   },
-  display: { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true },
+  display: {
+    labels: true,
+    frontier: true,
+    scale: "auto",
+    chart: "task",
+    quadrant: true,
+    sort: "default",
+  },
   freeOnly: false,
+  onlyMine: false,
+  scenario: {
+    planId: "none",
+    requestsLow: 0,
+    requestsHigh: 0,
+    origin: "user",
+    history: null,
+    custom: { monthlyFeeUsd: null, allowance: null, overageUsdPerUnit: null },
+  },
 };
 export interface Benchmark {
   id: string;
@@ -64,6 +168,100 @@ export interface Benchmark {
   provider: string;
   scores: Record<Preset, number | null>;
 }
+export interface ScoreDrift {
+  prevScore: number | null;
+  delta: number | null;
+}
+export type TokenProvenance = "observed" | "estimated" | "missing";
+export interface UsageDiagnostics {
+  malformed: number;
+  unsupported: number;
+  unreadable: number;
+  stale: number;
+  missingTokens: number;
+  estimatedTokens: number;
+}
+export interface UsageRequest {
+  promptProvenance?: TokenProvenance;
+  outputProvenance?: TokenProvenance;
+  sessionId: string;
+  workspaceId: string;
+  requestIndex: number;
+  requestId?: string;
+  modelId: string | null;
+  timestampMs: number | null;
+  promptTokens: number;
+  outputTokens: number;
+  toolCallRounds: number;
+  tokensEstimated: boolean;
+}
+export interface UsageModelStat {
+  modelId: string;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+}
+export interface UsageDayStat {
+  date: string;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+}
+export interface UsageWorkspaceStat {
+  id: string;
+  path: string;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+}
+export interface UsageSummary {
+  diagnostics?: UsageDiagnostics;
+  scannedAt: number;
+  fileCount: number;
+  requestCount: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+  estimatedTokens: number;
+  unknownModels: string[];
+  dateRange: { from: number; to: number } | null;
+  medianPrompt: number;
+  medianOutput: number;
+  medianSample: number;
+  premiumP90: number | null;
+  creditP90: number | null;
+  creditSample: number;
+  models: UsageModelStat[];
+  days: UsageDayStat[];
+  workspaces: UsageWorkspaceStat[];
+}
+export interface BudgetSuggestion {
+  value: number | null;
+  note: string;
+}
+/**
+ * Where a BYOK rate came from. "manual" is anything the user typed in the
+ * BYOK form. "registry" is written only by the host, from a same-identifier
+ * static-registry match (see `registryRateFor` in src/assist.ts) that the
+ * user explicitly applied; the webview form can never create this kind.
+ */
+export type ByokProvenance =
+  | { kind: "manual" }
+  | {
+      kind: "registry";
+      registry: string;
+      registryId: string;
+      registryDate: string;
+    };
+export interface ByokEntry {
+  rates: Rates;
+  long?: { threshold: number; rates: Rates };
+  source?: ByokProvenance;
+}
+export type ByokStore = Record<string, ByokEntry>;
 export interface Snapshot {
   version: string;
   fetchedAt: number;
@@ -83,6 +281,8 @@ export interface AvailableModel {
   freeTier?: boolean;
   /** Visible pricing notes from discovery (e.g. unrecognized tier shape). */
   pricingNotes?: string[];
+  /** Static-source only: the exact id verified against that client's own docs (never derived from name/registry key). Absent when no client id is documented for this model. */
+  invocableId?: string;
 }
 export interface Rates {
   input: number;
@@ -119,6 +319,79 @@ export interface MappingResult {
   benchmark?: Benchmark;
   reason?: string;
 }
+/** Why a row's benchmark mapping is unresolved. Never inferred from display-name similarity. */
+export type MappingIssue =
+  | "no-snapshot"
+  | "no-catalog-entry"
+  | "ambiguous-catalog-entry"
+  | "no-alias-hit"
+  | "override-stale"
+  | "pin-stale";
+export interface BenchmarkSuggestion {
+  benchmarkId: string;
+  slug: string;
+  name: string;
+  /** The only suggestion rule: the benchmark slug equals the model's identifier. */
+  rule: "identifier-slug";
+  identifier: string;
+  sameThinkingLevel: boolean;
+}
+export interface MappingAssist {
+  issue?: MappingIssue;
+  reason?: string;
+  /** Aliases tried for this model, for the "why unresolved" explanation. */
+  aliases: string[];
+  /** The override/pin id that no longer resolves, when issue is *-stale. */
+  staleBenchmarkId?: string;
+  /** Identifier-slug matches, excluding anything already in candidateIds. Unverified until applied. */
+  suggestions: BenchmarkSuggestion[];
+}
+export type PricingStatus =
+  "priced" | "free" | "byok" | "unresolved" | "not-comparable";
+export type PricingSource =
+  | "copilot-catalog"
+  | "legacy-multiplier"
+  | "opencode-cli"
+  | "static-registry"
+  | "byok"
+  | "none";
+export type PricingIssue =
+  | "no-catalog-entry"
+  | "ambiguous-catalog-entry"
+  | "legacy-no-multiplier"
+  | "promo-expired"
+  | "provider-billed-no-rate"
+  | "no-credit-rates"
+  | "registry-unpriced"
+  | "cross-unit"
+  | "context-exceeded";
+export interface RegistryRateSuggestion {
+  registry: string;
+  registryId: string;
+  registryName: string;
+  registryDate: string;
+  sourceUrl: string;
+  rates: Rates;
+  long?: { threshold: number; rates: Rates };
+}
+export interface PricingInfo {
+  status: PricingStatus;
+  source: PricingSource;
+  issue?: PricingIssue;
+  reason?: string;
+  byok?: {
+    provenance: ByokProvenance;
+    stale?: "rates-changed" | "registry-missing";
+  };
+  /** A same-identifier registry rate, unverified until the user applies it via byokApply. */
+  suggestion?: RegistryRateSuggestion;
+}
+export interface InvocableRef {
+  /** The exact string to paste after the client's model flag/config key. */
+  ref: string;
+  /** Where to paste it, e.g. "codex -m <id> / model in config.toml". */
+  usage: string;
+}
 export interface Row {
   id: string;
   /** Original discovered/static model id (pins share this). */
@@ -137,10 +410,17 @@ export interface Row {
   dominatedBy: string[];
   mappingStatus: MappingStatus;
   candidateIds: string[];
+  requests?: number;
   selectedBenchmarkId?: string;
   pinnedBenchmarkId?: string;
   /** Benchmark automatically expanded as its own row when several variants match. */
   expandedBenchmarkId?: string;
+  /** Explanation and unverified suggestions, set only when mappingStatus is "missing". */
+  mapping?: MappingAssist;
+  /** Pricing provenance, separate from benchmark mapping; a benchmark choice never sets this. */
+  pricing?: PricingInfo;
+  /** A doc-verified id the source client accepts, when one exists; absent means no verified id (Copy falls back to the display name). Independent of mapping/pricing. */
+  invocable?: InvocableRef;
 }
 export interface RecommendationResult {
   modelIds: string[];
@@ -168,6 +448,15 @@ export type ProfileAction =
   | { action: "rename"; id: string; name: string }
   | { action: "apply" | "update" | "delete"; id: string };
 export type HostMessage =
+  | {
+      type: "comparison";
+      enabled?: boolean;
+      active?: "A" | "B";
+      name?: string;
+      normalize?: boolean;
+      view?: import("./comparison").ComparisonView;
+    }
+  | { type: "target"; side: "A" | "B"; action: HostMessage }
   | { type: "ready" | "refresh" | "key" }
   | { type: "source"; source: Source }
   | { type: "options"; options: Options }
@@ -179,6 +468,13 @@ export type HostMessage =
   | { type: "excludeMany"; ids: string[]; excluded: boolean }
   | { type: "excludeAll"; excluded: boolean }
   | { type: "exportCsv" }
+  | { type: "exportSnapshot" }
+  | { type: "exportBadge" }
+  | { type: "byok"; rates: ByokStore }
+  | { type: "byokApply"; ids: string[] }
+  | { type: "byokReset"; ids: string[] }
+  | { type: "scanUsage" }
+  | { type: "clearUsage" }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -222,6 +518,17 @@ export interface ChecklistFamily {
   models: ChecklistModel[];
 }
 export interface ViewState {
+  comparison?: {
+    active: import("./comparison").Side;
+    normalize: boolean;
+    view: import("./comparison").ComparisonView;
+    sides: Record<
+      import("./comparison").Side,
+      import("./comparison").OptionResult
+    >;
+    delta: ReturnType<typeof import("./comparison").comparisonDelta>;
+    overlay?: import("./comparison").OverlayResult;
+  };
   source: Source;
   options: Options;
   rows: Row[];
@@ -229,10 +536,21 @@ export interface ViewState {
   selected?: string;
   version?: string;
   fetchedAt?: number;
+  prevVersion?: string;
+  prevFetchedAt?: number;
+  drift: Record<string, ScoreDrift>;
+  byok: ByokStore;
+  usage: UsageSummary | null;
+  usageWatching: boolean;
+  budgetSuggestion: BudgetSuggestion | null;
   loading: boolean;
   message: string;
   hasKey: boolean;
   catalogDate: string;
+  staticRegistryDate: string;
+  planRegistryDate: string;
+  scenario: ScenarioResult;
+  scenarioPrefill: ScenarioPrefill | null;
   recommendation: RecommendationResult;
   profiles: ProfileSummary[];
   activeProfileId?: string;

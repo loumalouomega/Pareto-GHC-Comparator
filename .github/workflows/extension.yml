@@ -2,7 +2,7 @@ name: Build and publish extension
 
 on:
   push:
-    branches: ["**"]
+    branches: ["master"]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -15,6 +15,113 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  platform-discovery:
+    name: Native discovery (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run test/opencode-platform.test.ts
+
+  # Real OpenCode CLI discovery without credentials (free-tier listing only).
+  # Not a release gate: it depends on external downloads and the OpenCode
+  # catalog, so continue-on-error keeps a flaky opencode.ai outage from
+  # failing the run; it is deliberately excluded from required status checks
+  # and from the `release`/`publish` jobs' `needs`.
+  opencode-smoke:
+    name: OpenCode smoke (${{ matrix.os }}, ${{ matrix.method }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        method: [npm, script]
+        exclude:
+          - os: windows-latest
+            method: script
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Install OpenCode (npm)
+        if: matrix.method == 'npm'
+        id: install-npm
+        run: |
+          npm install -g opencode-ai@1.18.30
+          echo "OPENCODE_SOURCE=$(npm root -g)/opencode-ai/bin/opencode.exe" >> "$GITHUB_ENV"
+      - name: Install OpenCode (install script)
+        if: matrix.method == 'script'
+        id: install-script
+        run: |
+          # opencode.ai's install script occasionally fails to reach its own
+          # version endpoint. Retry a few times; if it's still unreachable,
+          # skip the rest of this job instead of failing it — this smoke
+          # test depends on an external service outside our control.
+          ok=false
+          for attempt in 1 2 3; do
+            if curl -fsSL https://opencode.ai/install | bash; then
+              ok=true
+              break
+            fi
+            if [ "$attempt" != 3 ]; then
+              echo "Install script failed (attempt $attempt/3); retrying in 10s..."
+              sleep 10
+            fi
+          done
+          if [ "$ok" = true ]; then
+            echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+            echo "OPENCODE_SOURCE=$HOME/.opencode/bin/opencode" >> "$GITHUB_ENV"
+          else
+            echo "::warning::OpenCode install script failed after 3 attempts (opencode.ai looks unreachable); skipping this smoke test instead of failing the job."
+          fi
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+      - name: Discovery smoke (credential-free home)
+        if: ${{ success() && (steps.install-npm.outcome == 'success' || steps.install-script.outputs.ok == 'true') }}
+        env:
+          HOME: ${{ runner.temp }}/oc-home
+          USERPROFILE: ${{ runner.temp }}/oc-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/oc-home/config
+          XDG_DATA_HOME: ${{ runner.temp }}/oc-home/data
+          XDG_CACHE_HOME: ${{ runner.temp }}/oc-home/cache
+          XDG_STATE_HOME: ${{ runner.temp }}/oc-home/state
+        run: |
+          mkdir -p "$HOME"
+          npx tsx scripts/opencode-smoke.ts --method ${{ matrix.method }} --expect-free
+      - name: Discovery smoke (executable path with spaces)
+        # Only run once an install step actually produced an executable;
+        # otherwise this fails too with an unrelated, confusing ENOENT.
+        if: ${{ success() && (steps.install-npm.outcome == 'success' || steps.install-script.outputs.ok == 'true') }}
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/oc-home/config
+          XDG_DATA_HOME: ${{ runner.temp }}/oc-home/data
+          XDG_CACHE_HOME: ${{ runner.temp }}/oc-home/cache
+          XDG_STATE_HOME: ${{ runner.temp }}/oc-home/state
+        run: |
+          DEST="$RUNNER_TEMP/opencode dir with spaces"
+          NAME=opencode; [ "$RUNNER_OS" = Windows ] && NAME=opencode.exe
+          mkdir -p "$DEST"
+          node -e 'require("fs").copyFileSync(process.argv[1], require("path").join(process.argv[2], process.argv[3]))' "$OPENCODE_SOURCE" "$DEST" "$NAME"
+          chmod +x "$DEST/$NAME" || true
+          npx tsx scripts/opencode-smoke.ts --method ${{ matrix.method }} --expect-free --only-dir "$(node -p 'require("path").resolve(process.argv[1])' "$DEST")"
+
   build:
     name: Test and package
     runs-on: ubuntu-latest
@@ -64,7 +171,7 @@ jobs:
   release:
     name: Create GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, platform-discovery]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -113,7 +220,7 @@ jobs:
   publish:
     name: Publish to VS Code Marketplace
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, platform-discovery]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: marketplace

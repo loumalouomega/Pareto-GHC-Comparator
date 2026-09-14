@@ -1,4 +1,26 @@
-import type { Options, Row } from "./types";
+import type { Options, Row, ScenarioResult } from "./types";
+export interface SnapshotMeta {
+  source: Options["source"];
+  preset: Options["preset"];
+  billing: Options["billing"];
+  catalogDate: string;
+  staticRegistryDate: string;
+  version?: string;
+  fetchedAt?: number;
+  planRegistryDate?: string;
+  scenario?: ScenarioResult;
+}
+
+/**
+ * Wraps a monthly spending scenario for export with an explicit label, so it
+ * never reads as a bill or measured cost alongside the comparison rows.
+ */
+export function scenarioExport(result: ScenarioResult) {
+  return {
+    label: "Estimated monthly spending scenario (projection, not a bill)",
+    ...result,
+  };
+}
 
 function cell(value: string): string {
   return /[",\n\r]/.test(value) || /^(=|\+|-|@)/.test(value)
@@ -26,6 +48,8 @@ export function exportCsv(
     "recommended",
     "mapping_status",
     "reasons",
+    "pricing_status",
+    "pricing_source",
   ];
   const unit =
     options.billing === "credits"
@@ -51,10 +75,97 @@ export function exportCsv(
         recommended.has(r.id) ? "yes" : "no",
         r.mappingStatus,
         r.reasons.join(" "),
+        r.pricing?.status ?? "",
+        r.pricing?.source ?? "",
       ]
         .map(cell)
         .join(","),
     );
   }
   return lines.join("\n") + "\n";
+}
+export function exportSnapshot(
+  rows: Row[],
+  options: Options,
+  recommended: Set<string>,
+  meta: SnapshotMeta,
+): string {
+  return (
+    JSON.stringify(
+      {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        disclaimer:
+          "Illustrative comparison from published benchmarks and catalog rates; not measured task cost or an account bill.",
+        source: meta.source,
+        preset: meta.preset,
+        billing: meta.billing,
+        catalogDate: meta.catalogDate,
+        staticRegistryDate: meta.staticRegistryDate,
+        planRegistryDate: meta.planRegistryDate ?? null,
+        benchmarkVersion: meta.version ?? null,
+        benchmarkFetchedAt: meta.fetchedAt ?? null,
+        scenario: meta.scenario ? scenarioExport(meta.scenario) : null,
+        rows: rows.map((r) => ({
+          id: r.id,
+          modelId: r.modelId,
+          name: r.name,
+          provider: r.provider,
+          benchmark: r.benchmark
+            ? { id: r.benchmark.id, name: r.benchmark.name }
+            : null,
+          score: r.score,
+          cost: r.cost,
+          tier: r.tier ?? null,
+          frontier: r.frontier,
+          recommended: recommended.has(r.id),
+          mappingStatus: r.mappingStatus,
+          reasons: r.reasons,
+          pricingStatus: r.pricing?.status ?? null,
+          pricingSource: r.pricing?.source ?? null,
+          // Only BYOK rows carry provenance beyond the source label above;
+          // null for everything else.
+          pricingProvenance: r.pricing?.byok?.provenance ?? null,
+        })),
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+export function exportBadge(
+  rows: Row[],
+  options: Options,
+  meta: Pick<SnapshotMeta, "source" | "preset">,
+): string {
+  const comparable = rows.filter(
+    (r): r is Row & { cost: number; score: number } =>
+      r.cost !== null &&
+      r.score !== null &&
+      Number.isFinite(r.cost) &&
+      Number.isFinite(r.score),
+  );
+  const unit =
+    options.billing === "credits"
+      ? "AI credits"
+      : options.billing === "legacy"
+        ? "premium requests"
+        : "USD";
+  const best = comparable.length
+    ? [...comparable].sort((a, b) => b.score - a.score || a.cost - b.cost)[0]
+    : undefined;
+  return (
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        label: `pareto ${meta.source} ${meta.preset}`,
+        message: best
+          ? `${best.name.slice(0, 120)}: ${best.score} pts at ${best.cost} ${unit}`
+          : "no comparable models",
+        color: best ? (best.frontier ? "brightgreen" : "blue") : "lightgrey",
+      },
+      null,
+      2,
+    ) + "\n"
+  );
 }
