@@ -35,6 +35,8 @@ export function exportCsv(
     "recommended",
     "mapping_status",
     "reasons",
+    "pricing_status",
+    "pricing_source",
   ];
   const unit =
     options.billing === "credits"
@@ -60,6 +62,8 @@ export function exportCsv(
         recommended.has(r.id) ? "yes" : "no",
         r.mappingStatus,
         r.reasons.join(" "),
+        r.pricing?.status ?? "",
+        r.pricing?.source ?? "",
       ]
         .map(cell)
         .join(","),
@@ -102,6 +106,11 @@ export function exportSnapshot(
           recommended: recommended.has(r.id),
           mappingStatus: r.mappingStatus,
           reasons: r.reasons,
+          pricingStatus: r.pricing?.status ?? null,
+          pricingSource: r.pricing?.source ?? null,
+          // Only BYOK rows carry provenance beyond the source label above;
+          // null for everything else.
+          pricingProvenance: r.pricing?.byok?.provenance ?? null,
         })),
       },
       null,

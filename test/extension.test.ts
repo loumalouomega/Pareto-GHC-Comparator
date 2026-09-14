@@ -256,9 +256,15 @@ test("extension discovers Copilot models, serves cached data, validates messages
       rates: { input: 1, read: 1, write: null, output: 1 },
     },
   };
+  const byokStored = {
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 1, read: 1, write: null, output: 1 },
+      source: { kind: "manual" },
+    },
+  };
   await receiver({ type: "byok", rates: byokRates });
-  assert.deepEqual(state.get("byokRates"), byokRates);
-  assert.deepEqual(last().byok, byokRates);
+  assert.deepEqual(state.get("byokRates"), byokStored);
+  assert.deepEqual(last().byok, byokStored);
   assert.match(last().message, /BYOK rate/);
   await receiver({ type: "byok", rates: { "bad id": {} } });
   assert.match(last().message, /Could not apply/);

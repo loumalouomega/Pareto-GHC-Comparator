@@ -17,13 +17,6 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 Admission criterion: extend comparison using documented or user-supplied inputs, with visible provenance and uncertainty.
 
-### Pricing and reasoning mapping assistance — M
-
-- **Gap:** Unknown prices and ambiguous benchmark variants require manual intervention; similar names alone are insufficient evidence.
-- **Deliverables:** Explain unresolved mappings and suggest candidates from authoritative identifiers and aliases. Provide an explicit review/apply/reset flow for user choices, with separate provenance for pricing and benchmark configuration; build on existing benchmark overrides and BYOK rates.
-- **Dependencies:** Existing mapping validation and BYOK store; verified sources for any new catalog mappings.
-- **Acceptance:** A benchmark choice never establishes a price. Suggested matches remain unresolved until verified or explicitly selected, overrides survive refresh, and disappearing variants prompt replacement/reset rather than silent substitution.
-
 ### Plan-aware spending scenarios — L
 
 - **Gap:** Token estimates and history percentiles do not model subscription fees, included allowances, remaining balances, or negotiated rates.

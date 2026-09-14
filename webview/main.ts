@@ -94,7 +94,8 @@ const unitCost = (billing: Billing) =>
       : "USD";
 let variantSearch = "",
   showOtherVariants = false,
-  detailsModelId: string | undefined;
+  detailsModelId: string | undefined,
+  pendingBenchmark: string | undefined;
 let checklistSearch = "";
 let byokDraft: Record<
   string,
@@ -412,10 +413,17 @@ function renderDetails() {
       else if (row.benchmark)
         send("pin", { id: row.modelId, benchmarkId: row.benchmark.id });
     };
-    pinButton.disabled = !row.benchmark;
+    // Unpinning a stale pin (no resolved benchmark) must stay available;
+    // only *creating* a new pin needs a resolved benchmark to pin.
+    pinButton.disabled = !row.pinnedBenchmarkId && !row.benchmark;
     target.append(pinButton);
   }
-  for (const reason of row.reasons) target.append(text("p", reason, "notice"));
+  renderPricingDetail(target, row);
+  const skip = new Set(
+    [row.mapping?.reason, row.pricing?.reason].filter((r): r is string => !!r),
+  );
+  for (const reason of row.reasons)
+    if (!skip.has(reason)) target.append(text("p", reason, "notice"));
   if (row.benchmark) {
     target.append(
       text("p", `Tested variant: ${row.benchmark.name}`),
@@ -447,6 +455,61 @@ function renderDetails() {
     }
   }
   target.append(text("p", mappingLabels[row.mappingStatus], "mapping-status"));
+  if (row.mapping) {
+    if (row.mapping.reason)
+      target.append(text("p", row.mapping.reason, "notice"));
+    if (row.mapping.aliases.length)
+      target.append(
+        text(
+          "p",
+          `Aliases tried: ${row.mapping.aliases.join(", ")}.`,
+          "hint",
+        ),
+      );
+    if (row.mapping.issue === "override-stale" || row.mapping.issue === "pin-stale") {
+      target.append(
+        text(
+          "p",
+          `Previously selected benchmark "${row.mapping.staleBenchmarkId}" is no longer available. It was never silently replaced.`,
+          "notice",
+        ),
+      );
+      const chooseBtn = text("button", "Choose replacement") as HTMLButtonElement;
+      chooseBtn.onclick = () => {
+        select.focus();
+        select.scrollIntoView({ block: "nearest" });
+      };
+      target.append(chooseBtn);
+    }
+    if (row.mapping.suggestions.length) {
+      target.append(
+        text(
+          "p",
+          "Suggested (identifier match — unverified):",
+          "hint",
+        ),
+      );
+      const list = document.createElement("ul");
+      list.className = "mapping-suggestions";
+      for (const s of row.mapping.suggestions) {
+        const item = document.createElement("li");
+        item.append(text("span", `${s.name} · ${s.slug}`));
+        const applyBtn = text("button", "Apply") as HTMLButtonElement;
+        applyBtn.onclick = () =>
+          send("mapping", { id: row.id, benchmarkId: s.benchmarkId });
+        item.append(applyBtn);
+        list.append(item);
+      }
+      target.append(list);
+      target.append(
+        text(
+          "p",
+          "Applying a suggestion selects a benchmark only; it never sets a price.",
+          "hint",
+        ),
+      );
+    }
+  }
   if (state.recommendation.modelIds.includes(row.id))
     target.append(
       text("p", state.recommendation.explanation, "recommendation-detail"),
@@ -455,6 +518,7 @@ function renderDetails() {
     detailsModelId = row.id;
     variantSearch = "";
     showOtherVariants = false;
+    pendingBenchmark = undefined;
   }
   const searchLabel = text("label", "Search benchmark variants");
   const search = document.createElement("input");
@@ -474,9 +538,26 @@ function renderDetails() {
   const label = text("label", "Benchmark variant");
   const select = document.createElement("select");
   select.id = "benchmark";
+  const applyBtn = text("button", "Apply mapping") as HTMLButtonElement;
+  const resetBtn = text("button", "Reset to automatic") as HTMLButtonElement;
+  const pendingNote = text("p", "", "hint");
+  const updateApplyState = () => {
+    const current = row.selectedBenchmarkId ?? "";
+    const pending = pendingBenchmark ?? current;
+    const changed = pending !== current;
+    applyBtn.disabled = !changed;
+    resetBtn.disabled = !row.selectedBenchmarkId;
+    const chosen = state!.models.find((b) => b.id === pending);
+    pendingNote.textContent = !changed
+      ? ""
+      : chosen
+        ? `Will map to ${chosen.name} (${chosen.slug}). Not applied yet — Apply mapping to confirm.`
+        : "Will reset to automatic matching. Not applied yet — Apply mapping to confirm.";
+  };
   const populate = () => {
     select.replaceChildren(new Option("Use automatic matching", ""));
     const candidates = new Set(row.candidateIds);
+    const suggested = new Set((row.mapping?.suggestions ?? []).map((s) => s.benchmarkId));
     const matches = state!.models
       .filter((b) =>
         `${b.name} ${b.slug}`
@@ -487,8 +568,14 @@ function renderDetails() {
     for (const [title, list] of [
       ["Matching variants", matches.filter((b) => candidates.has(b.id))],
       [
+        "Suggested — identifier match (unverified)",
+        matches.filter((b) => suggested.has(b.id) && !candidates.has(b.id)),
+      ],
+      [
         "Other benchmarks — manual mapping",
-        showOtherVariants ? matches.filter((b) => !candidates.has(b.id)) : [],
+        showOtherVariants
+          ? matches.filter((b) => !candidates.has(b.id) && !suggested.has(b.id))
+          : [],
       ],
     ] as const) {
       if (!list.length) continue;
@@ -498,22 +585,22 @@ function renderDetails() {
         group.append(new Option(`${b.name} · ${b.slug}`, b.id));
       select.append(group);
     }
+    const shown = row.selectedBenchmarkId ?? "";
     if (
-      row.selectedBenchmarkId &&
-      !Array.from(select.options).some(
-        (o) => o.value === row.selectedBenchmarkId,
-      )
+      shown &&
+      !Array.from(select.options).some((o) => o.value === shown)
     ) {
       const current = new Option(
         row.benchmark
           ? `Current selection: ${row.benchmark.name}`
           : "Unavailable benchmark — choose a replacement",
-        row.selectedBenchmarkId,
+        shown,
       );
       current.disabled = !row.benchmark;
       select.append(current);
     }
-    select.value = row.selectedBenchmarkId ?? "";
+    select.value = pendingBenchmark ?? shown;
+    updateApplyState();
   };
   search.oninput = () => {
     variantSearch = search.value;
@@ -523,12 +610,22 @@ function renderDetails() {
     showOtherVariants = manual.checked;
     populate();
   };
-  select.onchange = () =>
-    send("mapping", { id: row.id, benchmarkId: select.value });
+  select.onchange = () => {
+    pendingBenchmark = select.value;
+    updateApplyState();
+  };
+  applyBtn.onclick = () => {
+    send("mapping", { id: row.id, benchmarkId: pendingBenchmark ?? select.value });
+    pendingBenchmark = undefined;
+  };
+  resetBtn.onclick = () => {
+    pendingBenchmark = "";
+    send("mapping", { id: row.id, benchmarkId: "" });
+  };
   populate();
   label.append(select);
+  target.append(label, applyBtn, resetBtn, pendingNote);
   target.append(
-    label,
     text(
       "p",
       state.options.source === "opencode"
@@ -537,6 +634,97 @@ function renderDetails() {
       "hint",
     ),
   );
+}
+/**
+ * Pricing provenance and, for an unresolved provider-billed OpenCode model, a
+ * same-identifier static-registry rate suggestion — unverified until Apply.
+ * A benchmark choice is never involved here and never sets a price.
+ */
+function renderPricingDetail(target: HTMLElement, row: Row) {
+  if (!state || !row.pricing) return;
+  const p = row.pricing;
+  const registryLabel = (registry: string) =>
+    sources[registry as keyof typeof sources]?.label ?? registry;
+  const sourceText =
+    p.status === "priced"
+      ? p.source === "copilot-catalog"
+        ? `Copilot catalog (${state.catalogDate})`
+        : p.source === "legacy-multiplier"
+          ? "Legacy plan multiplier"
+          : p.source === "opencode-cli"
+            ? "OpenCode CLI live rate"
+            : `Static registry (${state.staticRegistryDate})`
+      : p.status === "free"
+        ? "Free tier"
+        : p.status === "byok"
+          ? p.byok?.provenance.kind === "registry"
+            ? `User BYOK from ${registryLabel(p.byok.provenance.registry)} registry, ${p.byok.provenance.registryDate}`
+            : "User BYOK (manual)"
+          : p.status === "not-comparable"
+            ? "Not comparable in this billing mode"
+            : "Unresolved";
+  target.append(text("p", `Pricing: ${sourceText}`, "hint"));
+  if (p.status === "unresolved" && p.reason)
+    target.append(text("p", p.reason, "notice"));
+  if (p.byok?.stale)
+    target.append(
+      text(
+        "p",
+        p.byok.stale === "rates-changed"
+          ? "The applied registry rate has changed since this was applied; still using the rate you applied."
+          : "The registry entry this rate was applied from is no longer available; still using the rate you applied.",
+        "notice",
+      ),
+    );
+  if (p.status === "byok") {
+    const editBtn = text("button", "Edit in BYOK rates") as HTMLButtonElement;
+    editBtn.onclick = () =>
+      el("byok-card").scrollIntoView({ block: "nearest" });
+    const removeBtn = text("button", "Remove BYOK rate") as HTMLButtonElement;
+    removeBtn.onclick = () => send("byokReset", { ids: [row.modelId] });
+    target.append(editBtn, removeBtn);
+  }
+  if (p.suggestion) {
+    const s = p.suggestion;
+    target.append(
+      text(
+        "p",
+        `${registryLabel(s.registry)} registry lists ${s.registryName} (${s.registryId}) at ${s.rates.input} / ${s.rates.read} / ${s.rates.write ?? s.rates.input} / ${s.rates.output} USD per 1M tokens (input / cache read / cache write / output), registry date ${s.registryDate}. Not applied.`,
+        "hint",
+      ),
+    );
+    const link = document.createElement("a");
+    link.href = s.sourceUrl;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "Registry source";
+    target.append(link);
+    const applyRate = text(
+      "button",
+      "Apply rate to this model",
+    ) as HTMLButtonElement;
+    applyRate.onclick = () => send("byokApply", { ids: [row.modelId] });
+    target.append(applyRate);
+    const siblings = [
+      ...new Set(
+        state.rows
+          .filter(
+            (r) =>
+              r.baseModelId === row.baseModelId &&
+              r.pricing?.suggestion?.registryId === s.registryId,
+          )
+          .map((r) => r.modelId),
+      ),
+    ];
+    if (siblings.length > 1) {
+      const applyAll = text(
+        "button",
+        `Apply to all ${siblings.length} variants`,
+      ) as HTMLButtonElement;
+      applyAll.onclick = () => send("byokApply", { ids: siblings });
+      target.append(applyAll);
+    }
+  }
 }
 function groupMatches(
   groups: ChecklistFamily[],
@@ -776,18 +964,22 @@ function renderByok() {
   const table = el("byok-table");
   table.replaceChildren();
   const seen = new Set<string>();
+  // Kept visible for a BYOK-applied model too (status "byok"), fixing the
+  // earlier form where a saved rate made its own row disappear.
   const models = state.rows.filter((r) => {
     if (
-      !r.modelId.startsWith("opencode:") ||
-      r.cost !== null ||
       seen.has(r.modelId) ||
-      !r.reasons.some((reason) => /Billed by provider/.test(reason))
+      !r.modelId.startsWith("opencode:") ||
+      !(
+        r.pricing?.status === "byok" ||
+        r.pricing?.issue === "provider-billed-no-rate"
+      )
     )
       return false;
     seen.add(r.modelId);
     return true;
   });
-  if (!models.length) {
+  if (!models.length && !Object.keys(state.byok).length) {
     table.append(
       text("p", "No provider-billed models need rates right now.", "hint"),
     );
@@ -806,6 +998,20 @@ function renderByok() {
     });
     const wrap = document.createElement("div");
     wrap.append(text("strong", m.name));
+    if (stored) {
+      wrap.append(
+        text(
+          "span",
+          stored.source?.kind === "registry"
+            ? ` · from ${sources[stored.source.registry as keyof typeof sources]?.label ?? stored.source.registry} registry, ${stored.source.registryDate}`
+            : " · manual",
+          "hint",
+        ),
+      );
+      const removeBtn = text("button", "Remove") as HTMLButtonElement;
+      removeBtn.onclick = () => send("byokReset", { ids: [m.modelId] });
+      wrap.append(removeBtn);
+    }
     for (const field of ["input", "read", "write", "output"] as const) {
       const label = document.createElement("label");
       label.append(
@@ -836,6 +1042,24 @@ function renderByok() {
       wrap.append(label);
     }
     table.append(wrap);
+  }
+  const stale = Object.keys(state.byok).filter((id) => !seen.has(id));
+  if (stale.length) {
+    table.append(
+      text(
+        "p",
+        "Saved rates for models not currently listed here:",
+        "hint",
+      ),
+    );
+    for (const id of stale) {
+      const row = document.createElement("div");
+      row.append(text("span", id, "hint"));
+      const removeBtn = text("button", "Remove") as HTMLButtonElement;
+      removeBtn.onclick = () => send("byokReset", { ids: [id] });
+      row.append(removeBtn);
+      table.append(row);
+    }
   }
 }
 function renderUsage() {

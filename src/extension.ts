@@ -14,7 +14,9 @@ import { catalogDate } from "./catalog";
 import {
   compare,
   freeSpotlight,
+  loadMappings,
   parseOptions,
+  registryRateFor,
   savedOptions,
   sortRowsByEfficiency,
 } from "./compare";
@@ -27,7 +29,7 @@ import { html } from "./html";
 import { recommend } from "./recommend";
 import { loadProfiles, changeProfile, profileModified } from "./profiles";
 import { parseMessage } from "./messages";
-import { loadByokStore } from "./byok";
+import { loadByokStore, mergeByokForm } from "./byok";
 import {
   aggregateUsage,
   blankUsageIndex,
@@ -359,10 +361,7 @@ export function activate(context: vscode.ExtensionContext) {
   const discoveryGen: Partial<Record<Source, number>> = {};
   const discoveryErrors: Partial<Record<Source, string>> = {};
   const discoveryPending: Partial<Record<Source, Promise<void>>> = {};
-  let overrides = context.globalState.get<Record<string, string>>(
-      "mappings",
-      {},
-    ),
+  let overrides = loadMappings(context.globalState.get("mappings")),
     pins = context.globalState.get<Record<string, string[]>>("pins", {}),
     excluded = context.globalState.get<Record<string, string[]>>(
       "excluded",
@@ -940,12 +939,68 @@ export function activate(context: vscode.ExtensionContext) {
                 render();
               }
             } else if (m.type === "byok") {
-              byok = m.rates;
+              // Manual whole-store save from the BYOK form; the message is
+              // already validated to manual-only provenance (parseByokFormStore).
+              // Merging (not replacing) keeps registry provenance on entries
+              // the form re-saved unchanged.
+              byok = mergeByokForm(byok, m.rates);
               await context.globalState.update("byokRates", byok);
               message =
                 Object.keys(byok).length === 0
                   ? "BYOK rates cleared."
                   : `Saved ${Object.keys(byok).length} BYOK rate${Object.keys(byok).length === 1 ? "" : "s"} for provider-billed OpenCode models.`;
+              render();
+            } else if (m.type === "byokApply") {
+              // Rates and provenance are computed host-side from the verified
+              // registry, never trusted from the webview.
+              const results = m.ids.map((id) => {
+                const model = availableBySource.opencode.find(
+                  (a) => a.id === id,
+                );
+                return {
+                  id,
+                  model,
+                  suggestion: model ? registryRateFor(model) : undefined,
+                };
+              });
+              const bad = results.find((r) => !r.model || !r.suggestion);
+              if (bad) {
+                message = `No verified registry rate for ${bad.model?.name ?? bad.id}; enter a manual rate instead.`;
+              } else {
+                const next = { ...byok };
+                for (const { id, suggestion } of results) {
+                  next[id] = {
+                    rates: suggestion!.rates,
+                    ...(suggestion!.long ? { long: suggestion!.long } : {}),
+                    source: {
+                      kind: "registry",
+                      registry: suggestion!.registry,
+                      registryId: suggestion!.registryId,
+                      registryDate: suggestion!.registryDate,
+                    },
+                  };
+                }
+                if (Object.keys(next).length > 1000) {
+                  message =
+                    "Too many BYOK entries; remove some before applying more.";
+                } else {
+                  byok = next;
+                  await context.globalState.update("byokRates", byok);
+                  const registryLabel =
+                    sources[results[0].suggestion!.registry as keyof typeof sources]
+                      ?.label ?? results[0].suggestion!.registry;
+                  message = `Applied ${registryLabel} registry rate (${results[0].suggestion!.registryDate}) to ${results.length} model${results.length === 1 ? "" : "s"}.`;
+                }
+              }
+              render();
+            } else if (m.type === "byokReset") {
+              // Removing an entry is always safe, even for a model that is no
+              // longer discovered, so users can clean up stale BYOK rows.
+              const next = { ...byok };
+              for (const id of m.ids) delete next[id];
+              byok = next;
+              await context.globalState.update("byokRates", byok);
+              message = `Removed ${m.ids.length} BYOK rate${m.ids.length === 1 ? "" : "s"}.`;
               render();
             } else if (m.type === "exclude") {
               if (lastStructureIds.has(m.id)) {

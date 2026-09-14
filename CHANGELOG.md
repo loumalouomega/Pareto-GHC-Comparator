@@ -9,6 +9,11 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Two-option comparison mode with independent A/B settings, shared editor, separate charts/frontiers, selected-row deltas, saved-pair restoration, and two-option CSV/snapshot/PNG exports. Badge export targets the active option.
 - Usage completeness diagnostics and version-2 storage distinguish observed, estimated, and missing tokens. Partially malformed files retain valid records; unsupported or unreadable updates retain visibly stale contributions until recovery or deletion.
 - Native OpenCode executable resolution for Linux/macOS/Windows, including a global npm install's `node_modules\opencode-ai\bin\opencode.exe` layout on Windows, explicit timeout guidance, platform process tests, and a three-platform CI discovery job. A credential-free CI smoke job now verifies real free-tier discovery, variant expansion, and executable resolution (npm and install-script, plus a path containing spaces) on Linux, macOS, and Windows; real-account provider pricing stays verified on Linux only. See `docs/testing.md`.
+- Pricing and reasoning mapping assistance: an unresolved model now explains why (no catalog entry, ambiguous entry, no alias match, or a disappeared selection) and, when a benchmark's Artificial Analysis identifier exactly matches the model's own id, offers it as an unverified suggestion to explicitly apply or reset. An unpriced, provider-billed OpenCode model gets a matching pricing suggestion from the same-identifier static registry (currently OpenAI models against the Codex registry), applied with visible registry provenance via **Apply rate to this model** / **Apply to all N variants**; a rate whose registry entry later changes or disappears keeps working but shows a staleness warning instead of updating silently. A pin whose benchmark disappears is now shown as its own unresolved row instead of being dropped. The benchmark dropdown now stages a choice for explicit **Apply mapping** or **Reset to automatic**, instead of applying on change.
+
+### Changed
+
+- The benchmark-variant dropdown in model details no longer applies a selection immediately on change; it stages the choice ("Will map to …") until **Apply mapping** is clicked, with a separate, always-available **Reset to automatic** button.
 
 
 - Cost-per-quality table sort: an optional **Cost per quality** ordering (cost per index point, unpriced or unscored rows last with reasons) in chart display settings, with a matching table column; existing discovery order remains the default and saved settings migrate without losing user choices.
@@ -34,6 +39,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 - Keep thinking-level checklist selections available while **Only my models** or free-only filtering hides comparison rows.
 - Isolate temporary cache files so concurrent usage and benchmark writes cannot overwrite each other.
 - Resolve OpenCode's real executable on Windows when installed via `npm install -g opencode-ai`, whose PATH shims are `.cmd`/`.ps1` wrappers rather than `opencode.exe`; found and fixed via real CI discovery evidence.
+- Keep a BYOK-priced OpenCode model listed in the Provider-billed rates form after saving a rate for it, instead of it disappearing (it previously could not be edited or removed from the UI once priced).
+- Stop silently dropping a pin whose benchmark disappeared from the catalog; it now stays visible as an unresolved row you explicitly replace or unpin, matching the existing rule for a stale manual override.
 
 ## 0.11.0
 

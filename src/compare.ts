@@ -6,10 +6,14 @@ import {
   defaults,
   type AvailableModel,
   type Benchmark,
+  type ByokEntry,
   type ByokStore,
   type CatalogEntry,
   type CostBreakdown,
+  type MappingIssue,
   type Options,
+  type PricingInfo,
+  type PricingIssue,
   type Row,
   type Source,
   type MappingResult,
@@ -170,6 +174,31 @@ export function savedOptions(value: unknown): Options {
     return structuredClone(defaults);
   }
 }
+/**
+ * Tolerant loader for the saved benchmark-mapping overrides: keeps every
+ * valid modelId -> benchmarkId string entry and drops invalid ones
+ * individually, so one corrupted entry never discards every saved choice.
+ */
+export function loadMappings(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  let count = 0;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (count >= 5000) break;
+    if (
+      typeof k === "string" &&
+      k.length >= 1 &&
+      k.length <= 1000 &&
+      typeof v === "string" &&
+      v.length >= 1 &&
+      v.length <= 1000
+    ) {
+      out[k] = v;
+      count++;
+    }
+  }
+  return out;
+}
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 export function estimate(
@@ -181,19 +210,25 @@ export function estimate(
   tier?: string;
   reason?: string;
   breakdown?: CostBreakdown;
+  issue?: PricingIssue;
 } {
   if (!entry)
     return { cost: null, reason: "No verified pricing mapping." };
   if (options.billing === "legacy") {
     const m = entry.legacy?.[options.plan];
     return m === undefined
-      ? { cost: null, reason: "No documented multiplier for this legacy plan." }
+      ? {
+          cost: null,
+          reason: "No documented multiplier for this legacy plan.",
+          issue: "legacy-no-multiplier",
+        }
       : { cost: m, tier: "Manual model selection" };
   }
   if (entry.expires && now >= Date.parse(`${entry.expires}T23:59:59.999Z`))
     return {
       cost: null,
       reason: "Promotional pricing expired; catalog update needed.",
+      issue: "promo-expired",
     };
   if (options.billing === "usd") {
     if (entry.freeTier)
@@ -216,7 +251,11 @@ export function estimate(
       entry.long && t.input + t.read + t.write > entry.long.threshold;
     const r = long ? entry.long!.rates : entry.rates;
     if (!r)
-      return { cost: null, reason: "Billed by provider; no verified rate." };
+      return {
+        cost: null,
+        reason: "Billed by provider; no verified rate.",
+        issue: "provider-billed-no-rate",
+      };
     // Same disjoint-bucket rule as credits; units are USD per workload.
     const cost =
       (t.input * r.input +
@@ -240,7 +279,12 @@ export function estimate(
   const t = options.tokens;
   const long = entry.long && t.input + t.read + t.write > entry.long.threshold;
   const r = long ? entry.long!.rates : entry.rates;
-  if (!r) return { cost: null, reason: "No current AI-credit pricing." };
+  if (!r)
+    return {
+      cost: null,
+      reason: "No current AI-credit pricing.",
+      issue: "no-credit-rates",
+    };
   // Token buckets are disjoint. Cache writes replace normal input billing where a write rate exists.
   const cost =
     (t.input * r.input +
@@ -282,6 +326,7 @@ export function taskCost(
   tier?: string;
   reason?: string;
   breakdown?: CostBreakdown;
+  issue?: PricingIssue;
 } {
   if (options.billing === "legacy") return estimate(entry, options, now);
   return estimate(
@@ -358,38 +403,24 @@ export function markFrontier(rows: Row[]): Row[] {
   });
 }
 export { efficiencyOf, sortRowsByEfficiency } from "./efficiency";
-export function baseModelIdOf(id: string): string {
-  const withoutPin = id.split("::")[0];
-  const withoutSource = withoutPin.includes(":")
-    ? withoutPin.slice(withoutPin.indexOf(":") + 1)
-    : withoutPin;
-  return withoutSource.split("#")[0];
-}
-
-/**
- * Thinking label carried by a display name, e.g. "low" for "GPT-5.4 (low)"
- * or "Adaptive Reasoning, Max Effort" for "Claude Opus 5 (Adaptive Reasoning,
- * Max Effort)". Names without a recognized reasoning qualifier are "Standard".
- */
-export function thinkingLabelOf(name: string): string {
-  const suffix = name.match(/\(([^()]*)\)\s*$/);
-  if (!suffix) return "Standard";
-  const inner = suffix[1].trim().replace(/\s+/g, " ");
-  if (
-    !/^(non[- ]reasoning|reasoning|adaptive reasoning|low|medium|high|xhigh|max)\b/i.test(
-      inner,
-    )
-  )
-    return "Standard";
-  return inner;
-}
-
-/** Thinking level reported by a discovered/static model (`#variant` or name). */
-export function modelThinkingOf(model: AvailableModel): string {
-  const hash = model.id.split("#")[1];
-  if (hash && hash.length > 0 && hash.length <= 100) return hash;
-  return thinkingLabelOf(model.name);
-}
+export {
+  baseModelIdOf,
+  thinkingLabelOf,
+  modelThinkingOf,
+  identifierOf,
+  suggestBenchmarks,
+  providerRegistries,
+  registryRateFor,
+  byokStaleness,
+} from "./assist";
+import {
+  baseModelIdOf,
+  thinkingLabelOf,
+  modelThinkingOf,
+  suggestBenchmarks,
+  registryRateFor,
+  byokStaleness,
+} from "./assist";
 
 /** Display name for one auto-expanded variant row. */
 export function variantDisplayName(
@@ -424,6 +455,7 @@ export function compare(
   const byok = extra.byok ?? {};
   const usedCounts = extra.usedCounts ?? new Map<string, number>();
   const byId = new Map(benchmarks.map((b) => [b.id, b]));
+  const now = Date.now();
   const rows = available
     .filter((m) => !excluded.has(m.id))
     .filter(
@@ -445,6 +477,11 @@ export function compare(
       let entry: CatalogEntry | undefined;
       let crossUnit: string | undefined;
       let byokNote: string | undefined;
+      let byokEntry: ByokEntry | undefined;
+      // Zero vs several catalog matches, for the pricing/mapping "why
+      // unresolved" explanation. Unset for OpenCode, whose entry is always a
+      // synthetic one built from the discovered model, never absent.
+      let catalogIssue: "no-catalog-entry" | "ambiguous-catalog-entry" | undefined;
       if (source === "opencode") {
         // Dynamic pricing: rates ride on the discovered model; only the
         // benchmark-family aliases are static.
@@ -467,8 +504,7 @@ export function compare(
         };
         // Explicit user-supplied fallback for provider-billed models the CLI
         // leaves unpriced. Free-tier zero costs are never overridden.
-        const byokEntry =
-          !m.freeTier && !m.rates ? byok[m.id] : undefined;
+        byokEntry = !m.freeTier && !m.rates ? byok[m.id] : undefined;
         if (byokEntry) {
           entry = {
             ...entry,
@@ -484,14 +520,24 @@ export function compare(
           e.ids.includes(m.id),
         );
         entry = matches.length === 1 ? matches[0] : undefined;
+        if (matches.length === 0) catalogIssue = "no-catalog-entry";
+        else if (matches.length > 1) catalogIssue = "ambiguous-catalog-entry";
         if (options.billing !== "usd")
           crossUnit = `${m.source} models compare in USD billing.`;
       } else {
         const matches = entries.filter((e) => e.ids.includes(m.id));
         entry = matches.length === 1 ? matches[0] : undefined;
+        if (matches.length === 0) catalogIssue = "no-catalog-entry";
+        else if (matches.length > 1) catalogIssue = "ambiguous-catalog-entry";
         if (options.billing === "usd")
           crossUnit = "Copilot models compare in AI credits or legacy billing.";
       }
+      // A same-identifier static-registry rate for an unpriced, provider-billed
+      // OpenCode model; undefined for every other source. Unverified until the
+      // user explicitly applies it (byokApply), which is the only way a BYOK
+      // entry gets "registry" provenance.
+      const registrySuggestion = registryRateFor(m, now);
+      const baseId = baseModelIdOf(m.id);
       const buildRow = (
         rowId: string,
         matched: MappingResult,
@@ -501,7 +547,11 @@ export function compare(
       ): Row => {
         const taskView = options.display.chart === "task";
         const price = crossUnit
-          ? { cost: null as number | null, reason: crossUnit }
+          ? {
+              cost: null as number | null,
+              reason: crossUnit,
+              issue: "cross-unit" as PricingIssue,
+            }
           : taskView
             ? taskCost(entry, options)
             : estimate(entry, options);
@@ -513,12 +563,106 @@ export function compare(
           m.maxInputTokens > 0 &&
           taskTokens.input + taskTokens.read + taskTokens.write >
             m.maxInputTokens;
+
+        // Pricing provenance never depends on benchmark mapping: an override
+        // or pin here never changes what is computed below.
+        let pricing: PricingInfo;
+        if (crossUnit) {
+          pricing = {
+            status: "not-comparable",
+            source: "none",
+            issue: "cross-unit",
+            reason: crossUnit,
+          };
+        } else if (byokEntry) {
+          const stale = byokStaleness(byokEntry, m, now);
+          pricing = {
+            status: "byok",
+            source: "byok",
+            byok: {
+              provenance: byokEntry.source ?? { kind: "manual" },
+              ...(stale ? { stale } : {}),
+            },
+            ...(stale && registrySuggestion ? { suggestion: registrySuggestion } : {}),
+            ...(tooLong
+              ? {
+                  issue: "context-exceeded" as const,
+                  reason: "Input exceeds the model context limit.",
+                }
+              : {}),
+          };
+        } else if (entry?.freeTier) {
+          pricing = {
+            status: "free",
+            source: source === "opencode" ? "opencode-cli" : "static-registry",
+          };
+        } else if (price.cost !== null && !tooLong) {
+          pricing = {
+            status: "priced",
+            source:
+              source === "opencode"
+                ? "opencode-cli"
+                : isStaticSource(source)
+                  ? "static-registry"
+                  : price.tier === "Manual model selection"
+                    ? "legacy-multiplier"
+                    : "copilot-catalog",
+          };
+        } else {
+          const issue: PricingIssue | undefined = tooLong
+            ? "context-exceeded"
+            : (catalogIssue ??
+              (isStaticSource(source) && price.issue === "provider-billed-no-rate"
+                ? "registry-unpriced"
+                : price.issue));
+          pricing = {
+            status: "unresolved",
+            source: "none",
+            ...(issue ? { issue } : {}),
+            reason: tooLong
+              ? "Input exceeds the model context limit."
+              : price.reason,
+            ...(source === "opencode" && registrySuggestion
+              ? { suggestion: registrySuggestion }
+              : {}),
+          };
+        }
+
+        // Benchmark-mapping explanation and unverified suggestions, only for
+        // rows that are actually unresolved. Never touches status, benchmark,
+        // score, or cost.
+        let mapping: Row["mapping"];
+        if (matched.status === "missing") {
+          const issue: MappingIssue =
+            benchmarks.length === 0
+              ? "no-snapshot"
+              : overrideId
+                ? ids.pinnedBenchmarkId
+                  ? "pin-stale"
+                  : "override-stale"
+                : (catalogIssue ?? "no-alias-hit");
+          mapping = {
+            issue,
+            reason: matched.reason,
+            aliases: entry?.benchmarkFamilies ?? [],
+            ...(overrideId ? { staleBenchmarkId: overrideId } : {}),
+            suggestions:
+              issue === "no-snapshot"
+                ? []
+                : suggestBenchmarks(
+                    baseId,
+                    modelThinkingOf(m),
+                    benchmarks,
+                    new Set(matched.candidateIds),
+                  ),
+          };
+        }
+
         return {
           id: rowId,
           modelId: m.id,
-          baseModelId: baseModelIdOf(m.id),
-          requests:
-            usedCounts.get(m.id) ?? usedCounts.get(baseModelIdOf(m.id)) ?? 0,
+          baseModelId: baseId,
+          requests: usedCounts.get(m.id) ?? usedCounts.get(baseId) ?? 0,
           name: displayName,
           provider: entry?.provider ?? matched.benchmark?.provider ?? "Unknown",
           score,
@@ -535,6 +679,8 @@ export function compare(
           ...(ids.expandedBenchmarkId
             ? { expandedBenchmarkId: ids.expandedBenchmarkId }
             : {}),
+          ...(mapping ? { mapping } : {}),
+          pricing,
           tier:
             byokNote && price.tier ? `${price.tier} · BYOK` : price.tier,
           breakdown: tooLong ? undefined : price.breakdown,
@@ -552,8 +698,13 @@ export function compare(
       };
       const pinnedName = (benchmark: Benchmark | undefined, fallback: string) =>
         benchmark ? `${m.name} · ${benchmark.name}` : `${m.name} · ${fallback}`;
+      // A pin whose benchmark id no longer resolves is kept as its own
+      // "pin-stale" row (via resolveBenchmark below), never silently dropped
+      // or replaced by automatic rows — the same no-silent-substitution rule
+      // as a stale manual override. Before a snapshot has ever loaded,
+      // benchmarks is empty and every pin is withheld until refresh.
       const modelPins = (pins[m.id] ?? []).filter(
-        (b) => typeof b === "string" && byId.has(b),
+        (b) => typeof b === "string" && benchmarks.length > 0,
       );
       const overrideId = overrides[m.id];
       if (overrideId || modelPins.length > 0) {

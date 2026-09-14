@@ -149,9 +149,24 @@ export interface BudgetSuggestion {
   value: number | null;
   note: string;
 }
+/**
+ * Where a BYOK rate came from. "manual" is anything the user typed in the
+ * BYOK form. "registry" is written only by the host, from a same-identifier
+ * static-registry match (see `registryRateFor` in src/assist.ts) that the
+ * user explicitly applied; the webview form can never create this kind.
+ */
+export type ByokProvenance =
+  | { kind: "manual" }
+  | {
+      kind: "registry";
+      registry: string;
+      registryId: string;
+      registryDate: string;
+    };
 export interface ByokEntry {
   rates: Rates;
   long?: { threshold: number; rates: Rates };
+  source?: ByokProvenance;
 }
 export type ByokStore = Record<string, ByokEntry>;
 export interface Snapshot {
@@ -209,6 +224,77 @@ export interface MappingResult {
   benchmark?: Benchmark;
   reason?: string;
 }
+/** Why a row's benchmark mapping is unresolved. Never inferred from display-name similarity. */
+export type MappingIssue =
+  | "no-snapshot"
+  | "no-catalog-entry"
+  | "ambiguous-catalog-entry"
+  | "no-alias-hit"
+  | "override-stale"
+  | "pin-stale";
+export interface BenchmarkSuggestion {
+  benchmarkId: string;
+  slug: string;
+  name: string;
+  /** The only suggestion rule: the benchmark slug equals the model's identifier. */
+  rule: "identifier-slug";
+  identifier: string;
+  sameThinkingLevel: boolean;
+}
+export interface MappingAssist {
+  issue?: MappingIssue;
+  reason?: string;
+  /** Aliases tried for this model, for the "why unresolved" explanation. */
+  aliases: string[];
+  /** The override/pin id that no longer resolves, when issue is *-stale. */
+  staleBenchmarkId?: string;
+  /** Identifier-slug matches, excluding anything already in candidateIds. Unverified until applied. */
+  suggestions: BenchmarkSuggestion[];
+}
+export type PricingStatus =
+  | "priced"
+  | "free"
+  | "byok"
+  | "unresolved"
+  | "not-comparable";
+export type PricingSource =
+  | "copilot-catalog"
+  | "legacy-multiplier"
+  | "opencode-cli"
+  | "static-registry"
+  | "byok"
+  | "none";
+export type PricingIssue =
+  | "no-catalog-entry"
+  | "ambiguous-catalog-entry"
+  | "legacy-no-multiplier"
+  | "promo-expired"
+  | "provider-billed-no-rate"
+  | "no-credit-rates"
+  | "registry-unpriced"
+  | "cross-unit"
+  | "context-exceeded";
+export interface RegistryRateSuggestion {
+  registry: string;
+  registryId: string;
+  registryName: string;
+  registryDate: string;
+  sourceUrl: string;
+  rates: Rates;
+  long?: { threshold: number; rates: Rates };
+}
+export interface PricingInfo {
+  status: PricingStatus;
+  source: PricingSource;
+  issue?: PricingIssue;
+  reason?: string;
+  byok?: {
+    provenance: ByokProvenance;
+    stale?: "rates-changed" | "registry-missing";
+  };
+  /** A same-identifier registry rate, unverified until the user applies it via byokApply. */
+  suggestion?: RegistryRateSuggestion;
+}
 export interface Row {
   id: string;
   /** Original discovered/static model id (pins share this). */
@@ -232,6 +318,10 @@ export interface Row {
   pinnedBenchmarkId?: string;
   /** Benchmark automatically expanded as its own row when several variants match. */
   expandedBenchmarkId?: string;
+  /** Explanation and unverified suggestions, set only when mappingStatus is "missing". */
+  mapping?: MappingAssist;
+  /** Pricing provenance, separate from benchmark mapping; a benchmark choice never sets this. */
+  pricing?: PricingInfo;
 }
 export interface RecommendationResult {
   modelIds: string[];
@@ -275,6 +365,8 @@ export type HostMessage =
   | { type: "exportSnapshot" }
   | { type: "exportBadge" }
   | { type: "byok"; rates: ByokStore }
+  | { type: "byokApply"; ids: string[] }
+  | { type: "byokReset"; ids: string[] }
   | { type: "scanUsage" }
   | { type: "clearUsage" }
   | { type: "exportPng"; png: string }

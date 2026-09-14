@@ -1,4 +1,4 @@
-import { parseByokStore } from "./byok";
+import { parseByokFormStore } from "./byok";
 import { parseOptions } from "./compare";
 import type { HostMessage, ProfileAction, Source } from "./types";
 const validSources: Source[] = [
@@ -50,7 +50,20 @@ export function parseMessage(raw: unknown): HostMessage {
   if (m.type === "exportSnapshot") return { type: "exportSnapshot" };
   if (m.type === "exportBadge") return { type: "exportBadge" };
   if (m.type === "byok")
-    return { type: "byok", rates: parseByokStore(m.rates) };
+    return { type: "byok", rates: parseByokFormStore(m.rates) };
+  const idList = (v: unknown): v is string[] =>
+    Array.isArray(v) &&
+    v.length >= 1 &&
+    v.length <= 200 &&
+    v.every((id) => string(id));
+  if (m.type === "byokApply") {
+    if (!idList(m.ids)) throw new Error("Invalid byokApply.");
+    return { type: "byokApply", ids: m.ids };
+  }
+  if (m.type === "byokReset") {
+    if (!idList(m.ids)) throw new Error("Invalid byokReset.");
+    return { type: "byokReset", ids: m.ids };
+  }
   if (m.type === "scanUsage") return { type: "scanUsage" };
   if (m.type === "clearUsage") return { type: "clearUsage" };
   if (

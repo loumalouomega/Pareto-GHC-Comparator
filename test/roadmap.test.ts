@@ -9,6 +9,7 @@ import {
   efficiencyOf,
   estimate,
   freeSpotlight,
+  loadMappings,
   migrateOptions,
   modelThinkingOf,
   parseOptions,
@@ -24,7 +25,7 @@ import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
 import { freshnessAlert } from "../src/freshness";
 import { driftOf, selectPrevSnapshot } from "../src/drift";
 import { workspaceLabel } from "../src/workspaceLabel";
-import { loadByokStore, parseByokStore } from "../src/byok";
+import { loadByokStore, mergeByokForm, parseByokFormStore, parseByokStore } from "../src/byok";
 import { usageMultiplier } from "../src/usageMultipliers";
 import {
   aggregateUsage,
@@ -98,24 +99,35 @@ test("pins expand one model into one row per benchmark variant", () => {
   assert.notEqual(rows[0].benchmark?.id, rows[1].benchmark?.id);
 });
 
-test("unknown pinned benchmarks are ignored; unpin restores automatic rows", () => {
+test("a pin whose benchmark disappears becomes a stale row, never a silent substitution", () => {
   const rows = compare([copilotModel], benchmarks, defaults, {}, undefined, {
     pins: { "gpt-5.4": ["missing-id"] },
   });
-  // Unknown pins are ignored, so the two matching variants expand automatically.
-  assert.equal(rows.length, 2);
-  assert.ok(rows.every((r) => r.modelId === "gpt-5.4"));
-  assert.ok(rows.every((r) => r.expandedBenchmarkId));
-  const single = compare(
-    [copilotModel],
-    benchmarks.filter((b) => b.id === "b-high"),
-    defaults,
-    {},
-    undefined,
-    { pins: { "gpt-5.4": ["missing-id"] } },
-  );
-  assert.equal(single.length, 1);
-  assert.equal(single[0].id, "gpt-5.4");
+  assert.equal(rows.length, 1);
+  const [row] = rows;
+  assert.equal(row.id, pinRowId("gpt-5.4", "missing-id"));
+  assert.equal(row.modelId, "gpt-5.4");
+  assert.equal(row.mappingStatus, "missing");
+  assert.equal(row.pinnedBenchmarkId, "missing-id");
+  assert.equal(row.mapping?.issue, "pin-stale");
+  assert.equal(row.mapping?.staleBenchmarkId, "missing-id");
+  // Unpinning explicitly restores the automatic rows; pricing (unlike the
+  // mapping) never depended on the stale pin in the first place.
+  const unpinned = compare([copilotModel], benchmarks, defaults, {}, undefined, {
+    pins: {},
+  });
+  assert.equal(unpinned.length, 2);
+  assert.ok(unpinned.every((r) => r.expandedBenchmarkId));
+  assert.ok(row.cost !== null);
+  assert.equal(row.cost, unpinned[0].cost);
+  // Before any snapshot has loaded, pins are withheld rather than shown stale.
+  const noSnapshot = compare([copilotModel], [], defaults, {}, undefined, {
+    pins: { "gpt-5.4": ["missing-id"] },
+  });
+  assert.equal(noSnapshot.length, 1);
+  assert.equal(noSnapshot[0].id, "gpt-5.4");
+  assert.equal(noSnapshot[0].pinnedBenchmarkId, undefined);
+  assert.equal(noSnapshot[0].mapping?.issue, "no-snapshot");
 });
 
 test("ambiguous benchmark variants expand automatically into thinking rows", () => {
@@ -380,6 +392,24 @@ test("host messages validate pins, exclusions, and exports", () => {
   assert.throws(() => parseMessage({ type: "source", source: "other" }));
 });
 
+test("host messages validate byokApply and byokReset id lists", () => {
+  assert.deepEqual(
+    parseMessage({ type: "byokApply", ids: ["opencode:openai/gpt-5.6-terra"] }),
+    { type: "byokApply", ids: ["opencode:openai/gpt-5.6-terra"] },
+  );
+  assert.deepEqual(
+    parseMessage({ type: "byokReset", ids: ["a", "b"] }),
+    { type: "byokReset", ids: ["a", "b"] },
+  );
+  assert.throws(() => parseMessage({ type: "byokApply", ids: [] }));
+  assert.throws(() => parseMessage({ type: "byokReset", ids: [] }));
+  assert.throws(() => parseMessage({ type: "byokApply", ids: "a" }));
+  assert.throws(() => parseMessage({ type: "byokApply", ids: [1] }));
+  assert.throws(() =>
+    parseMessage({ type: "byokApply", ids: Array.from({ length: 201 }, (_, i) => `m${i}`) }),
+  );
+});
+
 test("CSV export matches rows and escapes hostile values", () => {
   const csv = exportCsv(
     [
@@ -405,6 +435,9 @@ test("CSV export matches rows and escapes hostile values", () => {
   assert.match(csv, /model,model_id,provider/);
   assert.match(csv, /"=cmd\|calc"/);
   assert.match(csv, /,yes,exact,/);
+  // A row with no `pricing` (e.g. a hand-built fixture) exports blank
+  // pricing columns rather than throwing.
+  assert.match(csv, /a reason,,\n$/);
 });
 
 test("coverage: source helpers, static guards, and pricing sources", () => {
@@ -802,6 +835,12 @@ test("snapshot and badge exports reflect displayed rows", () => {
   assert.match(snapshot.disclaimer, /Illustrative/);
   assert.equal(snapshot.catalogDate, "2026-09-10");
   assert.equal(snapshot.staticRegistryDate, "2026-09-11");
+  assert.equal(snapshot.rows[0].pricingStatus, rows[0].pricing?.status ?? null);
+  assert.equal(snapshot.rows[0].pricingSource, rows[0].pricing?.source ?? null);
+  assert.equal(snapshot.rows[0].pricingProvenance, null);
+  const csv = exportCsv(rows, defaults, recommended);
+  assert.match(csv, /pricing_status,pricing_source/);
+  assert.ok(csv.includes(`,${rows[0].pricing?.status},${rows[0].pricing?.source}\n`));
   const badge = JSON.parse(exportBadge(rows, defaults, { source: "copilot", preset: "general" }));
   assert.equal(badge.schemaVersion, 1);
   assert.match(badge.label, /pareto copilot general/);
@@ -880,6 +919,142 @@ test("BYOK store validates ids, rates, and thresholds", () => {
   );
   assert.throws(() => parseMessage({ type: "byok", rates: { "bad id": {} } }));
   assert.deepEqual(parseMessage({ type: "byok", rates: {} }), { type: "byok", rates: {} });
+});
+
+test("BYOK provenance: a missing source migrates to manual; an invalid one is rejected strictly", () => {
+  const manual = parseByokStore({
+    "opencode:openai/gpt-5.4": { rates: { input: 1, read: 1, write: null, output: 1 } },
+  });
+  assert.deepEqual(manual["opencode:openai/gpt-5.4"].source, { kind: "manual" });
+  const registry = parseByokStore({
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 1, read: 1, write: null, output: 1 },
+      source: { kind: "registry", registry: "codex", registryId: "codex:gpt-5-6-terra", registryDate: "2026-09-11" },
+    },
+  });
+  assert.deepEqual(registry["opencode:openai/gpt-5.4"].source, {
+    kind: "registry",
+    registry: "codex",
+    registryId: "codex:gpt-5-6-terra",
+    registryDate: "2026-09-11",
+  });
+  assert.throws(() =>
+    parseByokStore({
+      "opencode:openai/gpt-5.4": {
+        rates: { input: 1, read: 1, write: null, output: 1 },
+        source: { kind: "registry", registry: "not-a-real-registry", registryId: "x", registryDate: "2026-09-11" },
+      },
+    }),
+  );
+  assert.throws(() =>
+    parseByokStore({
+      "opencode:openai/gpt-5.4": {
+        rates: { input: 1, read: 1, write: null, output: 1 },
+        source: { kind: "registry", registry: "codex", registryId: "codex:x", registryDate: "09/11/2026" },
+      },
+    }),
+  );
+  assert.throws(() =>
+    parseByokStore({
+      "opencode:openai/gpt-5.4": {
+        rates: { input: 1, read: 1, write: null, output: 1 },
+        source: { kind: "bogus" },
+      },
+    }),
+  );
+});
+
+test("parseByokFormStore always ignores any source the webview sends", () => {
+  const parsed = parseByokFormStore({
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 1, read: 1, write: null, output: 1 },
+      source: { kind: "registry", registry: "codex", registryId: "codex:gpt-5-6-terra", registryDate: "2026-09-11" },
+    },
+  });
+  assert.deepEqual(parsed["opencode:openai/gpt-5.4"].source, { kind: "manual" });
+  assert.throws(() => parseByokFormStore(null));
+  assert.throws(() => parseByokFormStore({ "not-an-id": { rates: { input: 1, read: 1, write: null, output: 1 } } }));
+});
+
+test("loadByokStore tolerates a malformed source and drops only entries with invalid rates", () => {
+  const loaded = loadByokStore({
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 1, read: 1, write: null, output: 1 },
+      source: { kind: "bogus-not-real" },
+    },
+    "opencode:openai/gpt-5.5": {
+      rates: { input: -1, read: 1, write: null, output: 1 },
+    },
+    "opencode:openai/gpt-5.6-luna": {
+      rates: { input: 2, read: 0.2, write: null, output: 1.2 },
+      source: { kind: "registry", registry: "codex", registryId: "codex:gpt-5-6-luna", registryDate: "2026-09-11" },
+    },
+  });
+  assert.deepEqual(loaded["opencode:openai/gpt-5.4"].source, { kind: "manual" });
+  assert.ok(loaded["opencode:openai/gpt-5.4"].rates);
+  assert.equal("opencode:openai/gpt-5.5" in loaded, false);
+  assert.deepEqual(loaded["opencode:openai/gpt-5.6-luna"].source, {
+    kind: "registry",
+    registry: "codex",
+    registryId: "codex:gpt-5-6-luna",
+    registryDate: "2026-09-11",
+  });
+});
+
+test("mergeByokForm keeps registry provenance on a no-op save and downgrades on an edit", () => {
+  const prev = {
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 2, read: 0.2, write: 2.5, output: 12 },
+      source: {
+        kind: "registry" as const,
+        registry: "codex",
+        registryId: "codex:gpt-5-6-terra",
+        registryDate: "2026-09-11",
+      },
+    },
+  };
+  const unchanged = mergeByokForm(prev, {
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 2, read: 0.2, write: 2.5, output: 12 },
+      source: { kind: "manual" },
+    },
+  });
+  assert.deepEqual(unchanged["opencode:openai/gpt-5.4"].source, prev["opencode:openai/gpt-5.4"].source);
+  const edited = mergeByokForm(prev, {
+    "opencode:openai/gpt-5.4": {
+      rates: { input: 3, read: 0.2, write: 2.5, output: 12 },
+      source: { kind: "manual" },
+    },
+  });
+  assert.deepEqual(edited["opencode:openai/gpt-5.4"].source, { kind: "manual" });
+  // A brand-new id (not in prev) is always manual.
+  const added = mergeByokForm(prev, {
+    "opencode:openai/gpt-5.5": { rates: { input: 1, read: 1, write: null, output: 1 }, source: { kind: "manual" } },
+  });
+  assert.deepEqual(added["opencode:openai/gpt-5.5"].source, { kind: "manual" });
+  // Long-context tiers are compared too: adding, dropping, or changing one
+  // counts as an edit even when the base rates are unchanged.
+  const withLong = {
+    "opencode:openai/gpt-5.4": {
+      ...prev["opencode:openai/gpt-5.4"],
+      long: { threshold: 200000, rates: { input: 4, read: 0.4, write: 5, output: 24 } },
+    },
+  };
+  const addedLong = mergeByokForm(withLong, {
+    "opencode:openai/gpt-5.4": {
+      rates: withLong["opencode:openai/gpt-5.4"].rates,
+      source: { kind: "manual" },
+    },
+  });
+  assert.deepEqual(addedLong["opencode:openai/gpt-5.4"].source, { kind: "manual" });
+  const sameLong = mergeByokForm(withLong, {
+    "opencode:openai/gpt-5.4": {
+      rates: withLong["opencode:openai/gpt-5.4"].rates,
+      long: withLong["opencode:openai/gpt-5.4"].long,
+      source: { kind: "manual" },
+    },
+  });
+  assert.deepEqual(sameLong["opencode:openai/gpt-5.4"].source, withLong["opencode:openai/gpt-5.4"].source);
 });
 
 test("BYOK rates price provider-billed models without touching free tier or CLI rates", () => {
@@ -1355,4 +1530,288 @@ test("usage p90 includes free requests in mixed and all-free samples", () => {
   assert.equal(free.creditP90, 0);
   assert.equal(free.creditSample, 9);
   assert.equal(suggestBudget(free, "credits")?.value, 0);
+});
+
+test("loadMappings tolerates malformed input and drops invalid entries individually", () => {
+  assert.deepEqual(loadMappings(null), {});
+  assert.deepEqual(loadMappings(undefined), {});
+  assert.deepEqual(loadMappings("nope"), {});
+  assert.deepEqual(loadMappings([1, 2]), {});
+  assert.deepEqual(
+    loadMappings({ "gpt-5.4": "b-high", bad1: 5, bad2: "", "": "x", bad3: null }),
+    { "gpt-5.4": "b-high" },
+  );
+  const long = "x".repeat(1001);
+  assert.deepEqual(loadMappings({ [long]: "b-high", "gpt-5.4": long }), {});
+  const many: Record<string, string> = {};
+  for (let i = 0; i < 5001; i++) many[`m${i}`] = `b${i}`;
+  assert.equal(Object.keys(loadMappings(many)).length, 5000);
+});
+
+test("pricing status/source/issue: Copilot catalog matches, legacy, and cross-unit", () => {
+  const opts = { ...defaults, source: "copilot" as const, billing: "credits" as const };
+  const [priced] = compare([copilotModel], benchmarks, opts);
+  assert.equal(priced.pricing?.status, "priced");
+  assert.equal(priced.pricing?.source, "copilot-catalog");
+  const legacyEntry = {
+    ids: ["gpt-5.4"],
+    name: "GPT-5.4",
+    provider: "OpenAI",
+    benchmarkFamilies: ["GPT-5.4"],
+    legacy: { pro: 2, proPlus: 3 },
+  };
+  const [legacyRow] = compare(
+    [copilotModel],
+    benchmarks,
+    { ...opts, billing: "legacy", plan: "pro" },
+    {},
+    [legacyEntry],
+  );
+  assert.equal(legacyRow.pricing?.status, "priced");
+  assert.equal(legacyRow.pricing?.source, "legacy-multiplier");
+  const [noMultiplier] = compare(
+    [copilotModel],
+    benchmarks,
+    { ...opts, billing: "legacy", plan: "pro" },
+    {},
+    [{ ...legacyEntry, legacy: { proPlus: 3 } as never }],
+  );
+  assert.equal(noMultiplier.pricing?.status, "unresolved");
+  assert.equal(noMultiplier.pricing?.issue, "legacy-no-multiplier");
+  const [noRates] = compare(
+    [copilotModel],
+    benchmarks,
+    opts,
+    {},
+    [{ ...legacyEntry, legacy: undefined }],
+  );
+  assert.equal(noRates.pricing?.status, "unresolved");
+  assert.equal(noRates.pricing?.issue, "no-credit-rates");
+  const [expired] = compare(
+    [copilotModel],
+    benchmarks,
+    opts,
+    {},
+    [{ ...legacyEntry, rates: { input: 1, read: 1, write: null, output: 1 }, expires: "2020-01-01" }],
+  );
+  assert.equal(expired.pricing?.status, "unresolved");
+  assert.equal(expired.pricing?.issue, "promo-expired");
+  const [crossUnit] = compare([copilotModel], benchmarks, { ...opts, billing: "usd" as never });
+  assert.equal(crossUnit.pricing?.status, "not-comparable");
+  assert.equal(crossUnit.pricing?.issue, "cross-unit");
+});
+
+test("pricing status/issue: zero vs several Copilot catalog matches", () => {
+  const [none] = compare([copilotModel], benchmarks, defaults, {}, []);
+  assert.equal(none.pricing?.status, "unresolved");
+  assert.equal(none.pricing?.issue, "no-catalog-entry");
+  assert.equal(none.mapping?.issue, "no-catalog-entry");
+  const dup = {
+    ids: ["gpt-5.4"],
+    name: "GPT-5.4",
+    provider: "OpenAI",
+    benchmarkFamilies: ["GPT-5.4"],
+    rates: { input: 1, read: 1, write: null, output: 1 },
+  };
+  const [ambiguous] = compare([copilotModel], benchmarks, defaults, {}, [dup, dup]);
+  assert.equal(ambiguous.pricing?.status, "unresolved");
+  assert.equal(ambiguous.pricing?.issue, "ambiguous-catalog-entry");
+  assert.equal(ambiguous.mapping?.issue, "ambiguous-catalog-entry");
+});
+
+test("pricing status/source: static registries, priced and unpriced", () => {
+  const priced = compare(
+    staticModels("codex"),
+    benchmarks,
+    { ...defaults, source: "codex", billing: "usd" },
+  ).find((r) => r.modelId === "codex:gpt-5-6-terra")!;
+  assert.equal(priced.pricing?.status, "priced");
+  assert.equal(priced.pricing?.source, "static-registry");
+  const unpriced = compare(
+    staticModels("codex"),
+    benchmarks,
+    { ...defaults, source: "codex", billing: "usd" },
+  ).find((r) => r.modelId === "codex:gpt-5-3-codex-spark")!;
+  assert.equal(unpriced.pricing?.status, "unresolved");
+  assert.equal(unpriced.pricing?.issue, "registry-unpriced");
+  const crossUnit = compare(
+    staticModels("codex"),
+    benchmarks,
+    { ...defaults, source: "codex", billing: "credits" as never },
+  )[0];
+  assert.equal(crossUnit.pricing?.status, "not-comparable");
+  assert.equal(crossUnit.pricing?.issue, "cross-unit");
+});
+
+const terraModel: AvailableModel = {
+  id: "opencode:openai/gpt-5.6-terra",
+  name: "GPT-5.6 Terra",
+  family: "gpt",
+  maxInputTokens: 1050000,
+  source: "opencode",
+};
+const usdOpts = { ...defaults, source: "opencode" as const, billing: "usd" as const };
+
+test("pricing status/source: OpenCode CLI-priced, free tier, and cross-unit", () => {
+  const cliPriced: AvailableModel = {
+    ...terraModel,
+    id: "opencode:opencode-go/gpt-5.6-terra",
+    rates: { input: 2, read: 0.2, write: 2.5, output: 12 },
+  };
+  const [priced] = compare([cliPriced], benchmarks, usdOpts);
+  assert.equal(priced.pricing?.status, "priced");
+  assert.equal(priced.pricing?.source, "opencode-cli");
+  const free: AvailableModel = {
+    ...terraModel,
+    id: "opencode:opencode/free",
+    freeTier: true,
+    rates: { input: 0, read: 0, write: null, output: 0 },
+  };
+  const [freeRow] = compare([free], benchmarks, usdOpts);
+  assert.equal(freeRow.pricing?.status, "free");
+  assert.equal(freeRow.pricing?.source, "opencode-cli");
+  const [crossUnit] = compare([terraModel], benchmarks, { ...usdOpts, billing: "credits" as never });
+  assert.equal(crossUnit.pricing?.status, "not-comparable");
+  assert.equal(crossUnit.pricing?.issue, "cross-unit");
+});
+
+test("pricing suggestion: same-identifier registry rate for an unpriced provider-billed OpenCode model", () => {
+  const [row] = compare([terraModel], benchmarks, usdOpts);
+  assert.equal(row.pricing?.status, "unresolved");
+  assert.equal(row.pricing?.issue, "provider-billed-no-rate");
+  assert.equal(row.pricing?.suggestion?.registry, "codex");
+  assert.equal(row.pricing?.suggestion?.registryId, "codex:gpt-5-6-terra");
+  assert.equal(row.pricing?.suggestion?.registryDate, staticRegistryDate);
+  // No suggestion when nothing in the registry matches the identifier.
+  const [noHit] = compare(
+    [{ ...terraModel, id: "opencode:openai/gpt-5.4-fast" }],
+    benchmarks,
+    usdOpts,
+  );
+  assert.equal(noHit.pricing?.suggestion, undefined);
+});
+
+test("pricing byok: manual provenance, registry provenance, and staleness wired from compare()", () => {
+  const manual = compare([terraModel], benchmarks, usdOpts, {}, undefined, {
+    byok: { "opencode:openai/gpt-5.6-terra": { rates: { input: 9, read: 9, write: null, output: 9 } } },
+  })[0];
+  assert.equal(manual.pricing?.status, "byok");
+  assert.equal(manual.pricing?.byok?.provenance.kind, "manual");
+  assert.equal(manual.pricing?.byok?.stale, undefined);
+  assert.ok(manual.tier?.includes("BYOK"));
+
+  const current = compare([terraModel], benchmarks, usdOpts, {}, undefined, {
+    byok: {
+      "opencode:openai/gpt-5.6-terra": {
+        rates: { input: 2, read: 0.2, write: 2.5, output: 12 },
+        source: { kind: "registry", registry: "codex", registryId: "codex:gpt-5-6-terra", registryDate: staticRegistryDate },
+      },
+    },
+  })[0];
+  assert.equal(current.pricing?.byok?.provenance.kind, "registry");
+  assert.equal(current.pricing?.byok?.stale, undefined);
+
+  const stale = compare([terraModel], benchmarks, usdOpts, {}, undefined, {
+    byok: {
+      "opencode:openai/gpt-5.6-terra": {
+        rates: { input: 2, read: 0.2, write: 2.5, output: 12 },
+        source: { kind: "registry", registry: "codex", registryId: "codex:does-not-exist", registryDate: "2020-01-01" },
+      },
+    },
+  })[0];
+  assert.equal(stale.pricing?.byok?.stale, "registry-missing");
+  // The current real registry rate is offered as an unverified suggestion once stale.
+  assert.equal(stale.pricing?.suggestion?.registryId, "codex:gpt-5-6-terra");
+});
+
+test("snapshot exports BYOK provenance for a registry-priced row", () => {
+  const [row] = compare([terraModel], benchmarks, usdOpts, {}, undefined, {
+    byok: {
+      "opencode:openai/gpt-5.6-terra": {
+        rates: { input: 2, read: 0.2, write: 2.5, output: 12 },
+        source: { kind: "registry", registry: "codex", registryId: "codex:gpt-5-6-terra", registryDate: staticRegistryDate },
+      },
+    },
+  });
+  const snapshot = JSON.parse(
+    exportSnapshot([row], usdOpts, new Set(), {
+      source: "opencode",
+      preset: "general",
+      billing: "usd",
+      catalogDate: "2026-09-10",
+      staticRegistryDate,
+    }),
+  );
+  assert.equal(snapshot.rows[0].pricingStatus, "byok");
+  assert.equal(snapshot.rows[0].pricingSource, "byok");
+  assert.deepEqual(snapshot.rows[0].pricingProvenance, {
+    kind: "registry",
+    registry: "codex",
+    registryId: "codex:gpt-5-6-terra",
+    registryDate: staticRegistryDate,
+  });
+});
+
+test("mapping assist: no-alias-hit vs identifier-slug suggestion, independent of entry presence", () => {
+  const entry = {
+    ids: ["gpt-5.4"],
+    name: "GPT-5.4",
+    provider: "OpenAI",
+    benchmarkFamilies: ["Something Else"],
+  };
+  const [noSuggestion] = compare(
+    [copilotModel],
+    [{ id: "x", slug: "totally-different", name: "Unrelated", provider: "P", scores: { general: 1, coding: 1, agentic: 1 } }],
+    defaults,
+    {},
+    [entry],
+  );
+  assert.equal(noSuggestion.mapping?.issue, "no-alias-hit");
+  assert.deepEqual(noSuggestion.mapping?.aliases, ["Something Else"]);
+  assert.deepEqual(noSuggestion.mapping?.suggestions, []);
+  const [withSuggestion] = compare(
+    [copilotModel],
+    [{ id: "s1", slug: "gpt-5-4", name: "GPT-5.4", provider: "P", scores: { general: 1, coding: 1, agentic: 1 } }],
+    defaults,
+    {},
+    [entry],
+  );
+  assert.equal(withSuggestion.mapping?.issue, "no-alias-hit");
+  assert.equal(withSuggestion.mapping?.suggestions.length, 1);
+  assert.equal(withSuggestion.mapping?.suggestions[0].benchmarkId, "s1");
+  assert.equal(withSuggestion.mapping?.suggestions[0].rule, "identifier-slug");
+  // Suggestions do not require a catalog entry at all.
+  const [noEntry] = compare(
+    [copilotModel],
+    [{ id: "s1", slug: "gpt-5-4", name: "GPT-5.4", provider: "P", scores: { general: 1, coding: 1, agentic: 1 } }],
+    defaults,
+    {},
+    [],
+  );
+  assert.equal(noEntry.mapping?.issue, "no-catalog-entry");
+  assert.deepEqual(noEntry.mapping?.aliases, []);
+  assert.equal(noEntry.mapping?.suggestions.length, 1);
+});
+
+test("mapping assist: a stale override is explained, never silently substituted", () => {
+  const [row] = compare([copilotModel], benchmarks, defaults, { "gpt-5.4": "missing-id" });
+  assert.equal(row.mappingStatus, "missing");
+  assert.equal(row.mapping?.issue, "override-stale");
+  assert.equal(row.mapping?.staleBenchmarkId, "missing-id");
+  assert.equal(row.selectedBenchmarkId, "missing-id");
+});
+
+test("a benchmark override on an unpriced model never establishes a price", () => {
+  const automatic = compare([copilotModel], benchmarks, defaults, {}, [])[0];
+  const overridden = compare(
+    [copilotModel],
+    benchmarks,
+    defaults,
+    { "gpt-5.4": "b-high" },
+    [],
+  )[0];
+  assert.equal(automatic.cost, null);
+  assert.equal(overridden.cost, null);
+  assert.equal(overridden.mappingStatus, "user");
+  assert.deepEqual(overridden.pricing, automatic.pricing);
 });

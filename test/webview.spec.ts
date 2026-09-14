@@ -2,7 +2,8 @@ import { optionResult, comparisonDelta, type ComparisonStore } from "../src/comp
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
-import { compare } from "../src/compare";
+import { compare, registryRateFor } from "../src/compare";
+import { mergeByokForm, parseByokFormStore } from "../src/byok";
 import { buildGroups } from "../src/groups";
 import { recommend } from "../src/recommend";
 import { changeProfile, profileModified } from "../src/profiles";
@@ -44,6 +45,15 @@ const benchmarks: Benchmark[] = [
     name: "Kimi K2.7 Code",
     provider: "Moonshot AI",
     scores: { general: 45, coding: 52, agentic: 30 },
+  },
+  // Slug-only identifier match for "unknown-model" below: no catalog alias
+  // hits it, so it only ever shows up as an unverified mapping suggestion.
+  {
+    id: "unmapped-bench",
+    slug: "unknown-model",
+    name: "Some Unrelated Benchmark",
+    provider: "Test",
+    scores: { general: 20, coding: 20, agentic: 20 },
   },
 ];
 const available = [
@@ -104,6 +114,15 @@ const opencodeAvailable = [
     name: "GPT-5.4 (low)",
     family: "gpt",
     maxInputTokens: 922000,
+    source: "opencode" as const,
+  },
+  // Matches the real Codex static registry entry codex:gpt-5-6-terra by
+  // identifier, for the pricing-suggestion/BYOK-apply UI tests.
+  {
+    id: "opencode:openai/gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    family: "gpt",
+    maxInputTokens: 1050000,
     source: "opencode" as const,
   },
 ];
@@ -221,6 +240,39 @@ for (const theme of ["light", "dark", "high-contrast"])
         state.usage = null;
         state.usageWatching = false;
       }
+      if (m.type === "byok") {
+        state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
+      }
+      if (m.type === "byokApply") {
+        const results = (m.ids as string[]).map((id) => {
+          const model = opencodeAvailable.find((a) => a.id === id);
+          return { id, model, suggestion: model ? registryRateFor(model) : undefined };
+        });
+        const bad = results.find((r) => !r.model || !r.suggestion);
+        if (bad) {
+          state.message = `No verified registry rate for ${bad.model?.name ?? bad.id}; enter a manual rate instead.`;
+        } else {
+          const next = { ...state.byok };
+          for (const { id, suggestion } of results)
+            next[id] = {
+              rates: suggestion!.rates,
+              ...(suggestion!.long ? { long: suggestion!.long } : {}),
+              source: {
+                kind: "registry" as const,
+                registry: suggestion!.registry,
+                registryId: suggestion!.registryId,
+                registryDate: suggestion!.registryDate,
+              },
+            };
+          state.byok = next;
+          state.message = `Applied Codex registry rate (${results[0].suggestion!.registryDate}) to ${results.length} model${results.length === 1 ? "" : "s"}.`;
+        }
+      }
+      if (m.type === "byokReset") {
+        const next = { ...state.byok };
+        for (const id of m.ids as string[]) delete next[id];
+        state.byok = next;
+      }
       const listed = state.source === "opencode" ? opencodeAvailable : available;
       const usedCounts = new Map<string, number>();
       if (state.usage) {
@@ -232,6 +284,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       state.rows = compare(listed, state.models, state.options, mappings, undefined, {
         excluded: [...excluded],
         usedCounts,
+        byok: state.byok,
       });
       state.budgetSuggestion = suggestBudget(state.usage, state.options.billing);
       state.checklist = listed.map((a) => ({
@@ -404,22 +457,33 @@ for (const theme of ["light", "dark", "high-contrast"])
     ).toBeTruthy();
     await mediumLeaf.check();
     await expect(page.locator("#count")).toHaveText("5 plotted / 6 models");
-    // The benchmark dropdown collapses the model to one manual choice.
+    // The benchmark dropdown stages a choice; nothing applies until the
+    // explicit Apply mapping button is clicked.
     await mediumRow.click();
     await page.locator("#variant-search").fill("medium");
     await page.locator("#benchmark").focus();
     await page.locator("#benchmark").selectOption("gpt-medium");
+    await expect(page.locator("#details")).toContainText(
+      "Will map to GPT-5.4 (medium)",
+    );
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "Exact match",
+    );
+    await page.getByRole("button", { name: "Apply mapping" }).click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
       "User selected",
     );
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
-    await expect(page.locator("#benchmark")).toBeFocused();
     state.models = state.models.filter((b) => b.id !== "gpt-medium");
     await page.locator("#refresh").click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
       "Missing benchmark",
     );
-    await page.locator("#benchmark").selectOption("");
+    await expect(page.locator("#details")).toContainText(
+      'Previously selected benchmark "gpt-medium" is no longer available',
+    );
+    // Reset to automatic is its own explicit action; it applies immediately.
+    await page.getByRole("button", { name: "Reset to automatic" }).click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
       "Exact match",
     );
@@ -492,12 +556,12 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#billing")).toHaveValue("usd");
     await expect(page.locator("#eyebrow")).toHaveText("PARETO / OPENCODE");
     await expect(page.locator("#cost-heading")).toHaveText("USD / task");
-    await expect(page.locator("#count")).toHaveText("1 plotted / 2 models");
+    await expect(page.locator("#count")).toHaveText("1 plotted / 3 models");
     await expect(page.locator("#recommendation-result")).toContainText(
       "Kimi K2.7 Code",
     );
     await expect(page.locator("#recommendation-result")).toContainText("USD");
-    await expect(page.locator("#rows tr")).toHaveCount(2);
+    await expect(page.locator("#rows tr")).toHaveCount(3);
     await expect(
       page.locator('#billing option[value="legacy"]'),
     ).toBeHidden();
@@ -505,6 +569,45 @@ for (const theme of ["light", "dark", "high-contrast"])
       "aria-label",
       /USD/,
     );
+
+    // Pricing assistance: a same-identifier static-registry rate is offered,
+    // unverified, for an unpriced provider-billed model — independent of its
+    // (here unresolved) benchmark mapping, and never applied automatically.
+    await page
+      .getByRole("button", { name: "GPT-5.6 Terra", exact: true })
+      .click();
+    await expect(page.locator("#details")).toContainText("Pricing: Unresolved");
+    await expect(page.locator("#details")).toContainText(
+      "Codex registry lists GPT-5.6 Terra (codex:gpt-5-6-terra)",
+    );
+    await expect(page.locator("#details")).toContainText("Not applied");
+    // The model is already listed in the BYOK form (still editable/unresolved)
+    // but has no provenance or Remove control until a rate is applied.
+    await expect(page.locator("#byok-table")).toContainText("GPT-5.6 Terra");
+    await expect(page.locator("#byok-table")).not.toContainText(
+      "from Codex registry",
+    );
+    await page
+      .getByRole("button", { name: "Apply rate to this model" })
+      .click();
+    await expect(page.locator("#details")).toContainText(
+      "Pricing: User BYOK from Codex registry, 2026-09-11",
+    );
+    // Fixing the earlier gap: a BYOK-applied model stays visible (with its
+    // provenance and a Remove control) instead of disappearing from the form.
+    await expect(page.locator("#byok-table")).toContainText("GPT-5.6 Terra");
+    await expect(page.locator("#byok-table")).toContainText(
+      "from Codex registry, 2026-09-11",
+    );
+    // Removing it (from the details panel) returns the model to unresolved;
+    // it stays listed in the form, now without provenance again.
+    await page.getByRole("button", { name: "Remove BYOK rate" }).click();
+    await expect(page.locator("#details")).toContainText("Pricing: Unresolved");
+    await expect(page.locator("#byok-table")).toContainText("GPT-5.6 Terra");
+    await expect(page.locator("#byok-table")).not.toContainText(
+      "from Codex registry",
+    );
+
     await page.locator("#source").selectOption("copilot");
     await expect(page.locator("#billing")).toHaveValue("credits");
     await expect(page.locator("#eyebrow")).toHaveText(
@@ -535,6 +638,35 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.getByLabel("Filter models", { exact: true }).fill("unmapped");
     await expect(page.locator("#count")).toHaveText("0 plotted / 1 models");
     await expect(page.locator("#empty")).toBeVisible();
+    // An unverified identifier-slug mapping suggestion, and applying it never
+    // touches pricing (this model has no catalog entry, so cost stays null).
+    await page
+      .getByRole("button", { name: "Unmapped model", exact: true })
+      .click();
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "Missing benchmark",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "Suggested (identifier match — unverified)",
+    );
+    await expect(page.locator(".mapping-suggestions")).toContainText(
+      "Some Unrelated Benchmark",
+    );
+    await page.locator(".mapping-suggestions").getByRole("button", { name: "Apply" }).click();
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "User selected",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "Tested variant: Some Unrelated Benchmark",
+    );
+    // A benchmark choice never establishes a price: cost stays unresolved.
+    await expect(page.locator("#details")).toContainText(
+      "— estimated AI credits",
+    );
+    await page.getByRole("button", { name: "Reset to automatic" }).click();
+    await expect(page.locator("#details .mapping-status")).toHaveText(
+      "Missing benchmark",
+    );
     await page.getByLabel("Filter models", { exact: true }).fill("no-such-model");
     await expect(page.locator("#rows tr")).toHaveCount(0);
     await page.getByLabel("Filter models", { exact: true }).fill("");
