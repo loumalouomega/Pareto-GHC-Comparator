@@ -94,6 +94,21 @@ const usageFixture = {
     missingTokens: 1,
     estimatedTokens: 0,
   },
+  schemaFingerprints: [
+    {
+      files: 1,
+      fingerprint: {
+        format: "jsonl" as const,
+        version: 1 as const,
+        lines: 2,
+        kinds: ["3", "session.v2"],
+        anchorSessionId: false,
+        anchorCreationDate: false,
+        anchorSelectedModel: false,
+        envelopes: { anchor: false, append: false, result: false },
+      },
+    },
+  ],
   medianSample: 3,
   premiumP90: 2,
   creditP90: 0.5,
@@ -1011,6 +1026,8 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Only-my-models filter, workload prefill, and budget suggestion.
     await expect(page.locator("#usage-diagnostics")).toContainText("0 observed zero pairs");
     await expect(page.locator("#usage-diagnostics")).toContainText("1 missing-token requests");
+    await expect(page.locator("#usage-diagnostics")).toContainText("don't match any known Copilot chat schema");
+    await expect(page.locator("#usage-diagnostics")).toContainText("session.v2");
     await expect(page.locator("#usage-summary")).toContainText("Unknown model — default multiplier applied");
     await expect(page.locator("#usage-models")).toContainText("Unknown model — default multiplier applied (1 requests)");
     await expect(page.locator("#usage-prefill-note")).toContainText(

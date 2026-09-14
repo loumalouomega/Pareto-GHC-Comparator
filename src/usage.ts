@@ -12,11 +12,12 @@ import {
   type UsageDayStat,
   type UsageModelStat,
   type UsageRequest,
+  type UsageSchemaFingerprint,
   type UsageSummary,
   type UsageDiagnostics,
   type UsageWorkspaceStat,
 } from "./types";
-export const usageParserVersion = 2;
+export const usageParserVersion = 3;
 export const emptyUsageDiagnostics = (): UsageDiagnostics => ({
   malformed: 0,
   unsupported: 0,
@@ -248,9 +249,40 @@ export interface StoredUsageFile {
       workspacePath: string;
       requests: UsageRequest[];
       diagnostics?: UsageDiagnostics;
+      fingerprint?: UsageSchemaFingerprint;
     }
   >;
 }
+const validFingerprint = (v: unknown): v is UsageSchemaFingerprint => {
+  if (!recordOf(v) || v.version !== 1) return false;
+  if (v.format === "jsonl") {
+    return (
+      token(v.lines) !== undefined &&
+      Array.isArray(v.kinds) &&
+      v.kinds.length <= 10 &&
+      v.kinds.every(
+        (k): k is string => typeof k === "string" && k.length <= 20,
+      ) &&
+      typeof v.anchorSessionId === "boolean" &&
+      typeof v.anchorCreationDate === "boolean" &&
+      typeof v.anchorSelectedModel === "boolean" &&
+      recordOf(v.envelopes) &&
+      typeof v.envelopes.anchor === "boolean" &&
+      typeof v.envelopes.append === "boolean" &&
+      typeof v.envelopes.result === "boolean"
+    );
+  }
+  if (v.format === "legacy-json") {
+    return (
+      typeof v.hasSessionId === "boolean" &&
+      typeof v.hasCreationDate === "boolean" &&
+      typeof v.hasSelectedModel === "boolean" &&
+      typeof v.hasRequests === "boolean" &&
+      typeof v.requestsIsArray === "boolean"
+    );
+  }
+  return false;
+};
 export function validUsageFile(v: unknown): v is StoredUsageFile {
   if (
     !recordOf(v) ||
@@ -286,6 +318,11 @@ export function validUsageFile(v: unknown): v is StoredUsageFile {
         (k) =>
           token((file.diagnostics as Record<string, unknown>)[k]) === undefined,
       )
+    )
+      return false;
+    if (
+      file.fingerprint !== undefined &&
+      !validFingerprint(file.fingerprint)
     )
       return false;
     for (const r of file.requests) {
@@ -348,7 +385,18 @@ export interface ParsedUsageFile {
   diagnostics: UsageDiagnostics;
   anchor: { sessionId: string; creationDate?: number; modelId?: string };
   requests: UsageRequest[];
+  /** Set only when the file matches no known schema (unsupported). */
+  fingerprint?: UsageSchemaFingerprint;
 }
+/** Bounded, content-free label for an observed `kind` value. */
+const fingerprintKind = (kind: unknown): string => {
+  if (typeof kind === "number" && Number.isSafeInteger(kind) && Math.abs(kind) <= 999)
+    return String(kind);
+  if (typeof kind === "string" && kind.length > 0 && kind.length <= 20 && /^[\w\-.]+$/.test(kind))
+    return kind;
+  if (kind === undefined) return "kind:absent";
+  return "kind:other";
+};
 export function parseUsageJsonl(
   text: string,
   workspaceId: string,
@@ -365,8 +413,19 @@ export function parseUsageJsonl(
   >();
   const results: { index: number; value: Record<string, unknown> }[] = [];
   let nextIndex = 0;
+  // Fingerprint inputs: shape only, never values or chat content.
+  let fingerprintLines = 0;
+  let unknownLines = 0;
+  const fingerprintKinds = new Set<string>();
+  let fpSessionId = false,
+    fpCreationDate = false,
+    fpSelectedModel = false;
+  let fpAnchor = false,
+    fpAppend = false,
+    fpResult = false;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
+    fingerprintLines++;
     let obj: unknown;
     try {
       obj = JSON.parse(line);
@@ -378,21 +437,31 @@ export function parseUsageJsonl(
       diagnostics.malformed++;
       continue;
     }
+    if (fingerprintKinds.size < 10)
+      fingerprintKinds.add(fingerprintKind(obj.kind));
     const kind = obj.kind;
     const v = recordOf(obj.v) ? obj.v : recordOf(obj) ? obj : undefined;
     if (kind === 0 && v) {
       recognized = true;
-      if (typeof v.sessionId === "string" && v.sessionId)
+      fpAnchor = true;
+      if (typeof v.sessionId === "string" && v.sessionId) {
         sessionId = v.sessionId;
+        fpSessionId = true;
+      }
       const cd = numOr(v.creationDate);
-      if (cd !== undefined) creationDate = cd;
+      if (cd !== undefined) {
+        creationDate = cd;
+        fpCreationDate = true;
+      }
       const inputState = recordOf(v.inputState) ? v.inputState : undefined;
       const selected =
         inputState && recordOf(inputState.selectedModel)
           ? inputState.selectedModel
           : undefined;
-      if (selected && typeof selected.identifier === "string")
+      if (selected && typeof selected.identifier === "string") {
         anchorModel = selected.identifier;
+        fpSelectedModel = true;
+      }
     } else if (
       kind === 2 &&
       Array.isArray(obj.k) &&
@@ -401,6 +470,7 @@ export function parseUsageJsonl(
       Array.isArray(obj.v)
     ) {
       recognized = true;
+      fpAppend = true;
       for (const item of obj.v) {
         if (!recordOf(item)) {
           diagnostics.malformed++;
@@ -425,6 +495,7 @@ export function parseUsageJsonl(
       recordOf(obj.v)
     ) {
       recognized = true;
+      fpResult = true;
       if (token(obj.k[1]) === undefined) {
         diagnostics.malformed++;
         continue;
@@ -434,9 +505,14 @@ export function parseUsageJsonl(
       const result = { index: obj.k[1] as number, value: obj.v };
       if (existing >= 0) results[existing] = result;
       else results.push(result);
+    } else {
+      // A well-formed line matching no known envelope: possible schema
+      // drift. Counted separately from malformed lines so a partially
+      // drifted file (known anchor, unknown request shape) cannot degrade
+      // to a silent zero-request listing.
+      unknownLines++;
     }
   }
-  if (!recognized) diagnostics.unsupported = 1;
   const requests: UsageRequest[] = results.map(({ index, value }) => {
     const md = recordOf(value.metadata) ? value.metadata : {};
     const usage = recordOf(value.usage) ? value.usage : {};
@@ -484,10 +560,29 @@ export function parseUsageJsonl(
   diagnostics.missingTokens = requests.filter(
     (r) => r.promptProvenance === "missing" || r.outputProvenance === "missing",
   ).length;
+  // No known schema, or known framing but zero usable requests alongside
+  // lines no known envelope explains: either way the file needs an
+  // actionable fingerprint, never a silent zero.
+  if (!recognized || (requests.length === 0 && unknownLines > 0))
+    diagnostics.unsupported = 1;
+  const fingerprint: UsageSchemaFingerprint | undefined =
+    diagnostics.unsupported
+      ? {
+          format: "jsonl",
+          version: 1,
+          lines: fingerprintLines,
+          kinds: [...fingerprintKinds].sort().slice(0, 10),
+          anchorSessionId: fpSessionId,
+          anchorCreationDate: fpCreationDate,
+          anchorSelectedModel: fpSelectedModel,
+          envelopes: { anchor: fpAnchor, append: fpAppend, result: fpResult },
+        }
+      : undefined;
   return {
     anchor: { sessionId, creationDate, modelId: anchorModel },
     requests,
     diagnostics,
+    ...(fingerprint ? { fingerprint } : {}),
   };
 }
 function legacyText(value: unknown): string {
@@ -502,6 +597,18 @@ export function parseUsageLegacyJson(
   fileStem: string,
 ): ParsedUsageFile {
   const diagnostics = emptyUsageDiagnostics();
+  const legacyFingerprint = (
+    parsed: unknown,
+  ): UsageSchemaFingerprint => ({
+    format: "legacy-json",
+    version: 1,
+    hasSessionId:
+      recordOf(parsed) && typeof parsed.sessionId === "string",
+    hasCreationDate: recordOf(parsed) && validTime(parsed.creationDate),
+    hasSelectedModel: recordOf(parsed) && recordOf(parsed.selectedModel),
+    hasRequests: recordOf(parsed) && parsed.requests !== undefined,
+    requestsIsArray: recordOf(parsed) && Array.isArray(parsed.requests),
+  });
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -510,6 +617,15 @@ export function parseUsageLegacyJson(
       anchor: { sessionId: fileStem },
       requests: [],
       diagnostics: { ...diagnostics, unsupported: 1, malformed: 1 },
+      fingerprint: {
+        format: "legacy-json",
+        version: 1,
+        hasSessionId: false,
+        hasCreationDate: false,
+        hasSelectedModel: false,
+        hasRequests: false,
+        requestsIsArray: false,
+      },
     };
   }
   if (!recordOf(parsed) || !Array.isArray(parsed.requests))
@@ -517,6 +633,7 @@ export function parseUsageLegacyJson(
       anchor: { sessionId: fileStem },
       requests: [],
       diagnostics: { ...diagnostics, unsupported: 1 },
+      fingerprint: legacyFingerprint(parsed),
     };
   const sessionId =
     typeof parsed.sessionId === "string" && parsed.sessionId
@@ -656,6 +773,7 @@ export function aggregateUsage(
     workspacePath: string;
     requests: UsageRequest[];
     diagnostics?: UsageDiagnostics;
+    fingerprint?: UsageSchemaFingerprint;
   }[],
   scannedAt = Date.now(),
   entries: CatalogEntry[] = catalog,
@@ -664,6 +782,18 @@ export function aggregateUsage(
   for (const file of files)
     for (const key of Object.keys(diagnostics) as (keyof UsageDiagnostics)[])
       diagnostics[key] += file.diagnostics?.[key] ?? 0;
+  const fingerprintGroups = new Map<
+    string,
+    { fingerprint: UsageSchemaFingerprint; files: number }
+  >();
+  for (const file of files) {
+    if (!file.fingerprint || !validFingerprint(file.fingerprint)) continue;
+    const key = JSON.stringify(file.fingerprint);
+    const existing = fingerprintGroups.get(key);
+    if (existing) existing.files++;
+    else if (fingerprintGroups.size < 5)
+      fingerprintGroups.set(key, { fingerprint: file.fingerprint, files: 1 });
+  }
   const models = new Map<string, UsageModelStat & { key: string }>();
   const days = new Map<string, UsageDayStat>();
   const workspaces = new Map<string, UsageWorkspaceStat>();
@@ -837,6 +967,9 @@ export function aggregateUsage(
     scannedAt,
     completeness,
     diagnostics,
+    ...(fingerprintGroups.size
+      ? { schemaFingerprints: [...fingerprintGroups.values()] }
+      : {}),
     fileCount: totalFiles,
     requestCount,
     promptTokens,

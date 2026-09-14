@@ -551,6 +551,239 @@ test("usage v2 storage validates provenance and parser version forces old files 
   );
 });
 
+test("drifted session schemas degrade to actionable fingerprints", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { formatSchemaFingerprint } = await import("../src/types");
+  const drifted = parseUsageJsonl(
+    await readFile("test/fixtures/usage/drifted.jsonl", "utf8"),
+    "w",
+    "drifted",
+  );
+  assert.equal(drifted.diagnostics.unsupported, 1);
+  assert.equal(drifted.requests.length, 0);
+  assert.equal(drifted.fingerprint?.format, "jsonl");
+  const fp = drifted.fingerprint!;
+  assert.ok(fp.format === "jsonl" && fp.kinds.includes("3"));
+  assert.ok(fp.format === "jsonl" && fp.kinds.includes("session.v2"));
+  assert.deepEqual(fp.format === "jsonl" ? fp.envelopes : {}, {
+    anchor: false,
+    append: false,
+    result: false,
+  });
+  // The fingerprint is shape-only: no chat text, values, or identifiers.
+  assert.ok(!formatSchemaFingerprint(fp).includes("events"));
+  // A known anchor cannot mask drifted request records: anchor framing with
+  // only unknown lines and zero usable requests is unsupported, with the
+  // anchor envelope recorded — never a silent zero-request listing.
+  const masked = parseUsageJsonl(
+    [
+      JSON.stringify({
+        kind: 0,
+        v: {
+          sessionId: "s",
+          creationDate: 1788220800000,
+          inputState: { selectedModel: { identifier: "copilot/gpt-5-mini" } },
+        },
+      }),
+      JSON.stringify({ kind: 99, v: { future: true } }),
+    ].join("\n"),
+    "w",
+    "s",
+  );
+  assert.equal(masked.diagnostics.unsupported, 1);
+  assert.equal(masked.requests.length, 0);
+  assert.deepEqual(masked.fingerprint?.format === "jsonl" ? masked.fingerprint.envelopes : {}, {
+    anchor: true,
+    append: false,
+    result: false,
+  });
+  assert.equal(masked.fingerprint?.format === "jsonl" && masked.fingerprint.anchorSessionId, true);
+  // An unrelated new kind alongside usable requests stays supported: the
+  // unknown line is ignored, not a schema failure.
+  const partial = parseUsageJsonl(
+    [
+      JSON.stringify({ kind: 0, v: { sessionId: "s" } }),
+      record({ promptTokens: 1, outputTokens: 2 }),
+      JSON.stringify({ kind: 99, v: { future: true } }),
+    ].join("\n"),
+    "w",
+    "s",
+  );
+  assert.equal(partial.diagnostics.unsupported, 0);
+  assert.equal(partial.fingerprint, undefined);
+  assert.equal(partial.requests.length, 1);
+  const stable = parseUsageJsonl(
+    await readFile("test/fixtures/usage/stable.jsonl", "utf8"),
+    "w",
+    "stable",
+  );
+  assert.equal(stable.fingerprint, undefined);
+  const legacy = parseUsageLegacyJson('{"session":{}}', "w", "s");
+  assert.equal(legacy.diagnostics.unsupported, 1);
+  assert.equal(legacy.fingerprint?.format, "legacy-json");
+  const summary = aggregateUsage([
+    {
+      workspaceId: "w",
+      workspacePath: "",
+      requests: [],
+      diagnostics: drifted.diagnostics,
+      fingerprint: drifted.fingerprint,
+    },
+  ]);
+  assert.equal(summary.schemaFingerprints?.length, 1);
+  assert.equal(summary.schemaFingerprints?.[0].files, 1);
+  const storedValue = {
+    version: 2,
+    scannedAt: 1,
+    index: blankUsageIndex(),
+    files: {
+      f: {
+        workspaceId: "w",
+        workspacePath: "",
+        requests: [],
+        diagnostics: drifted.diagnostics,
+        fingerprint: drifted.fingerprint,
+      },
+    },
+  };
+  assert.ok(validUsageFile(storedValue));
+  assert.ok(
+    !validUsageFile({
+      ...storedValue,
+      files: {
+        f: {
+          ...storedValue.files.f,
+          fingerprint: { format: "jsonl", version: 1 },
+        },
+      },
+    }),
+  );
+  // Fingerprint kind labels stay bounded and content-free.
+  const kinds = parseUsageJsonl(
+    [
+      JSON.stringify({ kind: null }),
+      JSON.stringify({ kind: 1000 }),
+      JSON.stringify({ kind: "x".repeat(50) }),
+      JSON.stringify({ kind: { nested: true } }),
+    ].join("\n"),
+    "w",
+    "s",
+  );
+  assert.equal(kinds.diagnostics.unsupported, 1);
+  assert.deepEqual(kinds.fingerprint?.format === "jsonl" ? kinds.fingerprint.kinds : [], ["kind:other"]);
+  const manyKinds = parseUsageJsonl(
+    Array.from({ length: 12 }, (_, n) => JSON.stringify({ kind: 10 + n })).join("\n"),
+    "w",
+    "s",
+  );
+  assert.equal(
+    manyKinds.fingerprint?.format === "jsonl" ? manyKinds.fingerprint.kinds.length : 0,
+    10,
+  );
+  // Legacy fingerprints record known-field presence only.
+  assert.deepEqual(parseUsageLegacyJson("[1,2]", "w", "s").fingerprint, {
+    format: "legacy-json",
+    version: 1,
+    hasSessionId: false,
+    hasCreationDate: false,
+    hasSelectedModel: false,
+    hasRequests: false,
+    requestsIsArray: false,
+  });
+  const legacyFull = parseUsageLegacyJson(
+    JSON.stringify({
+      sessionId: "s",
+      creationDate: 1788220800000,
+      selectedModel: { id: "m" },
+      requests: "not-an-array",
+    }),
+    "w",
+    "s",
+  );
+  assert.deepEqual(legacyFull.fingerprint, {
+    format: "legacy-json",
+    version: 1,
+    hasSessionId: true,
+    hasCreationDate: true,
+    hasSelectedModel: true,
+    hasRequests: true,
+    requestsIsArray: false,
+  });
+  // Invalid fingerprints fail storage validation individually.
+  for (const fingerprint of [
+    { format: "jsonl", version: 2, lines: 1, kinds: [], anchorSessionId: false, anchorCreationDate: false, anchorSelectedModel: false, envelopes: { anchor: false, append: false, result: false } },
+    { format: "jsonl", version: 1, lines: 1, kinds: ["0", 1], anchorSessionId: false, anchorCreationDate: false, anchorSelectedModel: false, envelopes: { anchor: false, append: false, result: false } },
+    { format: "legacy-json", version: 1, hasSessionId: "yes", hasCreationDate: false, hasSelectedModel: false, hasRequests: false, requestsIsArray: false },
+    { format: "future", version: 1 },
+  ]) {
+    assert.ok(
+      !validUsageFile({
+        ...storedValue,
+        files: {
+          f: { ...storedValue.files.f, fingerprint },
+        },
+      }),
+    );
+  }
+  // Aggregation groups distinct fingerprints and caps the display list.
+  const grouped = aggregateUsage(
+    Array.from({ length: 6 }, (_, n) => ({
+      workspaceId: "w",
+      workspacePath: "",
+      requests: [],
+      diagnostics: drifted.diagnostics,
+      fingerprint: {
+        format: "jsonl" as const,
+        version: 1 as const,
+        lines: n + 1,
+        kinds: ["3"],
+        anchorSessionId: false,
+        anchorCreationDate: false,
+        anchorSelectedModel: false,
+        envelopes: { anchor: false, append: false, result: false },
+      },
+    })),
+  );
+  assert.equal(grouped.schemaFingerprints?.length, 5);
+  // Formatter covers both formats and the empty/complete jsonl shapes.
+  assert.match(
+    formatSchemaFingerprint({
+      format: "legacy-json",
+      version: 1,
+      hasSessionId: true,
+      hasCreationDate: false,
+      hasSelectedModel: false,
+      hasRequests: true,
+      requestsIsArray: true,
+    }),
+    /legacy-json v1 sessionId .*requests-array/,
+  );
+  assert.match(
+    formatSchemaFingerprint({
+      format: "legacy-json",
+      version: 1,
+      hasSessionId: false,
+      hasCreationDate: true,
+      hasSelectedModel: true,
+      hasRequests: false,
+      requestsIsArray: false,
+    }),
+    /legacy-json v1 no-sessionId creationDate selectedModel no-requests requests-not-array/,
+  );
+  assert.match(
+    formatSchemaFingerprint({
+      format: "jsonl",
+      version: 1,
+      lines: 0,
+      kinds: [],
+      anchorSessionId: true,
+      anchorCreationDate: true,
+      anchorSelectedModel: true,
+      envelopes: { anchor: true, append: true, result: true },
+    }),
+    /kinds=\[none\].*sessionId creationDate selectedModel.*anchor append result/,
+  );
+});
 test("synthetic stable, Insiders, legacy and damaged format fixtures disclose completeness", async () => {
   const { readFile } = await import("node:fs/promises");
   const parse = async (name: string) =>
@@ -567,6 +800,7 @@ test("synthetic stable, Insiders, legacy and damaged format fixtures disclose co
   }
   assert.equal((await parse("truncated")).diagnostics.malformed, 1);
   assert.equal((await parse("unsupported")).diagnostics.unsupported, 1);
+  assert.equal((await parse("unsupported")).fingerprint?.format, "jsonl");
   assert.equal((await parse("empty")).requests.length, 0);
   assert.equal((await parse("empty")).diagnostics.unsupported, 0);
   const legacy = parseUsageLegacyJson(

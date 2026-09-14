@@ -328,6 +328,9 @@ export function activate(context: vscode.ExtensionContext) {
               files[candidate.filePath] = {
                 ...files[candidate.filePath],
                 diagnostics: { ...parsed.diagnostics, stale: 1 },
+                ...(parsed.fingerprint
+                  ? { fingerprint: parsed.fingerprint }
+                  : {}),
               };
               delete index.files[candidate.filePath];
               continue;
@@ -337,6 +340,9 @@ export function activate(context: vscode.ExtensionContext) {
               workspacePath: candidate.workspacePath,
               requests: parsed.requests,
               diagnostics: parsed.diagnostics,
+              ...(parsed.fingerprint
+                ? { fingerprint: parsed.fingerprint }
+                : {}),
             };
             index.files[candidate.filePath] = {
               size: candidate.size,

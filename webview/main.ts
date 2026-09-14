@@ -12,7 +12,7 @@ import type {
 } from "../src/types";
 import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
-import { costUnit } from "../src/types";
+import { costUnit, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert } from "../src/freshness";
@@ -1271,6 +1271,17 @@ function renderUsage() {
       (c.fallbackMultipliers ? ` · Unknown model — default multiplier applied (${c.fallbackMultipliers} requests)` : "")
     : "Completeness unavailable";
   el("usage-diagnostics").textContent += ` ${completenessNote(u.completeness)}. Token totals include available fields only; missing fields are not observed zeros.`;
+  const prints = (u.schemaFingerprints ?? []).slice(0, 5);
+  if (prints.length)
+    el("usage-diagnostics").textContent +=
+      " Unsupported files don't match any known Copilot chat schema — please file an issue with the fingerprint(s): " +
+      prints
+        .map(
+          ({ fingerprint, files }) =>
+            `${files} file(s): ${formatSchemaFingerprint(fingerprint)}`,
+        )
+        .join(" · ") +
+      ".";
   const range = u.dateRange
     ? `${new Date(u.dateRange.from).toLocaleDateString()} – ${new Date(u.dateRange.to).toLocaleDateString()}`
     : "no dated requests";

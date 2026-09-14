@@ -1314,7 +1314,7 @@ test("usage file index selects changed files and reports deletions", () => {
   });
   const index = blankUsageIndex();
   assert.equal(index.version, 1);
-  assert.equal(usageParserVersion, 2);
+  assert.equal(usageParserVersion, 3);
   index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: usageParserVersion };
   index.files["/gone.jsonl"] = { size: 1, mtime: 1, parser: usageParserVersion };
   const { changed, deleted } = selectChangedFiles(

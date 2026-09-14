@@ -6,27 +6,16 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 ## How this file works
 
-- Tiers are ordered by recommended execution order. Each tier states its admission criterion; tasks within a tier follow dependency order.
+- Tiers are ordered by recommended execution order. Tier 2 states its admission criterion; tasks within a tier follow dependency order.
 - Each task defines the current gap, deliverables, dependencies, and acceptance criteria. Reference tasks by name rather than their position in the list.
 - Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Remove empty tiers. This file tracks only candidate future work — it does not keep a running summary of what already shipped; `AGENTS.md` is the record of current verified behavior and `CHANGELOG.md` of what changed and when.
 - Link a corresponding GitHub issue when one exists. The issue holds the request and discussion; this file defines the proposed scope. Verify claims against the code before treating them as implemented behavior.
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-The last shipped tier (comparison overlay view): `overlayResult` in `src/comparison.ts` superimposes both A/B options on one chart with per-option and combined Pareto frontiers, converting to a labelled USD-equivalent axis when the two options bill differently. See `AGENTS.md`'s "Two-option comparison and Tier 1 delivery" section for the record.
+The last shipped tier (integration evidence matrix and schema version detection): unsupported Copilot session files carry a content-free schema fingerprint with file-an-issue guidance (a recognized anchor can no longer mask drifted request records into a silent zero), OpenCode discovery failures report the probed CLI version, unparseable CLI output fails closed with an output fingerprint, and `docs/integrations.md` records the client × platform × version evidence matrix with dated fixtures per verified shape. See `AGENTS.md`'s "Integration evidence matrix and schema version detection" section for the record.
 
-Below, Tier 1 turns each "Requirements across future work" principle into scoped tasks against gaps found in the current code. Tier 2 is new delivery candidates that meet those same requirements. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
-
-## Tier 1 — Close gaps against the requirements
-
-Admission criterion: current shipped behavior falls short of one of the requirements below; close the gap without expanding scope beyond it.
-
-### Integration evidence matrix and schema version detection — M
-
-- **Gap:** Copilot chat session files that fail to parse are only counted as `unsupported`, with no detail on what changed or what to do next (`src/usage.ts`'s session parser). The OpenCode CLI's own version is never captured, so a "tier-shape volatility" schema change can't be distinguished from a bug. There's no single place recording which client/platform/version combinations have been verified.
-- **Deliverables:** record a lightweight schema fingerprint (e.g. which known fields were present/absent) for files marked `unsupported`, and surface an actionable message ("this session file doesn't match any known Copilot chat schema — please file an issue with the fingerprint") instead of a bare count; capture `opencode --version` (or equivalent) into the diagnostics already shown for OpenCode discovery failures; add `docs/integrations.md` recording the client × platform × version evidence matrix referenced by `docs/opencode-integration.md` and `docs/cli-investigation.md`, with a dated fixture captured per verified client release.
-- **Dependencies:** existing `unsupported`/`unrecognized` diagnostics in `src/usage.ts` and `src/opencode.ts`; existing fixtures under `test/fixtures/usage/` and `test/fixtures/cli/`.
-- **Acceptance:** a session or CLI output that no longer matches a known schema degrades to a visible, actionable explanation — never a silent zero or an unexplained count. Fixture tests cover at least one drifted-schema case per integration.
+Below, Tier 2 is new delivery candidates that meet the "Requirements across future work" principles. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
 
 ## Tier 2 — New delivery candidates
 

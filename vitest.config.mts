@@ -18,10 +18,10 @@ export default defineConfig({
       // features and already failed on clean HEAD; the provenance-complete
       // exports change raises all four metrics over that baseline.)
       thresholds: {
-        lines: 97.04,
-        functions: 98.73,
-        branches: 92.63,
-        statements: 96.05,
+        lines: 97.15,
+        functions: 98.77,
+        branches: 92.78,
+        statements: 96.18,
       },
     },
   },

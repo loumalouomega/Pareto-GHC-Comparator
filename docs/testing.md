@@ -76,6 +76,7 @@ The completed roadmap is covered by the following implementation and regression 
 | Benchmark drift, failed refreshes, stale data | `test/roadmap.test.ts`, `test/api.test.ts`, `test/extension.test.ts` |
 | BYOK validation, provenance, billing isolation | `test/roadmap.test.ts`, `test/opencode.test.ts`, `test/extension.test.ts` |
 | Usage parsing, incremental scans, workspace labels, consent and erase races | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
+| Schema fingerprints, drifted fixtures, CLI version diagnostics | `test/tier1.test.ts`, `test/opencode.test.ts`, `test/webview.spec.ts`; fixtures under `test/fixtures/usage/drifted.jsonl` and `test/fixtures/opencode/`; evidence matrix in `docs/integrations.md` |
 | Workload prefill, used-model filtering, budget percentiles including free requests | `test/roadmap.test.ts`, `test/extension.test.ts`, `test/webview.spec.ts` |
 | Provenance-complete exports (v3 snapshots, pair builders, shared unit labels, PNG annotations) | `test/exports.test.ts`, `test/extension.test.ts`, `test/roadmap.test.ts`, `test/webview.spec.ts` |
 
@@ -83,7 +84,8 @@ The earlier completion audit covered the then-completed roadmap. It does not cer
 
 ## Tier 1 validation
 
-- `test/tier1.test.ts`: comparison persistence/validation, shared result construction, compatible deltas, targeted messages, usage provenance, version-2 validation, and stable/Insiders/legacy/malformed fixture cases. All fixture content is synthetic.
+- `test/tier1.test.ts`: comparison persistence/validation, shared result construction, compatible deltas, targeted messages, usage provenance, version-2 validation, stable/Insiders/legacy/malformed fixture cases, and drifted-schema fingerprints (unsupported/drifted/masked/partial JSONL, legacy variants, fingerprint storage validation, aggregation cap, formatter). All fixture content is synthetic.
+- `test/opencode.test.ts`: CLI parsing (including the known-good `verbose-1.18.30` representative vs the `drifted` shape that must fail closed with a fingerprint), `opencode --version` parsing/probing, version-annotated discovery errors, USD pricing, migration, and message validation for OpenCode.
 - `test/extension.test.ts`: isolated A/B options and exclusions, restoring the single view and last pair, profile-load isolation, export parity, and real temporary-session updates through unsupported, truncated, and deleted states.
 - `test/opencode-platform.test.ts`: native resolution, PATH/home fallback, the Windows npm-global-install layout (`node_modules\opencode-ai\bin\opencode.exe`), Windows path rules, timeout limits, and literal process arguments at an executable path with spaces. The native process test copies Node as an executable fixture; it does not invoke real OpenCode providers.
 - `test/webview.spec.ts`: all three themes cover comparison panels, active editor switching, cross-unit explanations, combined PNG messages, narrow layout, and usage diagnostics, alongside existing regression flows.

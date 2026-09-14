@@ -180,6 +180,63 @@ export interface ScoreDrift {
   delta: number | null;
 }
 export type TokenProvenance = "observed" | "estimated" | "missing";
+/**
+ * Content-free schema fingerprint for a Copilot chat session file that does
+ * not match any known schema. Records only which known fields were
+ * present/absent and bounded shape counters — never field values, chat
+ * text, identifiers, or file paths — so it is safe to paste into an issue.
+ */
+export interface UsageJsonlFingerprint {
+  format: "jsonl";
+  version: 1;
+  /** Non-empty lines observed, capped at the true count (safe integer). */
+  lines: number;
+  /** Distinct `kind` values observed, e.g. ["0","1","kind:absent"]. Max 10. */
+  kinds: string[];
+  anchorSessionId: boolean;
+  anchorCreationDate: boolean;
+  anchorSelectedModel: boolean;
+  envelopes: { anchor: boolean; append: boolean; result: boolean };
+}
+export interface UsageLegacyFingerprint {
+  format: "legacy-json";
+  version: 1;
+  hasSessionId: boolean;
+  hasCreationDate: boolean;
+  hasSelectedModel: boolean;
+  hasRequests: boolean;
+  requestsIsArray: boolean;
+}
+export type UsageSchemaFingerprint =
+  | UsageJsonlFingerprint
+  | UsageLegacyFingerprint;
+/** One-line, content-free rendering of a schema fingerprint for UI/issues. */
+export const formatSchemaFingerprint = (
+  fp: UsageSchemaFingerprint,
+): string => {
+  if (fp.format === "jsonl") {
+    const kinds = fp.kinds.length ? fp.kinds.join(",") : "none";
+    const anchor = [
+      fp.anchorSessionId ? "sessionId" : "no-sessionId",
+      fp.anchorCreationDate ? "creationDate" : "no-creationDate",
+      fp.anchorSelectedModel ? "selectedModel" : "no-selectedModel",
+    ].join(" ");
+    const env = [
+      fp.envelopes.anchor ? "anchor" : "no-anchor",
+      fp.envelopes.append ? "append" : "no-append",
+      fp.envelopes.result ? "result" : "no-result",
+    ].join(" ");
+    return `jsonl v1 lines=${fp.lines} kinds=[${kinds}] ${anchor} envelopes=[${env}]`;
+  }
+  const present = [
+    fp.hasSessionId ? "sessionId" : "no-sessionId",
+    fp.hasCreationDate ? "creationDate" : "no-creationDate",
+    fp.hasSelectedModel ? "selectedModel" : "no-selectedModel",
+    fp.hasRequests ? "requests" : "no-requests",
+    fp.requestsIsArray ? "requests-array" : "requests-not-array",
+  ].join(" ");
+  return `legacy-json v1 ${present}`;
+};
 export interface UsageDiagnostics {
   malformed: number;
   unsupported: number;
@@ -237,6 +294,8 @@ export interface UsageWorkspaceStat {
 export interface UsageSummary {
   completeness?: UsageCompleteness;
   diagnostics?: UsageDiagnostics;
+  /** Distinct schema fingerprints of unsupported files, with file counts. Max 5 entries. */
+  schemaFingerprints?: { fingerprint: UsageSchemaFingerprint; files: number }[];
   scannedAt: number;
   fileCount: number;
   requestCount: number;

@@ -81,7 +81,7 @@ No benchmark data ships in the repo; a snapshot file must be supplied (e.g. one 
 
 ## Testing strategy
 
-Vitest already exercises every reused module (`compare.test.ts`, `export.ts` via `roadmap.test.ts`, `api.test.ts`, `opencode.test.ts`) without a `vscode` mock, so a CLI wrapper would only need to test its own argument parsing and file I/O against small fixtures like `test/fixtures/cli/*.json`, plus one golden-output test per format. `scripts/opencode-smoke.ts`'s CI pattern (non-gating job, `tsx`, sanitized output) is the template for any future real-account smoke test.
+Vitest already exercises every reused module (`compare.test.ts`, `export.ts` via `roadmap.test.ts`, `api.test.ts`, `opencode.test.ts`) without a `vscode` mock, so a CLI wrapper would only need to test its own argument parsing and file I/O against small fixtures like `test/fixtures/cli/*.json`, plus one golden-output test per format. `scripts/opencode-smoke.ts`'s CI pattern (non-gating job, `tsx`, sanitized output) is the template for any future real-account smoke test. The verified OpenCode client × platform × version cells the adapter reuses are recorded in `docs/integrations.md`.
 
 ## Decision
 
