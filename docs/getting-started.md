@@ -7,7 +7,7 @@ Install Pareto GHC Comparator and open your first comparison.
 3. Run **Pareto GHC: Open Model Comparison** from the Command Palette.
 4. Click **Set API key** and enter your own [Artificial Analysis Free API key](https://artificialanalysis.ai/data-api). The key is stored in VS Code SecretStorage, not settings or the webview.
 5. Choose **Coding**, **General**, or **Agentic**, select a billing mode, and edit the illustrative token workload if needed.
-6. Select a chart point or a model button in the table to inspect the tested variant and cost tradeoff. **Copy model name** lets you select that model in Copilot yourself.
+6. Select a chart point or a model button in the table to inspect the tested variant and cost tradeoff. For OpenCode and some static-source models, **Copy model ID** copies an id verified against that client's own docs (with a hint showing where to paste it, e.g. `codex -m <id>`); otherwise **Copy model name** copies the display name for you to select in the client's own model picker — see `docs/model-switching-investigation.md` for what's verified per client and why there's no automatic "apply" button.
 
 ## Comparing OpenCode models
 

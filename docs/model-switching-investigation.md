@@ -1,6 +1,6 @@
 # User-controlled model switching — feasibility investigation
 
-Status: **Decided — no delivery for host-triggered Apply; deliver an invocable-id copy fix instead** (roadmap: `docs/roadmap.md`).
+Status: **Decided and delivered.** No host-triggered Apply action for any client; the invocable-id copy fix this investigation scoped has shipped (roadmap: `docs/roadmap.md`).
 
 Date checked: 2026-09-14. Versions: VS Code 1.137.0, GitHub Copilot Chat (bundled model picker), OpenCode 1.18.30, Codex CLI 0.149.1, Claude Code 2.1.261. Gemini CLI not installed locally; checked from documentation only. Extension version at time of writing: 0.11.0.
 
@@ -58,9 +58,26 @@ Observed:
 | Aider | `--model`, or `model` in `.aider.conf.yml` | Yes (public docs) | Not verified locally | Not applicable | Not verified locally | Not verified locally |
 | Cursor, Windsurf, Amazon Q | None found | No documented external command/API to set the active model from outside the editor's own UI | — | — | — | — |
 
-## Existing behavior this investigation surfaced
+## Existing behavior this investigation surfaced — since fixed
 
-`src/extension.ts:867-872`'s `copy` handler writes the model's **display name** to the clipboard (e.g. `"GPT-5.4 (high)"`), not an invocable identifier. That string cannot be pasted into any of the per-invocation flags above — `openai/gpt-5.4#high` (or `-m openai/gpt-5.4 --variant high`) is what OpenCode, Codex, and Claude Code actually accept. This is a small, independently fixable gap, tracked below.
+`src/extension.ts:867-872`'s `copy` handler used to write the model's **display name** to the clipboard (e.g. `"GPT-5.4 (high)"`), not an invocable identifier. That string couldn't be pasted into any of the per-invocation flags above — `openai/gpt-5.4#high` (or `-m openai/gpt-5.4 --variant high`) is what OpenCode, Codex, and Claude Code actually accept. This is now fixed: `src/invocable.ts`'s `invocableRef` copies OpenCode's own `provider/model[#variant]` reference always, and a static-source model's explicit, doc-verified `invocableId` when one exists (see the table below); everything else still falls back to the display name, now with an explicit "no verified invocable id" note instead of implying it's pasteable.
+
+### Verified static-source invocable ids (fetched 2026-09-14)
+
+Only models with an id confirmed by the client's own documentation get one — never the internal `src/staticSources.ts` registry key, and never a guess from the display name.
+
+| Source | Usage | Models → id | Doc |
+| --- | --- | --- | --- |
+| Claude Code | `claude --model <id>` / `"model"` in settings.json | all 9 registry models, id equals the registry key (e.g. `claude-sonnet-5`, `claude-fable-5-1`) | code.claude.com/docs/en/model-config |
+| Codex | `codex -m <id>` / `"model"` in config.toml | all 6 registry models, with dots: `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.3-codex-spark` | learn.chatgpt.com/docs/models |
+| Gemini CLI | `gemini -m <id>` / `"model.name"` in settings.json | `gemini-2.5-pro`, `gemini-3-flash-preview` only | geminicli.com/docs/cli/model |
+| Cursor, Windsurf, Aider, Amazon Q | — | none | see below |
+
+**Gemini CLI gaps, not fixed here:**
+- `gemini-3-pro` has no id: the Gemini API docs mark `gemini-3-pro-preview` shut down (2026-03-09) with no CLI-documented replacement carried in our registry. Per `docs/catalog.md`'s maintenance rule ("remove models the official docs mark retired"), this static-registry entry should be removed or updated in the next `src/staticSources.ts` pass — out of scope for this task, which only decides what Copy does with existing entries.
+- `gemini-3-5-flash`/`gemini-3-8-flash` have no id: neither is in the Gemini CLI's own docs, and an open CLI bug (`google-gemini/gemini-cli#28859`, priority p1, affecting v0.55.1/0.56) silently reroutes any undocumented `-flash` id to `gemini-3.5-flash` with no warning — copying an unverifiable id that might silently run a different model would be worse than falling back to the display name.
+
+**Cursor, Windsurf, Aider, Amazon Q:** no exact id could be confirmed for our registry's models from each client's own docs (Cursor uses account-specific names surfaced only via `agent --list-models`; Windsurf/Devin is UI-only for model selection; Aider's LiteLLM naming convention isn't documented for these specific models; Amazon Q's successor, Kiro, documents different models than ours). These sources keep copying the display name.
 
 ## Decision
 
@@ -79,3 +96,5 @@ Not applicable — no new runtime behavior is introduced by this investigation.
 
 - No supported VS Code API exists to set or verify the Chat view's model from an extension. This blocks any future Copilot Apply action regardless of implementation effort.
 - Gemini CLI and Aider flag/config behavior was checked from documentation only, not run locally (Gemini CLI is not installed here; Aider was not installed either). Record as unperformed validation if either becomes a delivery candidate later.
+- `src/staticSources.ts`'s `gemini-3-pro` entry maps to a model the Gemini API docs mark shut down (2026-03-09); per `docs/catalog.md`'s maintenance rule it should be removed or updated in a future registry pass — not fixed here, since this task only decides what Copy does with the registry as it stands.
+- An open Gemini CLI bug (`google-gemini/gemini-cli#28859`) silently reroutes undocumented `-flash` model ids to `gemini-3.5-flash`; re-check whether a future CLI release fixes it before adding `invocableId` for `gemini-3-5-flash`/`gemini-3-8-flash`.

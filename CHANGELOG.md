@@ -15,6 +15,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ### Changed
 
+- **Copy model ID / Copy model name**: for OpenCode models and a doc-verified subset of static-registry models (Claude Code and Codex's full lineups; Gemini CLI's `gemini-2.5-pro`/`gemini-3-flash` only), the button now copies the exact id that client's own `--model`/config key accepts, with a hint showing where to paste it, instead of a display name no client understands. Every other model still copies the display name, now with an explicit "no verified invocable id" note. No client config is read or written, and no model is switched or applied automatically. See `docs/model-switching-investigation.md`.
 - The benchmark-variant dropdown in model details no longer applies a selection immediately on change; it stages the choice ("Will map to …") until **Apply mapping** is clicked, with a separate, always-available **Reset to automatic** button.
 
 
