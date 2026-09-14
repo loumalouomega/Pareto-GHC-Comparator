@@ -25,35 +25,35 @@
     "commands": [
       {
         "command": "paretoGhc.open",
-        "title": "Pareto GHC: Open Model Comparison"
+        "title": "📊 Pareto GHC: Open Model Comparison"
       },
       {
         "command": "paretoGhc.setApiKey",
-        "title": "Pareto GHC: Set Artificial Analysis API Key"
+        "title": "🔑 Pareto GHC: Set Artificial Analysis API Key"
       },
       {
         "command": "paretoGhc.clearApiKey",
-        "title": "Pareto GHC: Remove Artificial Analysis API Key"
+        "title": "🗑️ Pareto GHC: Remove Artificial Analysis API Key"
       },
       {
         "command": "paretoGhc.scanUsage",
-        "title": "Pareto GHC: Scan Local Copilot Usage"
+        "title": "📈 Pareto GHC: Scan Local Copilot Usage"
       },
       {
         "command": "paretoGhc.clearUsage",
-        "title": "Pareto GHC: Erase Local Copilot Usage"
+        "title": "🧹 Pareto GHC: Erase Local Copilot Usage"
       },
       {
         "command": "paretoGhc.pauseUsage",
-        "title": "Pareto GHC: Pause Copilot Usage Watching"
+        "title": "⏸️ Pareto GHC: Pause Copilot Usage Watching"
       },
       {
         "command": "paretoGhc.resumeUsage",
-        "title": "Pareto GHC: Resume Copilot Usage Watching"
+        "title": "▶️ Pareto GHC: Resume Copilot Usage Watching"
       },
       {
         "command": "paretoGhc.showUsageData",
-        "title": "Pareto GHC: Show Stored Copilot Usage Data"
+        "title": "📄 Pareto GHC: Show Stored Copilot Usage Data"
       }
     ]
   },

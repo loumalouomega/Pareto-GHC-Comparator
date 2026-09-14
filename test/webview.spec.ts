@@ -564,6 +564,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(
       page.getByRole("tab", { name: "Tool analysis" }),
     ).toHaveAttribute("aria-selected", "true");
+    // Emoji are icon placeholders: visible, but hidden from accessible names.
+    await expect(page.locator("#tab-compare .emoji")).toHaveText("📊");
+    await expect(page.locator("#tab-settings .emoji")).toHaveText("⚙️");
     await expect(page.locator("#panel-settings")).toBeHidden();
     await page.getByRole("tab", { name: "Tool analysis" }).focus();
     await page.keyboard.press("ArrowRight");
@@ -866,9 +869,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.getByLabel("Filter models for selection")).toBeVisible();
     await page.getByLabel("Filter models for selection").fill("gpt-5.4");
     await expect(page.locator("#checklist .check-family")).toHaveCount(1);
-    await expect(page.locator("#include-all")).toHaveText("Select matching");
+    await expect(page.locator("#include-all")).toContainText("Select matching");
     await page.getByLabel("Filter models for selection").fill("");
-    await expect(page.locator("#include-all")).toHaveText("Select all");
+    await expect(page.locator("#include-all")).toContainText("Select all");
     const familyBox = page
       .locator(".check-family-row input[type=checkbox]")
       .first();
@@ -971,14 +974,14 @@ for (const theme of ["light", "dark", "high-contrast"])
       "copilot/mystery",
     );
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
-    await expect(page.locator("#usage-pause")).toHaveText("Pause watching");
+    await expect(page.locator("#usage-pause")).toContainText("Pause watching");
     await page.locator("#usage-pause").click();
     expect(messages.some((m) => m.type === "pauseUsage")).toBeTruthy();
-    await expect(page.locator("#usage-pause")).toHaveText("Resume watching");
+    await expect(page.locator("#usage-pause")).toContainText("Resume watching");
     await expect(page.locator("#usage-watching")).toHaveText(/paused/);
     await page.locator("#usage-pause").click();
     expect(messages.some((m) => m.type === "resumeUsage")).toBeTruthy();
-    await expect(page.locator("#usage-pause")).toHaveText("Pause watching");
+    await expect(page.locator("#usage-pause")).toContainText("Pause watching");
     await expect(page.locator("#usage-retention")).toHaveValue("");
     await page.locator("#usage-retention").fill("30");
     // The retention input applies on change (blur), not per keystroke, since

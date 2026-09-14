@@ -355,6 +355,10 @@ a {
   font-weight: 600;
   white-space: nowrap;
 }
+/* Emoji placeholders for future ad-hoc icons; hidden from assistive tech in markup. */
+.emoji {
+  margin-right: 6px;
+}
 .tab:hover {
   background: none;
   color: var(

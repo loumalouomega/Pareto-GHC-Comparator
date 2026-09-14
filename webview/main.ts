@@ -849,9 +849,9 @@ function renderChecklist() {
   const allButton = el<HTMLButtonElement>("include-all");
   const noneButton = el<HTMLButtonElement>("include-none");
   if (allButton)
-    allButton.textContent = searching ? "Select matching" : "Select all";
+    allButton.textContent = searching ? "✅ Select matching" : "✅ Select all";
   if (noneButton)
-    noneButton.textContent = searching ? "Clear matching" : "Select none";
+    noneButton.textContent = searching ? "🧹 Clear matching" : "🧹 Select none";
   const checklistEl = el("checklist");
   checklistEl.replaceChildren();
   if (!groups.length && !flat.length) {
@@ -1242,8 +1242,8 @@ function renderUsage() {
   const pauseBtn = el<HTMLButtonElement>("usage-pause");
   pauseBtn.hidden = !state.usageWatching && !state.usagePaused;
   pauseBtn.textContent = state.usagePaused
-    ? "Resume watching"
-    : "Pause watching";
+    ? "▶️ Resume watching"
+    : "⏸️ Pause watching";
   const retentionInput = el<HTMLInputElement>("usage-retention");
   if (document.activeElement !== retentionInput)
     retentionInput.value =
@@ -1602,8 +1602,8 @@ function renderComparison() {
   ])
     el<HTMLButtonElement>(id).disabled = !!pair;
   el("export-badge").textContent = pair
-    ? `Export ${pair.active} badge JSON`
-    : "Export badge JSON";
+    ? `🏷️ Export ${pair.active} badge JSON`
+    : "🏷️ Export badge JSON";
   if (!pair) return;
   if (showOverlay && pair.overlay) drawOverlay(pair, pair.overlay, overlayCard);
   el<HTMLSelectElement>("comparison-source-a").value =
@@ -1959,7 +1959,7 @@ function render(next: ViewState) {
   el("status").textContent = state.message;
   el<HTMLButtonElement>("refresh").disabled = state.loading;
   el<HTMLButtonElement>("key").disabled = state.loading;
-  el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
+  el("key").textContent = state.hasKey ? "🔑 Update API key" : "🔑 Set API key";
   const stale = freshnessAlert(
     state.catalogDate,
     state.staticRegistryDate,
