@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 1.1.0
+
 ### Added
 
 - Comparison overlay view: Compare options now has a **View** toggle next to **Show USD equivalents**. **Overlay** superimposes both A/B options' models on one chart instead of two separate ones, drawing each option's own Pareto frontier plus a combined frontier across both, so the better-value tool is visible at a glance. When the two options bill differently, the shared axis converts to a labelled USD equivalent (the one exception to cost units never mixing in a chart); legacy premium requests, which never convert, are dropped from the overlay with a notice instead of being plotted on a unit they don't belong to, and the combined frontier is withheld — with a notice — when the two options' workload or cost basis don't otherwise match. PNG export saves the overlay chart when that view is active. See `docs/billing.md`'s "Overlay view" section.
@@ -12,6 +14,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 - **Compare tools** is now its own tab: Compare options (the A/B toggle, Tool A/Tool B source pickers, Editing, name, USD equivalents, and the View control) and its results — the per-option panels or the overlay chart, plus the B-minus-A delta — moved off Plan & budget and off Tool analysis onto this dedicated tab, so switching between two tools is easy to find. Comparison stays off by default, and Tool analysis (renamed from "Compare") stays first in the tab order and open by default, now always showing the single active option's chart regardless of whether Compare options is on. **Tool A** and **Tool B** pick each option's source directly from the Compare tools tab, without first switching Editing to it.
 - Simpler default layout: the panel is now split into **Tool analysis** (originally named "Compare"), **Plan & budget**, **Usage**, and **Settings** tabs. Tool analysis keeps the everyday workflow — source, task, billing, chart view, and filter in one row, a compact **Find a model** strip, then the chart, table, and model details. Side-by-side options, saved workloads, and the monthly spending scenario move to Plan & budget; local usage, BYOK rates, and the free-tier spotlight to Usage; chart display, included models, and exports to Settings. Model details show the essentials and put cost breakdowns, pricing sources, pinning, and benchmark mapping behind **More details**, which opens automatically for a model with a missing benchmark or an unresolved price. The last open tab is restored when the panel reloads. Features, saved data, and exports are unchanged.
+
+History: [v1.0.0...v1.1.0](https://github.com/loumalouomega/Pareto-GHC-Comparator/compare/v1.0.0...v1.1.0).
 
 ## 1.0.0
 
