@@ -146,6 +146,33 @@ export function activate(context: vscode.ExtensionContext) {
     usagePending: Promise<void> | undefined,
     usageWatchers: vscode.Disposable[] = [],
     usageTimer: ReturnType<typeof setTimeout> | undefined;
+  let usageStatusItem: vscode.StatusBarItem | undefined;
+  const isUsagePaused = () =>
+    context.globalState.get("usagePaused", false);
+  const updateUsageStatus = () => {
+    if (!usageStatusItem) return;
+    if (!context.globalState.get("usageConsent", false)) {
+      usageStatusItem.hide();
+      return;
+    }
+    if (isUsagePaused()) {
+      usageStatusItem.text = "$(debug-pause) Copilot usage paused";
+      usageStatusItem.tooltip =
+        "Local Copilot usage watching is paused. Select to resume watching.";
+      usageStatusItem.command = "paretoGhc.resumeUsage";
+      usageStatusItem.show();
+      return;
+    }
+    if (usageWatchers.length > 0) {
+      usageStatusItem.text = "$(eye) Copilot usage watching";
+      usageStatusItem.tooltip =
+        "Watching local Copilot chat sessions for usage. Select to pause watching.";
+      usageStatusItem.command = "paretoGhc.pauseUsage";
+      usageStatusItem.show();
+      return;
+    }
+    usageStatusItem.hide();
+  };
   const readStoredUsage = async (): Promise<StoredUsageFile | undefined> => {
     try {
       const raw = JSON.parse(
@@ -161,6 +188,7 @@ export function activate(context: vscode.ExtensionContext) {
   const setupUsageWatchers = () => {
     if (
       !context.globalState.get("usageConsent", false) ||
+      isUsagePaused() ||
       usageWatchers.length ||
       typeof vscode.workspace.createFileSystemWatcher !== "function" ||
       typeof vscode.RelativePattern !== "function"
@@ -513,6 +541,7 @@ export function activate(context: vscode.ExtensionContext) {
       byok,
       usage,
       usageWatching: usageWatchers.length > 0,
+      usagePaused: isUsagePaused(),
       budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
       message: [message, discoveryErrors[options.source]]
@@ -564,6 +593,7 @@ export function activate(context: vscode.ExtensionContext) {
       };
     }
     void panel?.webview.postMessage({ type: "state", state });
+    updateUsageStatus();
   };
   const discoverCopilot = async (gen: number) => {
     try {
@@ -679,7 +709,18 @@ export function activate(context: vscode.ExtensionContext) {
     hasKey = true;
     await refresh(true);
   };
+  if (
+    typeof vscode.window.createStatusBarItem === "function" &&
+    vscode.StatusBarAlignment
+  ) {
+    usageStatusItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100,
+    );
+    context.subscriptions.push(usageStatusItem);
+  }
   if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+  updateUsageStatus();
   const clearUsageData = async () => {
     usageGeneration++;
     clearTimeout(usageTimer);
@@ -687,6 +728,7 @@ export function activate(context: vscode.ExtensionContext) {
     usageWatchers = [];
     usage = null;
     await context.globalState.update("usageConsent", false);
+    await context.globalState.update("usagePaused", false);
     await usagePending;
     try {
       await vscode.workspace.fs.delete(usageSummaryUri);
@@ -704,6 +746,28 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
     message = "Local usage data erased. Rescanning will ask for consent again.";
+    render();
+  };
+  const pauseUsageWatching = async () => {
+    if (!context.globalState.get("usageConsent", false)) {
+      render();
+      return;
+    }
+    clearTimeout(usageTimer);
+    for (const watcher of usageWatchers) watcher.dispose();
+    usageWatchers = [];
+    await context.globalState.update("usagePaused", true);
+    message = "Usage watching paused. Stored usage kept.";
+    render();
+  };
+  const resumeUsageWatching = async () => {
+    if (!context.globalState.get("usageConsent", false)) {
+      render();
+      return;
+    }
+    await context.globalState.update("usagePaused", false);
+    setupUsageWatchers();
+    message = "Watching for new sessions.";
     render();
   };
   const openPanel = () => {
@@ -726,6 +790,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("paretoGhc.clearUsage", async () => {
       openPanel();
       await clearUsageData();
+    }),
+    vscode.commands.registerCommand("paretoGhc.pauseUsage", async () => {
+      openPanel();
+      await pauseUsageWatching();
+    }),
+    vscode.commands.registerCommand("paretoGhc.resumeUsage", async () => {
+      openPanel();
+      await resumeUsageWatching();
     }),
     vscode.commands.registerCommand("paretoGhc.open", () => {
       if (panel) {
@@ -816,6 +888,10 @@ export function activate(context: vscode.ExtensionContext) {
               else render();
             } else if (m.type === "clearUsage") {
               await clearUsageData();
+            } else if (m.type === "pauseUsage") {
+              await pauseUsageWatching();
+            } else if (m.type === "resumeUsage") {
+              await resumeUsageWatching();
             } else if (m.type === "key") await setKey();
             else if (m.type === "source") {
               if (m.source !== options.source) {

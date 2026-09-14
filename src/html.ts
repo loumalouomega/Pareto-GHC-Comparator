@@ -80,6 +80,7 @@ export function html(
   <section class="card" aria-labelledby="usage-title" id="usage-card">
   <h2 id="usage-title">Local Copilot usage</h2><div class="controls">
   <button id="usage-scan" class="secondary">Scan local usage</button>
+  <button id="usage-pause" class="secondary" hidden>Pause watching</button>
   <button id="usage-clear" class="secondary">Erase local usage</button>
   <label class="checkbox-label"><input id="usage-full-paths" type="checkbox">Show full paths</label>
   <span id="usage-watching" role="status"></span>

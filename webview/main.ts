@@ -1233,9 +1233,16 @@ function renderUsage() {
   el("usage-diagnostics").textContent = d
     ? `Completeness: ${d.malformed} malformed records · ${d.unsupported} unsupported files · ${d.unreadable} unreadable files · ${d.stale} stale contributions · ${d.missingTokens} requests missing tokens · ${d.estimatedTokens} estimated requests. Prefill and credit budgets use fully observed token pairs only.`
     : "";
-  el("usage-watching").textContent = state.usageWatching
-    ? "Watching for new sessions."
-    : "";
+  el("usage-watching").textContent = state.usagePaused
+    ? "Watching paused. Stored usage kept."
+    : state.usageWatching
+      ? "Watching for new sessions."
+      : "";
+  const pauseBtn = el<HTMLButtonElement>("usage-pause");
+  pauseBtn.hidden = !state.usageWatching && !state.usagePaused;
+  pauseBtn.textContent = state.usagePaused
+    ? "Resume watching"
+    : "Pause watching";
   const summary = el("usage-summary");
   const modelsEl = el("usage-models"),
     daysEl = el("usage-days"),
@@ -2395,6 +2402,8 @@ el("include-none").onclick = () => {
   send("excludeAll", { excluded: true });
 };
 el("usage-scan").onclick = () => send("scanUsage");
+el("usage-pause").onclick = () =>
+  send(state?.usagePaused ? "resumeUsage" : "pauseUsage");
 el("usage-clear").onclick = () => send("clearUsage");
 el("usage-full-paths").addEventListener("input", () => {
   usageFullPaths = el<HTMLInputElement>("usage-full-paths").checked;

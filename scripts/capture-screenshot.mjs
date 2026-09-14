@@ -106,6 +106,7 @@ const state = {
   byok,
   usage: null,
   usageWatching: false,
+  usagePaused: false,
   budgetSuggestion: suggestBudget(null, options.billing),
   loading: false,
   hasKey: true,

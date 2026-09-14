@@ -1413,6 +1413,8 @@ test("usage budget suggestions handle empty and unpriced windows", () => {
 test("usage messages validate scan and clear actions", () => {
   assert.deepEqual(parseMessage({ type: "scanUsage" }), { type: "scanUsage" });
   assert.deepEqual(parseMessage({ type: "clearUsage" }), { type: "clearUsage" });
+  assert.deepEqual(parseMessage({ type: "pauseUsage" }), { type: "pauseUsage" });
+  assert.deepEqual(parseMessage({ type: "resumeUsage" }), { type: "resumeUsage" });
 });
 
 test("usage medians and p90s summarize priced requests", () => {
@@ -1625,7 +1627,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

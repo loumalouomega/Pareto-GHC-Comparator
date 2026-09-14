@@ -43,6 +43,12 @@ test("extension discovers Copilot models, serves cached data, validates messages
   let pauseWrite: (() => Promise<void>) | undefined;
   let deleted = false;
   let deleteError = false;
+  const statusItems: {
+    text: string;
+    tooltip: string;
+    command: string;
+    shown: boolean;
+  }[] = [];
   let receiver: (m: unknown) => Promise<void> = async () => {},
     discoveryChanged = () => {};
   let discoveredVendor = "",
@@ -99,6 +105,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
       }),
     },
     ViewColumn: { One: 1 },
+    StatusBarAlignment: { Left: 1, Right: 2 },
     RelativePattern: class {
       constructor(
         public base: unknown,
@@ -123,6 +130,23 @@ test("extension discovers Copilot models, serves cached data, validates messages
       showInputBox: async () => secret,
       showSaveDialog: async () => ({ path: "/exports/data" }),
       showInformationMessage: async () => "Scan locally",
+      createStatusBarItem: () => {
+        const item = {
+          text: "",
+          tooltip: "",
+          command: "",
+          shown: false,
+          show() {
+            item.shown = true;
+          },
+          hide() {
+            item.shown = false;
+          },
+          dispose() {},
+        };
+        statusItems.push(item);
+        return item;
+      },
     },
     workspace: {
       createFileSystemWatcher: () => ({
@@ -207,7 +231,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
           }));
           b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
             contents:
-              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern}=mock;",
+              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern,StatusBarAlignment}=mock;",
             loader: "js",
           }));
         },
@@ -555,6 +579,46 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(last().usage.diagnostics.stale, 0);
     assert.equal(last().usage.diagnostics.malformed, 0);
 
+    // Pause stops the watcher without revoking consent or deleting data.
+    assert.equal(statusItems.length, 1);
+    assert.equal(statusItems[0].shown, true);
+    assert.match(statusItems[0].text, /watching/);
+    assert.ok(commands.has("paretoGhc.pauseUsage"));
+    assert.ok(commands.has("paretoGhc.resumeUsage"));
+    const kicksBeforePause = kicks.length;
+    await receiver({ type: "pauseUsage" });
+    assert.equal(state.get("usagePaused"), true);
+    assert.equal(last().usagePaused, true);
+    assert.equal(last().usageWatching, false);
+    assert.equal(state.get("usageConsent"), true);
+    assert.notEqual(last().usage, null);
+    assert.match(last().message, /paused/);
+    assert.match(statusItems[0].text, /paused/);
+    assert.equal(statusItems[0].command, "paretoGhc.resumeUsage");
+    // A debounced watcher kick pending at pause time never scans.
+    vi.useFakeTimers();
+    kicks[0]();
+    await receiver({ type: "pauseUsage" });
+    const pausedWrites = writes.length;
+    await vi.advanceTimersByTimeAsync(1100);
+    assert.equal(writes.length, pausedWrites);
+    vi.useRealTimers();
+    await receiver({ type: "resumeUsage" });
+    assert.equal(state.get("usagePaused"), false);
+    assert.equal(last().usagePaused, false);
+    assert.equal(last().usageWatching, true);
+    assert.ok(kicks.length > kicksBeforePause);
+    assert.match(last().message, /Watching/);
+    assert.match(statusItems[0].text, /watching/);
+    assert.equal(statusItems[0].command, "paretoGhc.pauseUsage");
+    // Pausing via the registered command keeps stored data too.
+    await (commands.get("paretoGhc.pauseUsage")!() as Promise<void>);
+    assert.equal(state.get("usagePaused"), true);
+    assert.notEqual(last().usage, null);
+    await (commands.get("paretoGhc.resumeUsage")!() as Promise<void>);
+    assert.equal(state.get("usagePaused"), false);
+    assert.equal(last().usageWatching, true);
+
     assert.ok(
       writes.every((path) => /usage.json\.[a-f0-9]+\.tmp.json$/.test(path)),
     );
@@ -590,6 +654,8 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(last().usageWatching, false);
     assert.equal(last().usage, null);
     assert.equal(state.get("usageConsent"), false);
+    assert.equal(state.get("usagePaused"), false);
+    assert.equal(statusItems[0].shown, false);
     assert.match(last().message, /erased/);
     deleteError = true;
     await receiver({ type: "clearUsage" });

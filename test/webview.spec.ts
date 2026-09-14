@@ -200,6 +200,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       byok: {},
       usage: null,
       usageWatching: false,
+      usagePaused: false,
       budgetSuggestion: null,
       recommendation: { modelIds: [], explanation: "" },
       profiles: [],
@@ -348,6 +349,15 @@ for (const theme of ["light", "dark", "high-contrast"])
       if (m.type === "clearUsage") {
         state.usage = null;
         state.usageWatching = false;
+        state.usagePaused = false;
+      }
+      if (m.type === "pauseUsage") {
+        state.usagePaused = true;
+        state.usageWatching = false;
+      }
+      if (m.type === "resumeUsage") {
+        state.usagePaused = false;
+        state.usageWatching = true;
       }
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
@@ -956,6 +966,14 @@ for (const theme of ["light", "dark", "high-contrast"])
       "copilot/mystery",
     );
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
+    await expect(page.locator("#usage-pause")).toHaveText("Pause watching");
+    await page.locator("#usage-pause").click();
+    expect(messages.some((m) => m.type === "pauseUsage")).toBeTruthy();
+    await expect(page.locator("#usage-pause")).toHaveText("Resume watching");
+    await expect(page.locator("#usage-watching")).toHaveText(/paused/);
+    await page.locator("#usage-pause").click();
+    expect(messages.some((m) => m.type === "resumeUsage")).toBeTruthy();
+    await expect(page.locator("#usage-pause")).toHaveText("Pause watching");
     await expect(page.locator("#usage-diagnostics")).toContainText(
       "1 malformed records",
     );

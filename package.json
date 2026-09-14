@@ -42,6 +42,14 @@
       {
         "command": "paretoGhc.clearUsage",
         "title": "Pareto GHC: Erase Local Copilot Usage"
+      },
+      {
+        "command": "paretoGhc.pauseUsage",
+        "title": "Pareto GHC: Pause Copilot Usage Watching"
+      },
+      {
+        "command": "paretoGhc.resumeUsage",
+        "title": "Pareto GHC: Resume Copilot Usage Watching"
       }
     ]
   },

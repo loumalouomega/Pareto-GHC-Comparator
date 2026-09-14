@@ -72,6 +72,8 @@ export function parseMessage(raw: unknown): HostMessage {
   }
   if (m.type === "scanUsage") return { type: "scanUsage" };
   if (m.type === "clearUsage") return { type: "clearUsage" };
+  if (m.type === "pauseUsage") return { type: "pauseUsage" };
+  if (m.type === "resumeUsage") return { type: "resumeUsage" };
   if (
     m.type === "exportPng" &&
     typeof m.png === "string" &&

@@ -475,6 +475,8 @@ export type HostMessage =
   | { type: "byokReset"; ids: string[] }
   | { type: "scanUsage" }
   | { type: "clearUsage" }
+  | { type: "pauseUsage" }
+  | { type: "resumeUsage" }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -542,6 +544,7 @@ export interface ViewState {
   byok: ByokStore;
   usage: UsageSummary | null;
   usageWatching: boolean;
+  usagePaused: boolean;
   budgetSuggestion: BudgetSuggestion | null;
   loading: boolean;
   message: string;

@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Usage-watching pause control: a status bar item (`$(eye) Copilot usage watching`) is now shown whenever the local usage file watcher is active, so watching is visible while another tab is open or the panel is closed. **Pause watching** / **Resume watching** — via the status bar, the `Pareto GHC: Pause/Resume Copilot Usage Watching` commands, or the new button in the Usage tab — stops the watcher without revoking consent or deleting stored data; manual scans still work while paused, and erasing still removes everything including the paused state.
+
 ## 1.1.0
 
 ### Added

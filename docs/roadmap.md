@@ -21,13 +21,6 @@ Below, Tier 1 turns each "Requirements across future work" principle into scoped
 
 Admission criterion: current shipped behavior falls short of one of the requirements below; close the gap without expanding scope beyond it.
 
-### Visible usage-watching status and pause control — S
-
-- **Gap:** the "watching" indicator only appears inside the open Usage tab (`webview/main.ts`'s usage card), so it isn't visible while another tab is open or the panel is closed. The only way to stop watching is **Erase Local Copilot Usage**, which also deletes all stored data (`src/extension.ts`'s erase handler).
-- **Deliverables:** a status bar item shown whenever the file watcher is active; a **Pause watching** / **Resume watching** command and webview control that stops the watcher without revoking consent or deleting data.
-- **Dependencies:** existing consent flag and watcher setup in `src/extension.ts`.
-- **Acceptance:** no watcher runs while paused or before consent is granted. Pausing and resuming is visible in the Usage tab. Erase still removes everything, including a paused watcher's state.
-
 ### Local usage retention and inspection — M
 
 - **Gap:** stored usage history has no age limit and accumulates indefinitely; there is no way to see what is actually stored short of erasing it.
