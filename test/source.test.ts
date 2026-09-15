@@ -116,6 +116,12 @@ test("source switching resets billing, namespaces overrides, and guards stale di
       showInputBox: async () => secret,
     },
     workspace: {
+      getConfiguration: () => ({
+        get: () => undefined,
+        inspect: () => ({ key: "", globalValue: undefined }),
+        update: async () => {},
+      }),
+      onDidChangeConfiguration: () => disposable,
       fs: {
         readFile: async () => Buffer.from(JSON.stringify(cache)),
         createDirectory: async () => {},

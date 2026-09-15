@@ -36,6 +36,8 @@ The optional **Monthly spending scenario** card projects plan fee plus expected 
 
 Local usage scanning requires consent in a modal prompt. **Erase Local Copilot Usage** stops queued and active scans before completing deletion; session deletions also refresh watched totals. **Only my models** filters comparison results while preserving all thinking-level checklist selections.
 
+Three `paretoGhc.*` extension settings mirror stored preferences without reload: `usage.retentionDays` (default unlimited) overrides the Usage tab retention window, `usage.watchOnScan` (default on) decides whether consented scans start the file watcher, and `chart.defaultView` (default task) is the chart basis for views without a saved choice. An explicitly configured value wins, the stored value otherwise applies unchanged, and explicit Pause/Resume commands always work. See [User guide](docs/user-guide.md#extension-settings).
+
 Usage-based budget suggestions include free requests in the percentile and can suggest a zero budget.
 
 ## Compare options

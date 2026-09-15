@@ -58,6 +58,15 @@ test("extension discovers Copilot models, serves cached data, validates messages
   }[] = [];
   let receiver: (m: unknown) => Promise<void> = async () => {},
     discoveryChanged = () => {};
+  let configListener:
+    | ((e: { affectsConfiguration(scope: string): boolean }) => void)
+    | undefined;
+  const configDefaults: Record<string, unknown> = {
+    "usage.watchOnScan": true,
+    "usage.retentionDays": 0,
+    "chart.defaultView": "task",
+  };
+  const configValues: Record<string, unknown> = {};
   let discoveredVendor = "",
     secret = "DO_NOT_LEAK_API_KEY";
   const state = new Map<string, unknown>();
@@ -166,6 +175,35 @@ test("extension discovers Copilot models, serves cached data, validates messages
       },
     },
     workspace: {
+      getConfiguration: (section: string) => ({
+        get: (key: string) =>
+          section === "paretoGhc"
+            ? (configValues[key] ?? configDefaults[key])
+            : undefined,
+        inspect: (key: string) => ({
+          key: `${section}.${key}`,
+          globalValue:
+            section === "paretoGhc" ? configValues[key] : undefined,
+        }),
+        update: async (key: string, value: unknown) => {
+          if (section === "paretoGhc") {
+            if (value === undefined) delete configValues[key];
+            else configValues[key] = value;
+          }
+          configListener?.({
+            affectsConfiguration: (scope: string) =>
+              section === scope ||
+              (section ?? "").startsWith(`${scope}.`) ||
+              scope.startsWith(`${section}.`),
+          });
+        },
+      }),
+      onDidChangeConfiguration: (
+        fn: (e: { affectsConfiguration(scope: string): boolean }) => void,
+      ) => {
+        configListener = fn;
+        return disposable;
+      },
       registerTextDocumentContentProvider: (
         scheme: string,
         provider: {
@@ -790,6 +828,363 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.match(shownDocs.at(-1)!.content, /No stored Copilot usage data/);
   } finally {
     vi.useRealTimers();
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+    if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = xdg;
+    if (appdata === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = appdata;
+  }
+  delete (globalThis as any).__paretoVscodeMock;
+});
+
+test("extension settings mirror stored state and apply without reload", async () => {
+  const commands = new Map<string, () => unknown>();
+  const messages: unknown[] = [];
+  const disposable = { dispose() {} };
+  const cache = {
+    version: "4.3",
+    fetchedAt: Date.now(),
+    models: [
+      {
+        id: "aa",
+        slug: "gpt-5-mini",
+        name: "GPT-5 mini",
+        provider: "OpenAI",
+        scores: { general: 30, coding: 40, agentic: 20 },
+      },
+    ],
+  };
+  const state = new Map<string, unknown>();
+  const storageFiles = new Map<string, Uint8Array>([
+    ["/cache/benchmarks.json", Buffer.from(JSON.stringify(cache))],
+  ]);
+  let receiver: (m: unknown) => Promise<void> = async () => {};
+  let configListener:
+    | ((e: { affectsConfiguration(scope: string): boolean }) => void)
+    | undefined;
+  const configDefaults: Record<string, unknown> = {
+    "usage.watchOnScan": true,
+    "usage.retentionDays": 0,
+    "chart.defaultView": "task",
+  };
+  const configValues: Record<string, unknown> = {
+    // A fresh install starts from the configured chart default.
+    "chart.defaultView": "workload",
+  };
+  const fireConfig = () =>
+    configListener?.({
+      affectsConfiguration: (scope: string) =>
+        scope === "paretoGhc" || "paretoGhc.".startsWith(`${scope}.`),
+    });
+  const mock = {
+    commands: {
+      registerCommand: (id: string, fn: () => unknown) => {
+        commands.set(id, fn);
+        return disposable;
+      },
+    },
+    Uri: {
+      joinPath: (root: { path: string }, ...parts: string[]) => ({
+        path: [root.path, ...parts].join("/"),
+        toString() {
+          return this.path;
+        },
+      }),
+      parse: (value: string) => ({
+        path: value,
+        toString() {
+          return value;
+        },
+      }),
+    },
+    ViewColumn: { One: 1 },
+    StatusBarAlignment: { Left: 1, Right: 2 },
+    RelativePattern: class {
+      constructor(
+        public base: unknown,
+        public pattern: string,
+      ) {}
+    },
+    window: {
+      createWebviewPanel: () => ({
+        webview: {
+          cspSource: "https://resources.test",
+          asWebviewUri: (u: unknown) => u,
+          html: "",
+          postMessage: (m: unknown) => messages.push(m),
+          onDidReceiveMessage: (fn: typeof receiver) => {
+            receiver = fn;
+            return disposable;
+          },
+        },
+        onDidDispose: () => disposable,
+        reveal() {},
+      }),
+      showInformationMessage: async () => "Scan locally",
+      createStatusBarItem: () => ({
+        text: "",
+        tooltip: "",
+        command: "",
+        shown: false,
+        show() {},
+        hide() {},
+        dispose() {},
+      }),
+    },
+    workspace: {
+      getConfiguration: (section: string) => ({
+        get: (key: string) =>
+          section === "paretoGhc"
+            ? (configValues[key] ?? configDefaults[key])
+            : undefined,
+        inspect: (key: string) => ({
+          key: `${section}.${key}`,
+          globalValue:
+            section === "paretoGhc" ? configValues[key] : undefined,
+        }),
+        update: async (key: string, value: unknown) => {
+          if (section === "paretoGhc") {
+            if (value === undefined) delete configValues[key];
+            else configValues[key] = value;
+          }
+          fireConfig();
+        },
+      }),
+      onDidChangeConfiguration: (
+        fn: (e: { affectsConfiguration(scope: string): boolean }) => void,
+      ) => {
+        configListener = fn;
+        return disposable;
+      },
+      registerTextDocumentContentProvider: () => disposable,
+      createFileSystemWatcher: () => ({
+        onDidChange() {},
+        onDidCreate() {},
+        onDidDelete() {},
+        dispose() {},
+      }),
+      fs: {
+        readFile: async (uri: { path: string }) => {
+          const data = storageFiles.get(uri.path);
+          if (!data) throw Object.assign(new Error("missing"), { code: "FileNotFound" });
+          return data;
+        },
+        createDirectory: async () => {},
+        writeFile: async (uri: { path: string }, data: Uint8Array) => {
+          storageFiles.set(uri.path, data);
+        },
+        delete: async (uri: { path: string }) => {
+          storageFiles.delete(uri.path);
+        },
+        rename: async (from: { path: string }, to: { path: string }) => {
+          storageFiles.set(to.path, storageFiles.get(from.path)!);
+          storageFiles.delete(from.path);
+        },
+      },
+    },
+    lm: {
+      selectChatModels: async () => [
+        {
+          id: "gpt-5-mini",
+          name: "GPT-5 mini",
+          family: "gpt-5-mini",
+          maxInputTokens: 1000000,
+        },
+      ],
+      onDidChangeChatModels: () => disposable,
+    },
+    env: { clipboard: { writeText: async () => {} } },
+  };
+  (globalThis as any).__paretoVscodeMock = mock;
+  const home = process.env.HOME;
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const appdata = process.env.APPDATA;
+  const empty = mkdtempSync(join(tmpdir(), "pareto-settings-"));
+  process.env.HOME = empty;
+  process.env.XDG_CONFIG_HOME = join(empty, "xdg");
+  process.env.APPDATA = join(empty, "appdata");
+  try {
+    const bundle = await build({
+      entryPoints: ["src/extension.ts"],
+      bundle: true,
+      write: false,
+      platform: "node",
+      format: "esm",
+      plugins: [
+        {
+          name: "mock-vscode",
+          setup(b) {
+            b.onResolve({ filter: /^vscode$/ }, () => ({
+              path: "vscode",
+              namespace: "mock",
+            }));
+            b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
+              contents:
+                "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern,StatusBarAlignment}=mock;",
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    const extension = await import(
+      // A nonce comment keeps this bundle's data URL distinct from the other
+      // extension-host bundle in this file: identical bytes would share Node's
+      // data-URL module cache and keep the other test's vscode mock.
+      `data:text/javascript;base64,${Buffer.from(`${bundle.outputFiles[0].text}\n// pareto-settings-host-test`).toString("base64")}`
+    );
+    extension.activate({
+      extensionUri: { path: "/extension" },
+      globalStorageUri: { path: "/cache" },
+      subscriptions: [],
+      globalState: {
+        get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+        update: async (key: string, value: unknown) => {
+          state.set(key, value);
+        },
+      },
+      secrets: { get: async () => "key" },
+    });
+    commands.get("paretoGhc.open")!();
+    await receiver({ type: "ready" });
+    const last = () => (messages.at(-1) as any).state;
+    const revision = () => last().optionsRevision;
+    // The host queues webview messages; poll until the expected state lands.
+    const waitFor = async (cond: () => boolean, label: string) => {
+      for (let i = 0; i < 500 && !cond(); i++)
+        await new Promise((r) => setTimeout(r, 10));
+      assert.ok(cond(), label);
+    };
+    // Fresh install: no saved chart choice, so the configured default wins.
+    await waitFor(
+      () => last()?.options.display.chart === "workload",
+      "initial chart follows the configured default",
+    );
+    assert.equal(state.get("options"), undefined);
+    // Clearing the setting keeps the current view instead of resetting it.
+    delete configValues["chart.defaultView"];
+    fireConfig();
+    assert.equal(last().options.display.chart, "workload");
+    // An explicitly configured retention window shows before any consent and
+    // never triggers a scan on its own.
+    configValues["usage.retentionDays"] = 30;
+    fireConfig();
+    assert.equal(last().usageRetentionDays, 30);
+    assert.equal(last().usage, null);
+    // The first consented scan starts watching per the default (watch on).
+    await receiver({ type: "scanUsage" });
+    await waitFor(
+      () => last()?.usageWatching === true,
+      "first consented scan starts watching",
+    );
+    assert.equal(state.get("usageConsent"), true);
+    // Retention applies on scans: an older request is purged.
+    const sessionDir = join(
+      empty,
+      "xdg",
+      "Code",
+      "User",
+      "workspaceStorage",
+      "ws",
+      "chatSessions",
+    );
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "old.jsonl"),
+      JSON.stringify({
+        kind: 1,
+        k: ["requests", 0, "result"],
+        v: {
+          metadata: { modelId: "copilot/gpt-5-mini", promptTokens: 5, outputTokens: 5 },
+          timings: { requestSent: Date.now() - 40 * 86400000 },
+        },
+      }),
+    );
+    await receiver({ type: "scanUsage" });
+    await waitFor(
+      () => last()?.usage?.requestCount === 0,
+      "retention purge applies on scan",
+    );
+    assert.match(last().message, /Retention \(30 days\): purged 1/);
+    // Switching the watch default off stops watching without touching
+    // consent or stored data; switching it back on resumes watching.
+    configValues["usage.watchOnScan"] = false;
+    fireConfig();
+    await waitFor(
+      () => last()?.usageWatching === false,
+      "watch default off stops watching",
+    );
+    assert.equal(state.get("usageConsent"), true);
+    assert.notEqual(last().usage, null);
+    configValues["usage.watchOnScan"] = true;
+    fireConfig();
+    await waitFor(
+      () => last()?.usageWatching === true,
+      "watch default on resumes watching",
+    );
+    // An explicit pause still wins over an enabled watch default.
+    await receiver({ type: "pauseUsage" });
+    await waitFor(() => last()?.usagePaused === true, "explicit pause sticks");
+    fireConfig();
+    assert.equal(last().usageWatching, false);
+    await receiver({ type: "resumeUsage" });
+    await waitFor(
+      () => last()?.usageWatching === true,
+      "explicit resume restarts watching",
+    );
+    // The Usage tab input mirrors into the explicitly configured setting.
+    await receiver({ type: "setUsageRetention", days: 60 });
+    await waitFor(
+      () => last()?.usageRetentionDays === 60,
+      "tab edit mirrors into the configured setting",
+    );
+    assert.equal(configValues["usage.retentionDays"], 60);
+    assert.equal(state.get("usageRetentionDays"), 60);
+    // Clearing the setting falls back to the stored value; later tab edits
+    // then stay in stored state without touching Settings.
+    delete configValues["usage.retentionDays"];
+    fireConfig();
+    assert.equal(last().usageRetentionDays, 60);
+    await receiver({ type: "setUsageRetention", days: 45 });
+    await waitFor(
+      () => last()?.usageRetentionDays === 45,
+      "cleared setting falls back to stored state",
+    );
+    assert.equal(state.get("usageRetentionDays"), 45);
+    assert.equal("usage.retentionDays" in configValues, false);
+    // An explicitly invalid setting falls back to stored state, no crash.
+    configValues["usage.retentionDays"] = -5;
+    fireConfig();
+    assert.equal(last().usageRetentionDays, 45);
+    delete configValues["usage.retentionDays"];
+    fireConfig();
+    // An explicitly configured chart basis applies to the open chart without
+    // reload, without touching saved profiles.
+    const before = revision();
+    configValues["chart.defaultView"] = "task";
+    fireConfig();
+    await waitFor(
+      () => last()?.options.display.chart === "task",
+      "configured chart basis applies without reload",
+    );
+    assert.ok(revision() > before);
+    assert.equal(last().profileModified, false);
+    // A later panel chart edit wins until the setting itself changes again:
+    // unrelated configuration events must not stomp it.
+    await receiver({
+      type: "options",
+      options: { ...last().options, display: { ...last().options.display, chart: "workload" } },
+    });
+    await waitFor(
+      () =>
+        last()?.options.display.chart === "workload" &&
+        state.get("options") !== undefined,
+      "panel chart edit persists",
+    );
+    fireConfig();
+    assert.equal(last().options.display.chart, "workload");
+  } finally {
     if (home === undefined) delete process.env.HOME;
     else process.env.HOME = home;
     if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;

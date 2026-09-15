@@ -13,20 +13,13 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-The last shipped tier (integration evidence matrix and schema version detection): unsupported Copilot session files carry a content-free schema fingerprint with file-an-issue guidance (a recognized anchor can no longer mask drifted request records into a silent zero), OpenCode discovery failures report the probed CLI version, unparseable CLI output fails closed with an output fingerprint, and `docs/integrations.md` records the client × platform × version evidence matrix with dated fixtures per verified shape. See `AGENTS.md`'s "Integration evidence matrix and schema version detection" section for the record.
+The last shipped tier (extension settings contribution): `paretoGhc.usage.watchOnScan`, `paretoGhc.usage.retentionDays`, and `paretoGhc.chart.defaultView` mirror the stored watching default, retention window, and chart basis — an explicitly configured value wins, otherwise stored state applies unchanged, and invalid values are ignored. Changes take effect without reload (consent-checked rescans, watcher stop/start, immediate chart apply) and never grant consent or scan. See `AGENTS.md`'s "Profiles and saved-state migration" section for the record.
 
 Below, Tier 2 is new delivery candidates that meet the "Requirements across future work" principles. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
 
 ## Tier 2 — New delivery candidates
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
-
-### Extension settings contribution — S
-
-- **Gap:** the extension contributes no `contributes.configuration` in `package.json`; watching defaults, retention, and chart defaults live only in `globalState`/`workspaceState` with no user-facing settings UI.
-- **Deliverables:** add a `paretoGhc.*` settings section (watch-on-scan default, retention window from the task above, default chart view/task) that mirrors and can override the existing stored state, migrating existing `globalState` values on first read.
-- **Dependencies:** none beyond current state storage; the retention setting (`usageRetentionDays` in global state, shipped) is ready to mirror alongside the watching default and chart defaults.
-- **Acceptance:** settings changes take effect without reload where feasible; existing users' current behavior is unchanged until they touch a setting.
 
 ### Per-row pricing age — S
 

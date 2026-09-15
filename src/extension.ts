@@ -42,6 +42,11 @@ import { loadProfiles, changeProfile, profileModified } from "./profiles";
 import { parseMessage } from "./messages";
 import { loadByokStore, mergeByokForm } from "./byok";
 import {
+  resolveSettings,
+  storedChartView,
+  type ResolvedSettings,
+} from "./settings";
+import {
   aggregateUsage,
   blankUsageIndex,
   discoverUsageFiles,
@@ -152,7 +157,39 @@ export function activate(context: vscode.ExtensionContext) {
   let usageStatusItem: vscode.StatusBarItem | undefined;
   const isUsagePaused = () =>
     context.globalState.get("usagePaused", false);
+  /** Read `paretoGhc.*` settings; unconfigured values leave stored state in
+   * charge, so existing users keep their behavior until they touch a setting.
+   * Falls back to all-unconfigured when the host offers no configuration API
+   * (older mocks), never throwing. */
+  const readSettings = (): ResolvedSettings => {
+    const fallback: ResolvedSettings = {
+      watchOnScan: { configured: false, value: true },
+      retentionDays: { configured: false, value: undefined },
+      chartView: { configured: false, value: "task" },
+    };
+    try {
+      const api = vscode.workspace as unknown as {
+        getConfiguration?: (section: string) => {
+          get(key: string): unknown;
+          inspect(key: string):
+            | {
+                globalValue?: unknown;
+                workspaceValue?: unknown;
+                workspaceFolderValue?: unknown;
+              }
+            | undefined;
+        };
+      };
+      if (typeof api.getConfiguration !== "function") return fallback;
+      return resolveSettings(api.getConfiguration("paretoGhc"));
+    } catch {
+      return fallback;
+    }
+  };
   const retentionDays = (): number | undefined => {
+    const settings = readSettings();
+    if (settings.retentionDays.configured)
+      return settings.retentionDays.value;
     try {
       return parseUsageRetentionDays(
         context.globalState.get("usageRetentionDays"),
@@ -161,6 +198,30 @@ export function activate(context: vscode.ExtensionContext) {
       return undefined;
     }
   };
+  /** Automatic watcher startup after a scan: an explicit pause always wins,
+   * then an explicitly configured watch default, else the historic default
+   * (watch). Explicit Pause/Resume commands bypass this entirely. */
+  const shouldAutoWatch = (): boolean => {
+    if (isUsagePaused()) return false;
+    const settings = readSettings();
+    return settings.watchOnScan.configured
+      ? settings.watchOnScan.value
+      : true;
+  };
+  {
+    // A view without a saved chart choice (fresh install or pre-display
+    // settings) starts from the configured chart default; ordinary chart
+    // edits remain saved view preferences afterwards.
+    const settingsChart = readSettings().chartView.value;
+    if (
+      storedChartView(context.globalState.get("options")) === undefined &&
+      options.display.chart !== settingsChart
+    )
+      options = {
+        ...options,
+        display: { ...options.display, chart: settingsChart },
+      };
+  }
   const updateUsageStatus = () => {
     if (!usageStatusItem) return;
     if (!context.globalState.get("usageConsent", false)) {
@@ -393,7 +454,7 @@ export function activate(context: vscode.ExtensionContext) {
           files: storedFiles,
         });
         if (!current()) return;
-        setupUsageWatchers();
+        if (shouldAutoWatch()) setupUsageWatchers();
         message =
           `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
           "Local estimates only, not a bill." +
@@ -429,7 +490,11 @@ export function activate(context: vscode.ExtensionContext) {
       context.globalState.get("usageConsent", false)
     ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
-      if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+      if (
+        context.globalState.get("usageConsent", false) &&
+        shouldAutoWatch()
+      )
+        setupUsageWatchers();
     }
     if (!stored && generation === usageGeneration) await runUsageScan();
     render();
@@ -800,14 +865,17 @@ export function activate(context: vscode.ExtensionContext) {
     message = "Local usage data erased. Rescanning will ask for consent again.";
     render();
   };
+  const stopUsageWatchers = () => {
+    clearTimeout(usageTimer);
+    for (const watcher of usageWatchers) watcher.dispose();
+    usageWatchers = [];
+  };
   const pauseUsageWatching = async () => {
     if (!context.globalState.get("usageConsent", false)) {
       render();
       return;
     }
-    clearTimeout(usageTimer);
-    for (const watcher of usageWatchers) watcher.dispose();
-    usageWatchers = [];
+    stopUsageWatchers();
     await context.globalState.update("usagePaused", true);
     message = "Usage watching paused. Stored usage kept.";
     render();
@@ -838,6 +906,73 @@ export function activate(context: vscode.ExtensionContext) {
     if (panel) panel.reveal();
     else void vscode.commands.executeCommand("paretoGhc.open");
   };
+  // Last settings-derived values applied, so configuration events — including
+  // the echo of our own retention mirror above — never rescan, restop, or
+  // re-apply an unchanged value. Panel chart edits are preserved until the
+  // setting itself changes again.
+  let lastAppliedRetention = retentionDays();
+  let lastAppliedChart = readSettings().chartView.configured
+    ? readSettings().chartView.value
+    : undefined;
+  const applyConfigurationChange = async () => {
+    const settings = readSettings();
+    let scanned = false;
+    const effectiveRetention = settings.retentionDays.configured
+      ? settings.retentionDays.value
+      : retentionDays();
+    if (effectiveRetention !== lastAppliedRetention) {
+      lastAppliedRetention = effectiveRetention;
+      if (context.globalState.get("usageConsent", false)) {
+        await runUsageScan();
+        scanned = true;
+      }
+    }
+    // Watch default: stop watchers when switched off, (re)start when
+    // switched on — never touching consent, stored data, or the pause flag.
+    if (!shouldAutoWatch() && usageWatchers.length) {
+      stopUsageWatchers();
+      message =
+        "Usage watching stopped by the watch-on-scan setting. Stored usage kept.";
+    } else if (
+      shouldAutoWatch() &&
+      !usageWatchers.length &&
+      context.globalState.get("usageConsent", false)
+    ) {
+      setupUsageWatchers();
+      if (usageWatchers.length) message = "Watching for new sessions.";
+    }
+    // Chart default: an explicitly configured basis applies to the open
+    // chart immediately; clearing the setting keeps the current view.
+    if (
+      settings.chartView.configured &&
+      settings.chartView.value !== lastAppliedChart &&
+      settings.chartView.value !== options.display.chart
+    ) {
+      options = {
+        ...options,
+        display: { ...options.display, chart: settings.chartView.value },
+      };
+      await persist("options", options);
+      optionsRevision++;
+    }
+    lastAppliedChart = settings.chartView.configured
+      ? settings.chartView.value
+      : undefined;
+    if (!scanned) render();
+  };
+  if (
+    typeof (
+      vscode.workspace as unknown as {
+        onDidChangeConfiguration?: unknown;
+      }
+    ).onDidChangeConfiguration === "function"
+  )
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((e: { affectsConfiguration(scope: string): boolean }) => {
+        if (e.affectsConfiguration("paretoGhc"))
+          void applyConfigurationChange();
+      }),
+    );
   context.subscriptions.push(
     vscode.commands.registerCommand("paretoGhc.setApiKey", setKey),
     vscode.commands.registerCommand("paretoGhc.clearApiKey", async () => {
@@ -960,10 +1095,22 @@ export function activate(context: vscode.ExtensionContext) {
             } else if (m.type === "resumeUsage") {
               await resumeUsageWatching();
             } else if (m.type === "setUsageRetention") {
-              await context.globalState.update(
-                "usageRetentionDays",
-                m.days === 0 ? undefined : m.days,
-              );
+              const days = m.days === 0 ? undefined : m.days;
+              await context.globalState.update("usageRetentionDays", days);
+              // Mirror into the VS Code setting while it is explicitly
+              // configured, so the Settings UI and the Usage tab input
+              // cannot drift apart; the echo event below then no-ops.
+              if (readSettings().retentionDays.configured) {
+                try {
+                  await vscode.workspace
+                    .getConfiguration("paretoGhc")
+                    .update("usage.retentionDays", m.days, true);
+                } catch {
+                  // Stored state already holds the value; a read-only
+                  // settings file must not break the Usage tab input.
+                }
+              }
+              lastAppliedRetention = days;
               if (context.globalState.get("usageConsent", false))
                 await runUsageScan();
               else render();

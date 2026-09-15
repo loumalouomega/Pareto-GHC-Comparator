@@ -379,6 +379,18 @@ for (const theme of ["light", "dark", "high-contrast"])
       if (m.type === "setUsageRetention") {
         state.usageRetentionDays = m.days === 0 ? undefined : m.days;
       }
+      // Test-only branches simulating a host-driven settings change (as from
+      // VS Code Settings): the open controls must follow without reload.
+      if (m.type === "__settingsChange") {
+        state.usageRetentionDays = m.days === 0 ? undefined : m.days;
+      }
+      if (m.type === "__chartDefault") {
+        state.options = {
+          ...state.options,
+          display: { ...state.options.display, chart: m.chart },
+        };
+        state.optionsRevision++;
+      }
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
       }
@@ -1017,6 +1029,16 @@ for (const theme of ["light", "dark", "high-contrast"])
         (m) => m.type === "setUsageRetention" && (m as any).days === 0,
       ),
     ).toBeTruthy();
+    // A host-driven settings change (as from VS Code Settings) applies to
+    // the open controls without reload: the inputs follow the posted state.
+    await page.evaluate(() =>
+      (window as any).hostMessage({ type: "__settingsChange", days: 45 }),
+    );
+    await expect(page.locator("#usage-retention")).toHaveValue("45");
+    await page.evaluate(() =>
+      (window as any).hostMessage({ type: "__chartDefault", chart: "workload" }),
+    );
+    await expect(page.locator("#display-chart")).toHaveValue("workload");
     await expect(page.locator("#usage-diagnostics")).toContainText(
       "1 malformed records",
     );

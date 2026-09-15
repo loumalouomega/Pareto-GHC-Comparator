@@ -22,6 +22,29 @@
     "workspace"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Pareto GHC Comparator",
+      "properties": {
+        "paretoGhc.usage.watchOnScan": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically watch local Copilot chat sessions for usage changes after a consented scan. Explicit Pause/Resume commands always work regardless of this setting. Changing it never grants consent or scans on its own."
+        },
+        "paretoGhc.usage.retentionDays": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 3650,
+          "description": "Keep local Copilot usage history for this many days (0 means unlimited, the default). Takes effect on the next consented scan and overrides the stored value from the Usage tab input. Clearing the setting restores the stored value."
+        },
+        "paretoGhc.chart.defaultView": {
+          "type": "string",
+          "enum": ["task", "workload"],
+          "default": "task",
+          "description": "Default chart cost basis for views without a saved chart choice. Changing it applies to the open chart immediately; picking a basis in the panel saves a view preference that then takes precedence until the setting changes again."
+        }
+      }
+    },
     "commands": [
       {
         "command": "paretoGhc.open",
