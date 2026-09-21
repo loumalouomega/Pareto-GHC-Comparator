@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 1.2.0
+
 ### Changed
 
 - Provenance-complete exports (snapshot schema version 3): single and two-option CSV/snapshot exports now record the cost basis (native unit, task/workload/legacy basis, configured vs. actually-used token mix, legacy plan), with per-row catalog/benchmark-snapshot dates and pricing issues in CSV and snapshot rows. Snapshots carry an explicit `kind: "single" | "comparison"` discriminator; older files are never backfilled. Badge JSON stays shields-compatible (schema version 1) with explicit unit and basis. PNG exports annotate task, unit, basis, and catalog/benchmark dates.
