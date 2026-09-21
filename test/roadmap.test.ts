@@ -9,6 +9,7 @@ import {
   efficiencyOf,
   estimate,
   freeSpotlight,
+  freeBar,
   loadMappings,
   migrateOptions,
   modelThinkingOf,
@@ -140,7 +141,7 @@ test("ambiguous benchmark variants expand automatically into thinking rows", () 
   );
   for (const r of rows) {
     assert.equal(r.modelId, "gpt-5.4");
-    assert.equal(r.mappingStatus, "exact");
+    assert.equal(r.mappingStatus, "inferred");
     assert.deepEqual(r.candidateIds.sort(), ["b-high", "b-xhigh"]);
     assert.ok(r.expandedBenchmarkId);
     assert.equal(r.pinnedBenchmarkId, undefined);
@@ -190,7 +191,7 @@ test("models reporting a thinking level resolve to that same level", () => {
   assert.equal(single.length, 1);
   assert.equal(single[0].id, high.id);
   assert.equal(single[0].benchmark?.id, "b-high");
-  assert.equal(single[0].mappingStatus, "exact");
+  assert.equal(single[0].mappingStatus, "inferred");
   // A reported level matching no benchmark still expands every variant.
   const low: AvailableModel = { ...high, id: "opencode:openai/gpt-5.4#low", name: "GPT-5.4 (low)" };
   const expanded = compare([low], benchmarks, options);
@@ -505,8 +506,9 @@ test("CSV export matches rows and escapes hostile values", () => {
   assert.match(csv, /"=cmd\|calc"/);
   assert.match(csv, /,yes,exact,/);
   // A row with no `pricing` (e.g. a hand-built fixture) exports blank
-  // pricing columns rather than throwing.
-  assert.match(csv, /a reason,,\n$/);
+  // pricing columns rather than throwing; provenance tail carries the task
+  // basis with configured and effective mixes, then blank dates/issue.
+  assert.match(csv, /a reason,,,task,1000,0,0,1000,1000,0,0,1000,,,,,\n$/);
 });
 
 test("coverage: source helpers, static guards, and pricing sources", () => {
@@ -751,6 +753,83 @@ test("coverage: free spotlight empty, free-only, and paid-to-best", () => {
   assert.ok((withBoth.gapPoints ?? 0) > 0);
 });
 
+test("free bar ranks scored free-tier models by score descending", () => {
+  const usd = { ...defaults, source: "opencode" as const, billing: "usd" as const };
+  assert.deepEqual(freeBar([], [], usd), []);
+  assert.deepEqual(freeBar([], [], { ...defaults, source: "copilot" }), []);
+  const paid: AvailableModel = {
+    id: "opencode:opencode-go/paid",
+    name: "Paid",
+    family: "paid",
+    maxInputTokens: 500000,
+    source: "opencode",
+    rates: { input: 1, read: 1, write: null, output: 1 },
+  };
+  const freeA: AvailableModel = {
+    id: "opencode:opencode/free-a",
+    name: "Free A",
+    family: "free",
+    maxInputTokens: 500000,
+    source: "opencode",
+    freeTier: true,
+  };
+  const freeB: AvailableModel = {
+    id: "opencode:opencode/free-b",
+    name: "Free B",
+    family: "free",
+    maxInputTokens: 500000,
+    source: "opencode",
+    freeTier: true,
+  };
+  const unscored: AvailableModel = {
+    id: "opencode:opencode/free-c",
+    name: "Free C",
+    family: "free",
+    maxInputTokens: 500000,
+    source: "opencode",
+    freeTier: true,
+  };
+  const models: Benchmark[] = [
+    { id: "fa", slug: "fa", name: "Free A", provider: "P", scores: { general: 70, coding: 70, agentic: 70 } },
+    { id: "fb", slug: "fb", name: "Free B", provider: "P", scores: { general: 85, coding: 85, agentic: 85 } },
+    { id: "p", slug: "p", name: "Paid", provider: "P", scores: { general: 95, coding: 95, agentic: 95 } },
+  ];
+  const bar = freeBar([freeA, freeB, unscored, paid], models, usd);
+  // Paid and unscored rows never appear; ranking is score-only, descending.
+  assert.deepEqual(bar.map((e) => e.name), ["Free B", "Free A"]);
+  assert.deepEqual(bar[0], { id: bar[0].id, name: "Free B", score: 85 });
+  // Non-OpenCode sources have no free tier.
+  assert.deepEqual(freeBar([freeA, freeB], models, { ...defaults, source: "copilot" }), []);
+  // The bar ignores the free-only and only-mine restrictions so it stays put
+  // while searching, but checklist exclusions still apply.
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, { ...usd, freeOnly: true }).map((e) => e.name),
+    ["Free B", "Free A"],
+  );
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, { ...usd, onlyMine: true }, {}, undefined, { usedCounts: new Map() }).map((e) => e.name),
+    ["Free B", "Free A"],
+  );
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, usd, {}, undefined, { excluded: [freeB.id] }).map((e) => e.name),
+    ["Free A"],
+  );
+  // Score ties break by name for a deterministic order.
+  const tied: Benchmark[] = [
+    { id: "fa", slug: "fa", name: "Free A", provider: "P", scores: { general: 80, coding: 80, agentic: 80 } },
+    { id: "fb", slug: "fb", name: "Free B", provider: "P", scores: { general: 80, coding: 80, agentic: 80 } },
+  ];
+  assert.deepEqual(
+    freeBar([freeB, freeA], tied, usd).map((e) => e.name),
+    ["Free A", "Free B"],
+  );
+  // The bar is billing-independent: scores resolve even where USD costs do not.
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, { ...usd, billing: "credits" }).map((e) => e.name),
+    ["Free B", "Free A"],
+  );
+});
+
 test("coverage: recommendations and profiles branches", () => {  const empty = recommend([], defaults);
   assert.deepEqual(empty.modelIds, []);
   const over = recommend(
@@ -924,7 +1003,8 @@ test("snapshot and badge exports reflect displayed rows", () => {
       fetchedAt: 1,
     }),
   );
-  assert.equal(snapshot.version, 1);
+  assert.equal(snapshot.version, 3);
+  assert.equal(snapshot.kind, "single");
   assert.equal(snapshot.rows.length, rows.length);
   assert.match(snapshot.disclaimer, /Illustrative/);
   assert.equal(snapshot.catalogDate, "2026-09-10");
@@ -957,10 +1037,14 @@ test("snapshot and badge exports reflect displayed rows", () => {
   assert.match(withScenario.scenario.label, /not a bill/);
   const csv = exportCsv(rows, defaults, recommended);
   assert.match(csv, /pricing_status,pricing_source/);
-  assert.ok(csv.includes(`,${rows[0].pricing?.status},${rows[0].pricing?.source}\n`));
+  assert.match(csv, /cost_basis,workload_input,workload_read,workload_write,workload_output/);
+  assert.match(csv, /catalog_date,static_registry_date,benchmark_version,benchmark_fetched_at,pricing_issue/);
+  assert.ok(csv.includes(`,${rows[0].pricing?.status},${rows[0].pricing?.source},task,`));
   const badge = JSON.parse(exportBadge(rows, defaults, { source: "copilot", preset: "general" }));
   assert.equal(badge.schemaVersion, 1);
   assert.match(badge.label, /pareto copilot general/);
+  assert.equal(badge.unit, "AI credits");
+  assert.equal(badge.basis, "task");
   assert.ok(badge.message.length > 0);
   const empty = JSON.parse(exportBadge([], defaults, { source: "copilot", preset: "general" }));
   assert.match(empty.message, /no comparable models/);
@@ -1308,7 +1392,7 @@ test("usage file index selects changed files and reports deletions", () => {
   });
   const index = blankUsageIndex();
   assert.equal(index.version, 1);
-  assert.equal(usageParserVersion, 2);
+  assert.equal(usageParserVersion, 3);
   index.files["/a.jsonl"] = { size: 10, mtime: 100, parser: usageParserVersion };
   index.files["/gone.jsonl"] = { size: 1, mtime: 1, parser: usageParserVersion };
   const { changed, deleted } = selectChangedFiles(
@@ -1413,6 +1497,27 @@ test("usage budget suggestions handle empty and unpriced windows", () => {
 test("usage messages validate scan and clear actions", () => {
   assert.deepEqual(parseMessage({ type: "scanUsage" }), { type: "scanUsage" });
   assert.deepEqual(parseMessage({ type: "clearUsage" }), { type: "clearUsage" });
+  assert.deepEqual(parseMessage({ type: "pauseUsage" }), { type: "pauseUsage" });
+  assert.deepEqual(parseMessage({ type: "resumeUsage" }), { type: "resumeUsage" });
+  assert.deepEqual(parseMessage({ type: "showUsageData" }), {
+    type: "showUsageData",
+  });
+  assert.deepEqual(parseMessage({ type: "setUsageRetention", days: 30 }), {
+    type: "setUsageRetention",
+    days: 30,
+  });
+  assert.deepEqual(parseMessage({ type: "setUsageRetention", days: 0 }), {
+    type: "setUsageRetention",
+    days: 0,
+  });
+  assert.throws(
+    () => parseMessage({ type: "setUsageRetention", days: -1 }),
+    /Invalid usage retention/,
+  );
+  assert.throws(
+    () => parseMessage({ type: "setUsageRetention" }),
+    /Invalid usage retention/,
+  );
 });
 
 test("usage medians and p90s summarize priced requests", () => {
@@ -1625,7 +1730,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

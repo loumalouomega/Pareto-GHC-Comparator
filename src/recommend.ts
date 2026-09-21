@@ -1,4 +1,4 @@
-import type { Options, RecommendationResult, Row } from "./types";
+import { costUnit, type Options, type RecommendationResult, type Row } from "./types";
 const format = (n: number) =>
   new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
 export function recommend(rows: Row[], options: Options): RecommendationResult {
@@ -15,12 +15,7 @@ export function recommend(rows: Row[], options: Options): RecommendationResult {
       explanation:
         "No comparable models in the current filter. Resolve missing benchmarks or prices to get a recommendation.",
     };
-  const unit =
-    options.billing === "credits"
-      ? "AI credits"
-      : options.billing === "legacy"
-        ? "premium requests"
-        : "USD";
+  const unit = costUnit(options.billing);
   const settings = options.recommendation;
   const threshold =
     settings.mode === "budget"

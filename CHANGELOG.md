@@ -4,6 +4,26 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Changed
+
+- Provenance-complete exports (snapshot schema version 3): single and two-option CSV/snapshot exports now record the cost basis (native unit, task/workload/legacy basis, configured vs. actually-used token mix, legacy plan), with per-row catalog/benchmark-snapshot dates and pricing issues in CSV and snapshot rows. Snapshots carry an explicit `kind: "single" | "comparison"` discriminator; older files are never backfilled. Badge JSON stays shields-compatible (schema version 1) with explicit unit and basis. PNG exports annotate task, unit, basis, and catalog/benchmark dates.
+- Cost-unit labels are now produced by one shared helper, so the table heading, recommendations, and every export always agree; pair exports keep each row's own native unit even when the two options bill differently.
+
+### Fixed
+
+- Display-name benchmark matches and automatic thinking-variant matches now show **Inferred match (unverified)** instead of an exact match, with explanations retained in CSV/JSON exports.
+- Usage completeness separates observed zero-token pairs from missing fields and estimates in totals and model/day/workspace breakdowns. Default premium multipliers are labelled on affected estimates, including missing model IDs, and noted in legacy budget suggestions.
+
+### Added
+
+- Emoji icon placeholders across the panel and command palette: tabs, section headings, and action buttons now carry an emoji glyph (e.g. 📊 tabs, ⚙️ Settings, 📤 Export) until ad-hoc icons replace them. Glyphs in tabs and headings are hidden from assistive technology so accessible names are unchanged.
+- Free-tier intelligence bar: under the OpenCode source, a **Best free options** bar below the Pareto chart ranks every scored free-tier model by the current task's benchmark index, highest first. Cost is zero so no cost unit applies and the bar never mixes with the cost chart; clicking a bar selects that row, a screen-reader list carries the same values, and unscored free models are simply absent rather than invented.
+- Custom comparison tray: the results table's **Pick** checkboxes (or **Pick for custom comparison** in model details) pin up to 6 models into a **Custom comparison** card with its own score bar and head-to-head table on the current task and native cost basis. Picks persist on the panel across reloads but are never sent anywhere, exported, or saved to profiles; a pick that leaves the view stays listed as no-longer-in-view until removed, never silently swapped.
+- Extension settings (`paretoGhc.usage.watchOnScan`, `paretoGhc.usage.retentionDays`, `paretoGhc.chart.defaultView`) in VS Code Settings: an explicitly configured value wins, otherwise the existing stored preference applies unchanged, and invalid values are ignored. Retention takes effect on the next consented scan with the Usage tab input kept in sync, the watch default starts/stops the file watcher without touching consent, data, or the pause flag, and the chart default applies to fresh views and to the open chart immediately — all without reload. Changing settings never grants consent or scans.
+- Integration evidence matrix and schema version detection: `docs/integrations.md` records the verified client × platform × version cells for Copilot chat sessions and OpenCode CLI discovery, with dated fixtures pinning each shape. Session files that match no known Copilot chat schema — including a known session framing whose request records changed shape — now show an actionable content-free fingerprint (known-field presence and shape counters only, safe to paste into an issue) instead of a bare unsupported count, while previously stored requests are retained as stale contributions. OpenCode discovery probes `opencode --version` best-effort and reports it in every discovery failure, and unparseable listings fail closed with a content-free output fingerprint plus file-an-issue guidance, so a CLI schema change reads as drift rather than an unexplained error or a silent zero.
+- Usage-watching pause control: a status bar item (`$(eye) Copilot usage watching`) is now shown whenever the local usage file watcher is active, so watching is visible while another tab is open or the panel is closed. **Pause watching** / **Resume watching** — via the status bar, the `Pareto GHC: Pause/Resume Copilot Usage Watching` commands, or the new button in the Usage tab — stops the watcher without revoking consent or deleting stored data; manual scans still work while paused, and erasing still removes everything including the paused state.
+- Local usage retention and inspection: the Usage tab has a **Keep history (days)** setting (empty means unlimited, which is the default — nothing is ever deleted unless you opt in) that purges per-request records older than the window on every scan, with the purge reported in the scan message. Requests with unknown or future timestamps are never purged, and files left with no requests are removed along with their diagnostics. **Show stored usage data** — via the Usage tab button or the `Pareto GHC: Show Stored Copilot Usage Data` command — opens the stored usage summary read-only in an editor tab, so you can inspect exactly what is kept without erasing it.
+
 ## 1.1.0
 
 ### Added

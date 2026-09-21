@@ -83,7 +83,12 @@ async function main() {
 
   const output =
     format === "csv"
-      ? exportCsv(rows, options, recommended)
+      ? exportCsv(rows, options, recommended, {
+          catalogDate,
+          staticRegistryDate,
+          version: snapshot.version,
+          fetchedAt: snapshot.fetchedAt,
+        })
       : exportSnapshot(rows, options, recommended, {
           source: options.source,
           preset: options.preset,

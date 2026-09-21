@@ -1,5 +1,12 @@
 export type Preset = "general" | "coding" | "agentic";
 export type Billing = "credits" | "legacy" | "usd";
+export type CostUnit = "AI credits" | "premium requests" | "USD";
+/** Single native cost-unit label shared by exports, recommendations, plans,
+ * and webview headings, so displayed and exported units cannot drift apart.
+ * Converted USD equivalents are always labelled separately (see normalize.ts)
+ * and never flow through this helper. */
+export const costUnit = (billing: Billing): CostUnit =>
+  billing === "credits" ? "AI credits" : billing === "legacy" ? "premium requests" : "USD";
 export type Source =
   | "copilot"
   | "opencode"
@@ -173,6 +180,63 @@ export interface ScoreDrift {
   delta: number | null;
 }
 export type TokenProvenance = "observed" | "estimated" | "missing";
+/**
+ * Content-free schema fingerprint for a Copilot chat session file that does
+ * not match any known schema. Records only which known fields were
+ * present/absent and bounded shape counters — never field values, chat
+ * text, identifiers, or file paths — so it is safe to paste into an issue.
+ */
+export interface UsageJsonlFingerprint {
+  format: "jsonl";
+  version: 1;
+  /** Non-empty lines observed, capped at the true count (safe integer). */
+  lines: number;
+  /** Distinct `kind` values observed, e.g. ["0","1","kind:absent"]. Max 10. */
+  kinds: string[];
+  anchorSessionId: boolean;
+  anchorCreationDate: boolean;
+  anchorSelectedModel: boolean;
+  envelopes: { anchor: boolean; append: boolean; result: boolean };
+}
+export interface UsageLegacyFingerprint {
+  format: "legacy-json";
+  version: 1;
+  hasSessionId: boolean;
+  hasCreationDate: boolean;
+  hasSelectedModel: boolean;
+  hasRequests: boolean;
+  requestsIsArray: boolean;
+}
+export type UsageSchemaFingerprint =
+  | UsageJsonlFingerprint
+  | UsageLegacyFingerprint;
+/** One-line, content-free rendering of a schema fingerprint for UI/issues. */
+export const formatSchemaFingerprint = (
+  fp: UsageSchemaFingerprint,
+): string => {
+  if (fp.format === "jsonl") {
+    const kinds = fp.kinds.length ? fp.kinds.join(",") : "none";
+    const anchor = [
+      fp.anchorSessionId ? "sessionId" : "no-sessionId",
+      fp.anchorCreationDate ? "creationDate" : "no-creationDate",
+      fp.anchorSelectedModel ? "selectedModel" : "no-selectedModel",
+    ].join(" ");
+    const env = [
+      fp.envelopes.anchor ? "anchor" : "no-anchor",
+      fp.envelopes.append ? "append" : "no-append",
+      fp.envelopes.result ? "result" : "no-result",
+    ].join(" ");
+    return `jsonl v1 lines=${fp.lines} kinds=[${kinds}] ${anchor} envelopes=[${env}]`;
+  }
+  const present = [
+    fp.hasSessionId ? "sessionId" : "no-sessionId",
+    fp.hasCreationDate ? "creationDate" : "no-creationDate",
+    fp.hasSelectedModel ? "selectedModel" : "no-selectedModel",
+    fp.hasRequests ? "requests" : "no-requests",
+    fp.requestsIsArray ? "requests-array" : "requests-not-array",
+  ].join(" ");
+  return `legacy-json v1 ${present}`;
+};
 export interface UsageDiagnostics {
   malformed: number;
   unsupported: number;
@@ -195,7 +259,15 @@ export interface UsageRequest {
   toolCallRounds: number;
   tokensEstimated: boolean;
 }
+export interface UsageCompleteness {
+  observedPairs: number;
+  observedZeroPairs: number;
+  missingPairs: number;
+  estimatedPairs: number;
+  fallbackMultipliers: number;
+}
 export interface UsageModelStat {
+  completeness?: UsageCompleteness;
   modelId: string;
   requests: number;
   promptTokens: number;
@@ -203,6 +275,7 @@ export interface UsageModelStat {
   premiumEstimate: number;
 }
 export interface UsageDayStat {
+  completeness?: UsageCompleteness;
   date: string;
   requests: number;
   promptTokens: number;
@@ -210,6 +283,7 @@ export interface UsageDayStat {
   premiumEstimate: number;
 }
 export interface UsageWorkspaceStat {
+  completeness?: UsageCompleteness;
   id: string;
   path: string;
   requests: number;
@@ -218,7 +292,10 @@ export interface UsageWorkspaceStat {
   premiumEstimate: number;
 }
 export interface UsageSummary {
+  completeness?: UsageCompleteness;
   diagnostics?: UsageDiagnostics;
+  /** Distinct schema fingerprints of unsupported files, with file counts. Max 5 entries. */
+  schemaFingerprints?: { fingerprint: UsageSchemaFingerprint; files: number }[];
   scannedAt: number;
   fileCount: number;
   requestCount: number;
@@ -305,6 +382,8 @@ export interface CatalogEntry {
   name: string;
   provider: string;
   benchmarkFamilies: string[];
+  /** Aliases derived from a display name rather than an explicit mapping. */
+  benchmarkInferred?: boolean;
   rates?: Rates;
   long?: { threshold: number; rates: Rates };
   legacy?: { pro: number; proPlus: number };
@@ -312,7 +391,7 @@ export interface CatalogEntry {
   /** Zero-cost model (Zen free tier). Priced at 0 with a visible label. */
   freeTier?: boolean;
 }
-export type MappingStatus = "exact" | "user" | "selection" | "missing";
+export type MappingStatus = "exact" | "inferred" | "user" | "selection" | "missing";
 export interface MappingResult {
   status: MappingStatus;
   candidateIds: string[];
@@ -475,6 +554,10 @@ export type HostMessage =
   | { type: "byokReset"; ids: string[] }
   | { type: "scanUsage" }
   | { type: "clearUsage" }
+  | { type: "pauseUsage" }
+  | { type: "resumeUsage" }
+  | { type: "setUsageRetention"; days: number }
+  | { type: "showUsageData" }
   | { type: "exportPng"; png: string }
   | { type: "profile"; change: ProfileAction };
 export interface FreeSpotlight {
@@ -484,6 +567,16 @@ export interface FreeSpotlight {
   gapPoints?: number;
   cheapestToBest?: { id: string; name: string; cost: number };
   explanation: string;
+}
+/**
+ * One free-tier model ranked by its benchmark score for the free-tier
+ * intelligence bar. Score-only: free-tier costs are zero, so no cost unit
+ * is carried or mixed here.
+ */
+export interface FreeBarEntry {
+  id: string;
+  name: string;
+  score: number;
 }
 export interface ChecklistEntry {
   id: string;
@@ -542,6 +635,8 @@ export interface ViewState {
   byok: ByokStore;
   usage: UsageSummary | null;
   usageWatching: boolean;
+  usagePaused: boolean;
+  usageRetentionDays?: number;
   budgetSuggestion: BudgetSuggestion | null;
   loading: boolean;
   message: string;
@@ -559,5 +654,7 @@ export interface ViewState {
   checklist: ChecklistEntry[];
   groups: ChecklistFamily[];
   freeSpotlight: FreeSpotlight;
+  /** Free-tier models with scores for the intelligence bar, sorted by score descending. Empty for non-OpenCode sources. */
+  freeBar: FreeBarEntry[];
   exportNote?: string;
 }

@@ -7,7 +7,7 @@ import {
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
-import { compare, registryRateFor } from "../src/compare";
+import { compare, freeBar, registryRateFor } from "../src/compare";
 import { mergeByokForm, parseByokFormStore } from "../src/byok";
 import {
   historyScenarioPrefill,
@@ -56,6 +56,22 @@ const benchmarks: Benchmark[] = [
     provider: "Moonshot AI",
     scores: { general: 45, coding: 52, agentic: 30 },
   },
+  // Free-tier Zen models for the OpenCode intelligence-bar UI test: each
+  // name exactly matches its model so the benchmark resolves without aliases.
+  {
+    id: "zen-alpha",
+    slug: "zen-alpha-free",
+    name: "Zen Alpha Free",
+    provider: "Zen",
+    scores: { general: 30, coding: 32, agentic: 22 },
+  },
+  {
+    id: "zen-beta",
+    slug: "zen-beta-free",
+    name: "Zen Beta Free",
+    provider: "Zen",
+    scores: { general: 22, coding: 24, agentic: 18 },
+  },
   // Slug-only identifier match for "unknown-model" below: no catalog alias
   // hits it, so it only ever shows up as an unverified mapping suggestion.
   {
@@ -74,6 +90,7 @@ const available = [
   ["unknown-model", "Unmapped model"],
 ].map(([id, name]) => ({ id, name, family: id, maxInputTokens: 1000000 }));
 const usageFixture = {
+  completeness: { observedPairs: 1, observedZeroPairs: 0, missingPairs: 1, estimatedPairs: 1, fallbackMultipliers: 1 },
   scannedAt: Date.now(),
   fileCount: 2,
   requestCount: 3,
@@ -93,6 +110,21 @@ const usageFixture = {
     missingTokens: 1,
     estimatedTokens: 0,
   },
+  schemaFingerprints: [
+    {
+      files: 1,
+      fingerprint: {
+        format: "jsonl" as const,
+        version: 1 as const,
+        lines: 2,
+        kinds: ["3", "session.v2"],
+        anchorSessionId: false,
+        anchorCreationDate: false,
+        anchorSelectedModel: false,
+        envelopes: { anchor: false, append: false, result: false },
+      },
+    },
+  ],
   medianSample: 3,
   premiumP90: 2,
   creditP90: 0.5,
@@ -107,6 +139,7 @@ const usageFixture = {
     },
     {
       modelId: "copilot/mystery",
+      completeness: { observedPairs: 1, observedZeroPairs: 0, missingPairs: 0, estimatedPairs: 0, fallbackMultipliers: 1 },
       requests: 1,
       promptTokens: 100,
       outputTokens: 50,
@@ -174,6 +207,23 @@ const opencodeAvailable = [
     maxInputTokens: 1050000,
     source: "opencode" as const,
   },
+  // Zero-cost Zen free-tier models for the intelligence-bar UI test.
+  {
+    id: "opencode:zen/alpha-free",
+    name: "Zen Alpha Free",
+    family: "zen",
+    maxInputTokens: 200000,
+    source: "opencode" as const,
+    freeTier: true,
+  },
+  {
+    id: "opencode:zen/beta-free",
+    name: "Zen Beta Free",
+    family: "zen",
+    maxInputTokens: 200000,
+    source: "opencode" as const,
+    freeTier: true,
+  },
 ];
 for (const theme of ["light", "dark", "high-contrast"])
   test(`chart, selection, filtering, and keyboard in ${theme}`, async ({
@@ -200,6 +250,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       byok: {},
       usage: null,
       usageWatching: false,
+      usagePaused: false,
       budgetSuggestion: null,
       recommendation: { modelIds: [], explanation: "" },
       profiles: [],
@@ -208,6 +259,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       checklist: [],
       groups: [],
       freeSpotlight: { enabled: false, explanation: "" },
+      freeBar: [],
     };
     let profiles: ProfileStore = { version: 1, items: [] };
     let mappings: Record<string, string> = {};
@@ -348,6 +400,30 @@ for (const theme of ["light", "dark", "high-contrast"])
       if (m.type === "clearUsage") {
         state.usage = null;
         state.usageWatching = false;
+        state.usagePaused = false;
+      }
+      if (m.type === "pauseUsage") {
+        state.usagePaused = true;
+        state.usageWatching = false;
+      }
+      if (m.type === "resumeUsage") {
+        state.usagePaused = false;
+        state.usageWatching = true;
+      }
+      if (m.type === "setUsageRetention") {
+        state.usageRetentionDays = m.days === 0 ? undefined : m.days;
+      }
+      // Test-only branches simulating a host-driven settings change (as from
+      // VS Code Settings): the open controls must follow without reload.
+      if (m.type === "__settingsChange") {
+        state.usageRetentionDays = m.days === 0 ? undefined : m.days;
+      }
+      if (m.type === "__chartDefault") {
+        state.options = {
+          ...state.options,
+          display: { ...state.options.display, chart: m.chart },
+        };
+        state.optionsRevision++;
       }
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
@@ -407,6 +483,11 @@ for (const theme of ["light", "dark", "high-contrast"])
           byok: state.byok,
         },
       );
+      state.freeBar = freeBar(listed, state.models, state.options, mappings, undefined, {
+        excluded: [...excluded],
+        usedCounts,
+        byok: state.byok,
+      });
       state.budgetSuggestion = suggestBudget(
         state.usage,
         state.options.billing,
@@ -549,6 +630,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(
       page.getByRole("tab", { name: "Tool analysis" }),
     ).toHaveAttribute("aria-selected", "true");
+    // Emoji are icon placeholders: visible, but hidden from accessible names.
+    await expect(page.locator("#tab-compare .emoji")).toHaveText("📊");
+    await expect(page.locator("#tab-settings .emoji")).toHaveText("⚙️");
     await expect(page.locator("#panel-settings")).toBeHidden();
     await page.getByRole("tab", { name: "Tool analysis" }).focus();
     await page.keyboard.press("ArrowRight");
@@ -568,7 +652,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.keyboard.press("Home");
     await expect(page.locator("#panel-compare")).toBeVisible();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
-    await expect(page.locator("canvas")).toBeVisible();
+    await expect(page.locator("#chart")).toBeVisible();
     // Intelligence vs. cost per task is the default chart view.
     await expect(page.locator("#chart-title")).toHaveText(
       "Intelligence vs. cost per task",
@@ -576,7 +660,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#cost-heading")).toHaveText("AI credits / task");
     await expect(page.locator("#tokens")).toBeHidden();
     await expect(page.locator("#display-chart")).toHaveValue("task");
-    await expect(page.locator("canvas")).toHaveAttribute(
+    await expect(page.locator("#chart")).toHaveAttribute(
       "aria-label",
       /per task/,
     );
@@ -584,7 +668,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Settings");
     await page.locator("#display-quadrant").uncheck();
     await openTab("Tool analysis");
-    await expect(page.locator("canvas")).toBeVisible();
+    await expect(page.locator("#chart")).toBeVisible();
     await expect
       .poll(() =>
         messages.some(
@@ -644,7 +728,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     const mediumRow = page.getByRole("button", { name: /GPT-5\.4.*medium/ });
     await mediumRow.click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Exact match",
+      "Inferred match (unverified)",
     );
     await expect(page.locator("#details")).toContainText(
       "Tested variant: GPT-5.4 (medium)",
@@ -682,7 +766,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       "Will map to GPT-5.4 (medium)",
     );
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Exact match",
+      "Inferred match (unverified)",
     );
     await page.getByRole("button", { name: "Apply mapping" }).click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
@@ -700,7 +784,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     // Reset to automatic is its own explicit action; it applies immediately.
     await page.getByRole("button", { name: "Reset to automatic" }).click();
     await expect(page.locator("#details .mapping-status")).toHaveText(
-      "Exact match",
+      "Inferred match (unverified)",
     );
     await page.locator("#variant-search").fill("");
     await page.locator("#variant-manual").check();
@@ -777,14 +861,14 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#billing")).toHaveValue("usd");
     await expect(page.locator("#eyebrow")).toHaveText("PARETO / OPENCODE");
     await expect(page.locator("#cost-heading")).toHaveText("USD / task");
-    await expect(page.locator("#count")).toHaveText("1 plotted / 3 models");
+    await expect(page.locator("#count")).toHaveText("3 plotted / 5 models");
     await expect(page.locator("#recommendation-result")).toContainText(
       "Kimi K2.7 Code",
     );
     await expect(page.locator("#recommendation-result")).toContainText("USD");
-    await expect(page.locator("#rows tr")).toHaveCount(3);
+    await expect(page.locator("#rows tr")).toHaveCount(5);
     await expect(page.locator('#billing option[value="legacy"]')).toBeHidden();
-    await expect(page.locator("canvas")).toHaveAttribute("aria-label", /USD/);
+    await expect(page.locator("#chart")).toHaveAttribute("aria-label", /USD/);
 
     // Pricing assistance: a same-identifier static-registry rate is offered,
     // unverified, for an unpriced provider-billed model — independent of its
@@ -851,9 +935,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.getByLabel("Filter models for selection")).toBeVisible();
     await page.getByLabel("Filter models for selection").fill("gpt-5.4");
     await expect(page.locator("#checklist .check-family")).toHaveCount(1);
-    await expect(page.locator("#include-all")).toHaveText("Select matching");
+    await expect(page.locator("#include-all")).toContainText("Select matching");
     await page.getByLabel("Filter models for selection").fill("");
-    await expect(page.locator("#include-all")).toHaveText("Select all");
+    await expect(page.locator("#include-all")).toContainText("Select all");
     const familyBox = page
       .locator(".check-family-row input[type=checkbox]")
       .first();
@@ -920,7 +1004,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(
       page.locator("#rows tr").first().locator("td").nth(2),
     ).toHaveText("0");
-    await expect(page.locator("canvas")).toHaveAttribute(
+    await expect(page.locator("#chart")).toHaveAttribute(
       "aria-label",
       /linear cost scale/,
     );
@@ -956,6 +1040,44 @@ for (const theme of ["light", "dark", "high-contrast"])
       "copilot/mystery",
     );
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
+    await expect(page.locator("#usage-pause")).toContainText("Pause watching");
+    await page.locator("#usage-pause").click();
+    expect(messages.some((m) => m.type === "pauseUsage")).toBeTruthy();
+    await expect(page.locator("#usage-pause")).toContainText("Resume watching");
+    await expect(page.locator("#usage-watching")).toHaveText(/paused/);
+    await page.locator("#usage-pause").click();
+    expect(messages.some((m) => m.type === "resumeUsage")).toBeTruthy();
+    await expect(page.locator("#usage-pause")).toContainText("Pause watching");
+    await expect(page.locator("#usage-retention")).toHaveValue("");
+    await page.locator("#usage-retention").fill("30");
+    // The retention input applies on change (blur), not per keystroke, since
+    // applying it triggers a rescan.
+    await page.locator("#usage-title").click();
+    expect(
+      messages.some(
+        (m) => m.type === "setUsageRetention" && (m as any).days === 30,
+      ),
+    ).toBeTruthy();
+    await page.locator("#usage-show").click();
+    expect(messages.some((m) => m.type === "showUsageData")).toBeTruthy();
+    await expect(page.locator("#usage-retention")).toHaveValue("30");
+    await page.locator("#usage-retention").fill("");
+    await page.locator("#usage-title").click();
+    expect(
+      messages.some(
+        (m) => m.type === "setUsageRetention" && (m as any).days === 0,
+      ),
+    ).toBeTruthy();
+    // A host-driven settings change (as from VS Code Settings) applies to
+    // the open controls without reload: the inputs follow the posted state.
+    await page.evaluate(() =>
+      (window as any).hostMessage({ type: "__settingsChange", days: 45 }),
+    );
+    await expect(page.locator("#usage-retention")).toHaveValue("45");
+    await page.evaluate(() =>
+      (window as any).hostMessage({ type: "__chartDefault", chart: "workload" }),
+    );
+    await expect(page.locator("#display-chart")).toHaveValue("workload");
     await expect(page.locator("#usage-diagnostics")).toContainText(
       "1 malformed records",
     );
@@ -963,6 +1085,12 @@ for (const theme of ["light", "dark", "high-contrast"])
       "1 stale contributions",
     );
     // Only-my-models filter, workload prefill, and budget suggestion.
+    await expect(page.locator("#usage-diagnostics")).toContainText("0 observed zero pairs");
+    await expect(page.locator("#usage-diagnostics")).toContainText("1 missing-token requests");
+    await expect(page.locator("#usage-diagnostics")).toContainText("don't match any known Copilot chat schema");
+    await expect(page.locator("#usage-diagnostics")).toContainText("session.v2");
+    await expect(page.locator("#usage-summary")).toContainText("Unknown model — default multiplier applied");
+    await expect(page.locator("#usage-models")).toContainText("Unknown model — default multiplier applied (1 requests)");
     await expect(page.locator("#usage-prefill-note")).toContainText(
       "Median 150 prompt + 75 output",
     );
@@ -1156,5 +1284,56 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Compare tools");
     await page.locator("#comparison-enabled").uncheck();
     await expect(page.locator("#comparison-panels")).toBeHidden();
+    await openTab("Tool analysis");
+    // Free-tier intelligence bar: hidden outside OpenCode, score-descending
+    // ranking below the Pareto chart once the OpenCode source is selected.
+    await expect(page.locator("#free-bar-wrap")).toBeHidden();
+    await page.locator("#source").selectOption("opencode");
+    await expect(page.locator("#free-bar-wrap")).toBeVisible();
+    await expect(page.locator("#free-bar-title")).toHaveText(
+      "Best free options · General index",
+    );
+    await expect(page.locator("#free-bar-list li")).toHaveCount(2);
+    expect(await page.locator("#free-bar-list li").allTextContents()).toEqual([
+      "Zen Alpha Free: 30 points · Pareto frontier",
+      "Zen Beta Free: 22 points",
+    ]);
+    // Clicking a bar selects that row on the host (canvas center lands on
+    // the second bar of the two-row chart).
+    // The bar carries the host-computed ranking (order, scores, frontier
+    // flags) with an accessible list; row selection itself goes through the
+    // same covered table buttons, so no pixel-targeted canvas click here.
+    await expect(page.locator("#free-bar")).toHaveAttribute(
+      "aria-label",
+      /2 free-tier models ranked by general score/,
+    );
+    await page.locator("#source").selectOption("copilot");
+    await expect(page.locator("#free-bar-wrap")).toBeHidden();
+    // Custom comparison tray: manual picks render head-to-head on the
+    // current task and cost basis; a pick that leaves the view stays listed
+    // until removed, never silently swapped.
+    await expect(page.locator("#custom-empty")).toHaveText(
+      /No models picked yet/,
+    );
+    await page.locator('#rows input[type="checkbox"]').first().check();
+    await expect(page.locator("#custom-rows tr")).toHaveCount(1);
+    await expect(page.locator("#custom-chart-wrap")).toBeVisible();
+    await expect(page.locator("#custom-empty")).toBeEmpty();
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await page
+      .getByRole("button", { name: "☆ Pick for custom comparison" })
+      .click();
+    await expect(page.locator("#custom-rows tr")).toHaveCount(2);
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await expect(page.locator("#custom-rows")).toContainText(
+      "No longer in view",
+    );
+    await page.locator("#filter").fill("");
+    await expect(page.locator("#custom-rows tr")).toHaveCount(2);
+    await page.locator("#custom-clear").click();
+    await expect(page.locator("#custom-rows tr")).toHaveCount(0);
+    await expect(page.locator("#custom-empty")).toHaveText(
+      /No models picked yet/,
+    );
     expect(errors).toEqual([]);
   });

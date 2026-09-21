@@ -198,6 +198,10 @@ null with reasons" rule.
 
 Unsupported/missing rates, unrecognized tier shapes, and context-limit
 overruns are visible unresolved states, never assumptions.
+Unparseable `models --verbose` output fails closed with a content-free
+schema fingerprint plus the probed CLI version; see the evidence matrix in
+`docs/integrations.md` for the verified client × platform × version cells
+and the fixtures pinning each shape.
 
 ## Credential handling
 

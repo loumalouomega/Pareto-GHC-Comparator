@@ -36,8 +36,9 @@ function entry(
       multiplier === undefined
         ? undefined
         : { pro: multiplier, proPlus: multiplier },
-    // Explicit base-model aliases. Reasoning qualifiers are preserved as separate variants.
+    // Track display-name fallback separately from explicit base-model aliases.
     benchmarkFamilies: benchmarkAliases[id] ?? [name],
+    benchmarkInferred: benchmarkAliases[id] === undefined,
   };
 }
 export const catalog: CatalogEntry[] = [

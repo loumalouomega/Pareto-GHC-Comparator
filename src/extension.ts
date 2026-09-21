@@ -8,7 +8,6 @@ import {
   type ComparisonStore,
   type Side,
 } from "./comparison";
-import { normalizeCost } from "./normalize";
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
@@ -17,6 +16,7 @@ import { catalogDate } from "./catalog";
 import { invocableRef } from "./invocable";
 import {
   compare,
+  freeBar,
   freeSpotlight,
   loadMappings,
   parseOptions,
@@ -32,8 +32,10 @@ import { defaultBilling, sources } from "./sources";
 import {
   exportBadge,
   exportCsv,
+  exportPairCsv,
+  exportPairSnapshot,
   exportSnapshot,
-  scenarioExport,
+  type PairSideInput,
 } from "./export";
 import { html } from "./html";
 import { recommend } from "./recommend";
@@ -41,12 +43,19 @@ import { loadProfiles, changeProfile, profileModified } from "./profiles";
 import { parseMessage } from "./messages";
 import { loadByokStore, mergeByokForm } from "./byok";
 import {
+  resolveSettings,
+  storedChartView,
+  type ResolvedSettings,
+} from "./settings";
+import {
   aggregateUsage,
   blankUsageIndex,
   discoverUsageFiles,
   normalizeUsageModelId,
   parseUsageJsonl,
   parseUsageLegacyJson,
+  parseUsageRetentionDays,
+  purgeUsageRetention,
   selectChangedFiles,
   storageCandidates,
   suggestBudget,
@@ -146,6 +155,98 @@ export function activate(context: vscode.ExtensionContext) {
     usagePending: Promise<void> | undefined,
     usageWatchers: vscode.Disposable[] = [],
     usageTimer: ReturnType<typeof setTimeout> | undefined;
+  let usageStatusItem: vscode.StatusBarItem | undefined;
+  const isUsagePaused = () =>
+    context.globalState.get("usagePaused", false);
+  /** Read `paretoGhc.*` settings; unconfigured values leave stored state in
+   * charge, so existing users keep their behavior until they touch a setting.
+   * Falls back to all-unconfigured when the host offers no configuration API
+   * (older mocks), never throwing. */
+  const readSettings = (): ResolvedSettings => {
+    const fallback: ResolvedSettings = {
+      watchOnScan: { configured: false, value: true },
+      retentionDays: { configured: false, value: undefined },
+      chartView: { configured: false, value: "task" },
+    };
+    try {
+      const api = vscode.workspace as unknown as {
+        getConfiguration?: (section: string) => {
+          get(key: string): unknown;
+          inspect(key: string):
+            | {
+                globalValue?: unknown;
+                workspaceValue?: unknown;
+                workspaceFolderValue?: unknown;
+              }
+            | undefined;
+        };
+      };
+      if (typeof api.getConfiguration !== "function") return fallback;
+      return resolveSettings(api.getConfiguration("paretoGhc"));
+    } catch {
+      return fallback;
+    }
+  };
+  const retentionDays = (): number | undefined => {
+    const settings = readSettings();
+    if (settings.retentionDays.configured)
+      return settings.retentionDays.value;
+    try {
+      return parseUsageRetentionDays(
+        context.globalState.get("usageRetentionDays"),
+      );
+    } catch {
+      return undefined;
+    }
+  };
+  /** Automatic watcher startup after a scan: an explicit pause always wins,
+   * then an explicitly configured watch default, else the historic default
+   * (watch). Explicit Pause/Resume commands bypass this entirely. */
+  const shouldAutoWatch = (): boolean => {
+    if (isUsagePaused()) return false;
+    const settings = readSettings();
+    return settings.watchOnScan.configured
+      ? settings.watchOnScan.value
+      : true;
+  };
+  {
+    // A view without a saved chart choice (fresh install or pre-display
+    // settings) starts from the configured chart default; ordinary chart
+    // edits remain saved view preferences afterwards.
+    const settingsChart = readSettings().chartView.value;
+    if (
+      storedChartView(context.globalState.get("options")) === undefined &&
+      options.display.chart !== settingsChart
+    )
+      options = {
+        ...options,
+        display: { ...options.display, chart: settingsChart },
+      };
+  }
+  const updateUsageStatus = () => {
+    if (!usageStatusItem) return;
+    if (!context.globalState.get("usageConsent", false)) {
+      usageStatusItem.hide();
+      return;
+    }
+    if (isUsagePaused()) {
+      usageStatusItem.text = "$(debug-pause) Copilot usage paused";
+      usageStatusItem.tooltip =
+        "Local Copilot usage watching is paused. Select to resume watching.";
+      usageStatusItem.command = "paretoGhc.resumeUsage";
+      usageStatusItem.show();
+      return;
+    }
+    if (usageWatchers.length > 0) {
+      usageStatusItem.text = "$(eye) Copilot usage watching";
+      usageStatusItem.tooltip =
+        "Watching local Copilot chat sessions for usage. Select to pause watching.";
+      usageStatusItem.command = "paretoGhc.pauseUsage";
+      usageStatusItem.show();
+      return;
+    }
+    usageStatusItem.hide();
+  };
   const readStoredUsage = async (): Promise<StoredUsageFile | undefined> => {
     try {
       const raw = JSON.parse(
@@ -158,9 +259,23 @@ export function activate(context: vscode.ExtensionContext) {
       return undefined;
     }
   };
+  if (
+    typeof vscode.workspace.registerTextDocumentContentProvider === "function"
+  ) {
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider("pareto-usage", {
+        provideTextDocumentContent: async () => {
+          const stored = await readStoredUsage();
+          if (!stored) return "No stored Copilot usage data on this machine.";
+          return JSON.stringify(stored, null, 2);
+        },
+      }),
+    );
+  }
   const setupUsageWatchers = () => {
     if (
       !context.globalState.get("usageConsent", false) ||
+      isUsagePaused() ||
       usageWatchers.length ||
       typeof vscode.workspace.createFileSystemWatcher !== "function" ||
       typeof vscode.RelativePattern !== "function"
@@ -275,6 +390,9 @@ export function activate(context: vscode.ExtensionContext) {
               files[candidate.filePath] = {
                 ...files[candidate.filePath],
                 diagnostics: { ...parsed.diagnostics, stale: 1 },
+                ...(parsed.fingerprint
+                  ? { fingerprint: parsed.fingerprint }
+                  : {}),
               };
               delete index.files[candidate.filePath];
               continue;
@@ -284,6 +402,9 @@ export function activate(context: vscode.ExtensionContext) {
               workspacePath: candidate.workspacePath,
               requests: parsed.requests,
               diagnostics: parsed.diagnostics,
+              ...(parsed.fingerprint
+                ? { fingerprint: parsed.fingerprint }
+                : {}),
             };
             index.files[candidate.filePath] = {
               size: candidate.size,
@@ -309,18 +430,38 @@ export function activate(context: vscode.ExtensionContext) {
         }
         if (!current()) return;
         const scannedAt = Date.now();
-        usage = aggregateUsage(Object.values(files), scannedAt);
+        const retention = retentionDays();
+        let storedFiles = files,
+          storedIndex = index,
+          purgedRequests = 0,
+          purgedFiles = 0;
+        if (retention !== undefined) {
+          const purged = purgeUsageRetention(
+            files,
+            index,
+            retention,
+            scannedAt,
+          );
+          storedFiles = purged.files;
+          storedIndex = purged.index;
+          purgedRequests = purged.purgedRequests;
+          purgedFiles = purged.purgedFiles;
+        }
+        usage = aggregateUsage(Object.values(storedFiles), scannedAt);
         await writeSnapshotFile(usageSummaryUri, {
           version: 2,
           scannedAt,
-          index,
-          files,
+          index: storedIndex,
+          files: storedFiles,
         });
         if (!current()) return;
-        setupUsageWatchers();
+        if (shouldAutoWatch()) setupUsageWatchers();
         message =
           `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
-          "Local estimates only, not a bill.";
+          "Local estimates only, not a bill." +
+          (retention !== undefined
+            ? ` Retention (${retention} days): purged ${purgedRequests} requests from ${purgedFiles} sessions.`
+            : "");
       } catch {
         if (current())
           message =
@@ -350,7 +491,11 @@ export function activate(context: vscode.ExtensionContext) {
       context.globalState.get("usageConsent", false)
     ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
-      if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+      if (
+        context.globalState.get("usageConsent", false) &&
+        shouldAutoWatch()
+      )
+        setupUsageWatchers();
     }
     if (!stored && generation === usageGeneration) await runUsageScan();
     render();
@@ -462,6 +607,14 @@ export function activate(context: vscode.ExtensionContext) {
       undefined,
       { pins, excluded: excludedFor(options.source), byok, usedCounts },
     );
+    const bar = freeBar(
+      available,
+      snapshot?.models ?? [],
+      options,
+      overrides,
+      undefined,
+      { pins, excluded: excludedFor(options.source), byok, usedCounts },
+    );
     const comparable = rows.filter((r) => r.cost !== null && r.score !== null);
     const bestOverall = comparable.length
       ? [...comparable].sort(
@@ -513,6 +666,8 @@ export function activate(context: vscode.ExtensionContext) {
       byok,
       usage,
       usageWatching: usageWatchers.length > 0,
+      usagePaused: isUsagePaused(),
+      usageRetentionDays: retentionDays(),
       budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
       message: [message, discoveryErrors[options.source]]
@@ -527,6 +682,7 @@ export function activate(context: vscode.ExtensionContext) {
       checklist,
       groups,
       freeSpotlight: freeSpotlightState,
+      freeBar: bar,
       exportNote: exportNote || undefined,
     };
     if (comparison?.enabled) {
@@ -564,6 +720,7 @@ export function activate(context: vscode.ExtensionContext) {
       };
     }
     void panel?.webview.postMessage({ type: "state", state });
+    updateUsageStatus();
   };
   const discoverCopilot = async (gen: number) => {
     try {
@@ -679,7 +836,18 @@ export function activate(context: vscode.ExtensionContext) {
     hasKey = true;
     await refresh(true);
   };
+  if (
+    typeof vscode.window.createStatusBarItem === "function" &&
+    vscode.StatusBarAlignment
+  ) {
+    usageStatusItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100,
+    );
+    context.subscriptions.push(usageStatusItem);
+  }
   if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+  updateUsageStatus();
   const clearUsageData = async () => {
     usageGeneration++;
     clearTimeout(usageTimer);
@@ -687,6 +855,7 @@ export function activate(context: vscode.ExtensionContext) {
     usageWatchers = [];
     usage = null;
     await context.globalState.update("usageConsent", false);
+    await context.globalState.update("usagePaused", false);
     await usagePending;
     try {
       await vscode.workspace.fs.delete(usageSummaryUri);
@@ -706,10 +875,114 @@ export function activate(context: vscode.ExtensionContext) {
     message = "Local usage data erased. Rescanning will ask for consent again.";
     render();
   };
+  const stopUsageWatchers = () => {
+    clearTimeout(usageTimer);
+    for (const watcher of usageWatchers) watcher.dispose();
+    usageWatchers = [];
+  };
+  const pauseUsageWatching = async () => {
+    if (!context.globalState.get("usageConsent", false)) {
+      render();
+      return;
+    }
+    stopUsageWatchers();
+    await context.globalState.update("usagePaused", true);
+    message = "Usage watching paused. Stored usage kept.";
+    render();
+  };
+  const resumeUsageWatching = async () => {
+    if (!context.globalState.get("usageConsent", false)) {
+      render();
+      return;
+    }
+    await context.globalState.update("usagePaused", false);
+    setupUsageWatchers();
+    message = "Watching for new sessions.";
+    render();
+  };
+  const showStoredUsageData = async () => {
+    try {
+      const doc = await vscode.workspace.openTextDocument(
+        vscode.Uri.parse("pareto-usage:/usage.json"),
+      );
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch {
+      message =
+        "No stored usage data is available. Scan local usage first, then show it again.";
+      render();
+    }
+  };
   const openPanel = () => {
     if (panel) panel.reveal();
     else void vscode.commands.executeCommand("paretoGhc.open");
   };
+  // Last settings-derived values applied, so configuration events — including
+  // the echo of our own retention mirror above — never rescan, restop, or
+  // re-apply an unchanged value. Panel chart edits are preserved until the
+  // setting itself changes again.
+  let lastAppliedRetention = retentionDays();
+  let lastAppliedChart = readSettings().chartView.configured
+    ? readSettings().chartView.value
+    : undefined;
+  const applyConfigurationChange = async () => {
+    const settings = readSettings();
+    let scanned = false;
+    const effectiveRetention = settings.retentionDays.configured
+      ? settings.retentionDays.value
+      : retentionDays();
+    if (effectiveRetention !== lastAppliedRetention) {
+      lastAppliedRetention = effectiveRetention;
+      if (context.globalState.get("usageConsent", false)) {
+        await runUsageScan();
+        scanned = true;
+      }
+    }
+    // Watch default: stop watchers when switched off, (re)start when
+    // switched on — never touching consent, stored data, or the pause flag.
+    if (!shouldAutoWatch() && usageWatchers.length) {
+      stopUsageWatchers();
+      message =
+        "Usage watching stopped by the watch-on-scan setting. Stored usage kept.";
+    } else if (
+      shouldAutoWatch() &&
+      !usageWatchers.length &&
+      context.globalState.get("usageConsent", false)
+    ) {
+      setupUsageWatchers();
+      if (usageWatchers.length) message = "Watching for new sessions.";
+    }
+    // Chart default: an explicitly configured basis applies to the open
+    // chart immediately; clearing the setting keeps the current view.
+    if (
+      settings.chartView.configured &&
+      settings.chartView.value !== lastAppliedChart &&
+      settings.chartView.value !== options.display.chart
+    ) {
+      options = {
+        ...options,
+        display: { ...options.display, chart: settings.chartView.value },
+      };
+      await persist("options", options);
+      optionsRevision++;
+    }
+    lastAppliedChart = settings.chartView.configured
+      ? settings.chartView.value
+      : undefined;
+    if (!scanned) render();
+  };
+  if (
+    typeof (
+      vscode.workspace as unknown as {
+        onDidChangeConfiguration?: unknown;
+      }
+    ).onDidChangeConfiguration === "function"
+  )
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((e: { affectsConfiguration(scope: string): boolean }) => {
+        if (e.affectsConfiguration("paretoGhc"))
+          void applyConfigurationChange();
+      }),
+    );
   context.subscriptions.push(
     vscode.commands.registerCommand("paretoGhc.setApiKey", setKey),
     vscode.commands.registerCommand("paretoGhc.clearApiKey", async () => {
@@ -726,6 +999,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("paretoGhc.clearUsage", async () => {
       openPanel();
       await clearUsageData();
+    }),
+    vscode.commands.registerCommand("paretoGhc.pauseUsage", async () => {
+      openPanel();
+      await pauseUsageWatching();
+    }),
+    vscode.commands.registerCommand("paretoGhc.resumeUsage", async () => {
+      openPanel();
+      await resumeUsageWatching();
+    }),
+    vscode.commands.registerCommand("paretoGhc.showUsageData", async () => {
+      await showStoredUsageData();
     }),
     vscode.commands.registerCommand("paretoGhc.open", () => {
       if (panel) {
@@ -816,6 +1100,32 @@ export function activate(context: vscode.ExtensionContext) {
               else render();
             } else if (m.type === "clearUsage") {
               await clearUsageData();
+            } else if (m.type === "pauseUsage") {
+              await pauseUsageWatching();
+            } else if (m.type === "resumeUsage") {
+              await resumeUsageWatching();
+            } else if (m.type === "setUsageRetention") {
+              const days = m.days === 0 ? undefined : m.days;
+              await context.globalState.update("usageRetentionDays", days);
+              // Mirror into the VS Code setting while it is explicitly
+              // configured, so the Settings UI and the Usage tab input
+              // cannot drift apart; the echo event below then no-ops.
+              if (readSettings().retentionDays.configured) {
+                try {
+                  await vscode.workspace
+                    .getConfiguration("paretoGhc")
+                    .update("usage.retentionDays", m.days, true);
+                } catch {
+                  // Stored state already holds the value; a read-only
+                  // settings file must not break the Usage tab input.
+                }
+              }
+              lastAppliedRetention = days;
+              if (context.globalState.get("usageConsent", false))
+                await runUsageScan();
+              else render();
+            } else if (m.type === "showUsageData") {
+              await showStoredUsageData();
             } else if (m.type === "key") await setKey();
             else if (m.type === "source") {
               if (m.source !== options.source) {
@@ -1106,19 +1416,22 @@ export function activate(context: vscode.ExtensionContext) {
                         : "Badge export cancelled.";
                 } else {
                   let exportedRows = rows.length;
+                  const provenance = {
+                    catalogDate,
+                    staticRegistryDate,
+                    planRegistryDate,
+                    version: snapshot?.version,
+                    fetchedAt: snapshot?.fetchedAt,
+                  };
                   let payload =
                     m.type === "exportCsv"
-                      ? exportCsv(rows, options, recommended)
+                      ? exportCsv(rows, options, recommended, provenance)
                       : m.type === "exportSnapshot"
                         ? exportSnapshot(rows, options, recommended, {
                             source: options.source,
                             preset: options.preset,
                             billing: options.billing,
-                            catalogDate,
-                            staticRegistryDate,
-                            planRegistryDate,
-                            version: snapshot?.version,
-                            fetchedAt: snapshot?.fetchedAt,
+                            ...provenance,
                             scenario: single.scenario,
                           })
                         : exportBadge(rows, options, {
@@ -1127,7 +1440,7 @@ export function activate(context: vscode.ExtensionContext) {
                           });
                   if (comparison?.enabled && m.type !== "exportBadge") {
                     captureActive();
-                    const pair = (["A", "B"] as const).map((side) => {
+                    const results = (["A", "B"] as const).map((side) => {
                       const option = comparison!.sides[side];
                       const result = optionResult(
                         option,
@@ -1136,111 +1449,47 @@ export function activate(context: vscode.ExtensionContext) {
                         byok,
                         usedCountsFor(),
                       );
-                      return {
+                      return { side, result };
+                    });
+                    const sides: PairSideInput[] = results.map(
+                      ({ side, result }) => ({
                         side,
-                        ...result,
+                        name: result.name,
+                        options: result.options,
+                        rows: result.rows,
+                        recommendation: result.recommendation,
+                        selected: result.selected,
+                        scenario: result.scenario,
                         costNormalization: comparison!.normalize
                           ? selectedCost(result)
                           : ({ status: "off" } as const),
                         availabilityNote:
-                          sources[option.options.source].availabilityNote,
-                        pricingNote: sources[option.options.source].pricingNote,
+                          sources[result.options.source].availabilityNote,
+                        pricingNote:
+                          sources[result.options.source].pricingNote,
                         discoveryError:
-                          discoveryErrors[option.options.source] ?? "",
-                        catalogDate,
-                        staticRegistryDate,
-                        planRegistryDate,
-                        benchmarkVersion: snapshot?.version,
-                        benchmarkFetchedAt: snapshot?.fetchedAt,
-                      };
-                    });
-                    exportedRows = pair.reduce(
-                      (sum, p) => sum + p.rows.length,
+                          discoveryErrors[result.options.source] ?? "",
+                      }),
+                    );
+                    exportedRows = sides.reduce(
+                      (sum, s) => sum + s.rows.length,
                       0,
                     );
-                    const usdCostDelta = comparison!.normalize
-                      ? comparisonDelta(pair[0], pair[1], true).usd
-                      : null;
+                    const pairMeta = {
+                      ...provenance,
+                      normalize: comparison!.normalize,
+                      usdCostDelta: comparison!.normalize
+                        ? comparisonDelta(
+                            results[0].result,
+                            results[1].result,
+                            true,
+                          ).usd
+                        : null,
+                    };
                     payload =
                       m.type === "exportSnapshot"
-                        ? JSON.stringify(
-                            {
-                              version: 2,
-                              disclaimer:
-                                "Illustrative comparison, not measured task cost or an account bill.",
-                              options: pair.map((p) => ({
-                                ...p,
-                                scenario:
-                                  p.scenario.status === "off"
-                                    ? p.scenario
-                                    : scenarioExport(p.scenario),
-                              })),
-                              usdCostDelta,
-                            },
-                            null,
-                            2,
-                          )
-                        : "option,assumptions,usd_equivalent,usd_conversion," +
-                          exportCsv([], options).trimEnd() +
-                          "\n" +
-                          (() => {
-                            // Derived from the header, not hardcoded, so an
-                            // empty-option row always pads to the same width
-                            // as a populated one even if columns are added.
-                            const dataColumns = exportCsv([], options)
-                              .trimEnd()
-                              .split(",").length;
-                            return pair
-                              .map((p) => {
-                                const label = JSON.stringify({
-                                  side: p.side,
-                                  name: p.name,
-                                  options: p.options,
-                                  discoveryError: p.discoveryError,
-                                  availabilityNote: p.availabilityNote,
-                                  pricingNote: p.pricingNote,
-                                  catalogDate,
-                                  staticRegistryDate,
-                                  planRegistryDate,
-                                  scenario:
-                                    p.scenario.status === "off"
-                                      ? p.scenario
-                                      : scenarioExport(p.scenario),
-                                  costNormalization: p.costNormalization,
-                                  usdCostDelta,
-                                  benchmarkVersion: snapshot?.version,
-                                  benchmarkFetchedAt: snapshot?.fetchedAt,
-                                });
-                                if (!p.rows.length)
-                                  return `${p.side},"${label.replace(/"/g, '""')}",,,${Array(dataColumns).fill("").join(",")}\n`;
-                                return p.rows
-                                  .map((row) => {
-                                    const n = comparison!.normalize
-                                      ? normalizeCost(
-                                          row.cost,
-                                          p.options.billing,
-                                          p.options.display.chart,
-                                        )
-                                      : ({ status: "off" } as const);
-                                    const usdEquivalent =
-                                      n.status === "native" ||
-                                      n.status === "converted"
-                                        ? String(n.usd)
-                                        : "";
-                                    const csv = exportCsv(
-                                      [row],
-                                      p.options,
-                                      new Set(p.recommendation.modelIds),
-                                    );
-                                    return (
-                                      `${p.side},"${label.replace(/"/g, '""')}",${usdEquivalent},${n.status},` +
-                                      csv.slice(csv.indexOf("\n") + 1)
-                                    );
-                                  })
-                                  .join("");
-                              })
-                              .join("");
-                          })();
+                        ? exportPairSnapshot(sides, pairMeta)
+                        : exportPairCsv(sides, pairMeta);
                   }
                   await vscode.workspace.fs.writeFile(
                     uri,

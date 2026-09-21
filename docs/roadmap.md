@@ -13,67 +13,11 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-The last shipped tier (comparison overlay view): `overlayResult` in `src/comparison.ts` superimposes both A/B options on one chart with per-option and combined Pareto frontiers, converting to a labelled USD-equivalent axis when the two options bill differently. See `AGENTS.md`'s "Two-option comparison and Tier 1 delivery" section for the record.
+Below, Tier 1 is new delivery candidates that meet the "Requirements across future work" principles. Tier 2 is feasibility investigations that must establish feasibility before delivery is scheduled.
 
-Below, Tier 1 turns each "Requirements across future work" principle into scoped tasks against gaps found in the current code. Tier 2 is new delivery candidates that meet those same requirements. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
-
-## Tier 1 — Close gaps against the requirements
-
-Admission criterion: current shipped behavior falls short of one of the requirements below; close the gap without expanding scope beyond it.
-
-### Visible usage-watching status and pause control — S
-
-- **Gap:** the "watching" indicator only appears inside the open Usage tab (`webview/main.ts`'s usage card), so it isn't visible while another tab is open or the panel is closed. The only way to stop watching is **Erase Local Copilot Usage**, which also deletes all stored data (`src/extension.ts`'s erase handler).
-- **Deliverables:** a status bar item shown whenever the file watcher is active; a **Pause watching** / **Resume watching** command and webview control that stops the watcher without revoking consent or deleting data.
-- **Dependencies:** existing consent flag and watcher setup in `src/extension.ts`.
-- **Acceptance:** no watcher runs while paused or before consent is granted. Pausing and resuming is visible in the Usage tab. Erase still removes everything, including a paused watcher's state.
-
-### Local usage retention and inspection — M
-
-- **Gap:** stored usage history has no age limit and accumulates indefinitely; there is no way to see what is actually stored short of erasing it.
-- **Deliverables:** an optional retention window (e.g. "keep N days") applied on scan, purging older per-session records with the purge result reported to the user; a **Show stored usage data** command that opens the stored summary read-only (e.g. in an editor tab) for inspection.
-- **Dependencies:** the versioned usage store in `src/usage.ts`.
-- **Acceptance:** retention is off (unlimited) by default — no silent deletion of history a user hasn't asked to limit. When enabled, the purge is logged and reported, and it never removes data outside the configured window.
-
-### Explicit unknowns for name-derived mappings and multipliers — M
-
-- **Gap:** several places quietly convert an absence of evidence into a confident-looking answer:
-  - An uncatalogued model's display name becomes its benchmark family (`src/catalog.ts`'s alias fallback, `src/compare.ts` benchmark-family resolution).
-  - Auto-expanded benchmark variants (each thinking-level candidate turned into its own row) are marked `status: "exact"` even though no explicit choice was made (`src/compare.ts`, the per-candidate row builder).
-  - An unrecognized model id gets a silent `1.0` premium-request multiplier, recorded only as an internal `estimated` boolean with no user-visible label (`src/usageMultipliers.ts`).
-  - Usage summaries fold missing prompt/output token fields into `0` (`src/usage.ts`'s request mapping), which reads the same as an observed zero-token request.
-- **Deliverables:** a distinct `inferred` mapping status (separate from `exact`/`user`/`selection`/`missing`) for name-derived and auto-expanded matches, shown differently in the table/details panel; a visible "unknown model — default multiplier applied" label wherever the `1.0` fallback is used; usage completeness counters that separately track observed-zero vs. missing-token requests instead of merging them at `0`.
-- **Dependencies:** existing mapping-status enum in `src/types.ts`, the completeness diagnostics already shown in the Usage tab.
-- **Acceptance:** no name-similarity or auto-expansion match displays as `exact`. Tests cover: an uncatalogued model showing `inferred`, a missing multiplier showing its label, and a missing-token request not being counted as an observed zero in exports or the completeness summary.
-
-### Provenance-complete exports — M
-
-- **Gap:**
-  - CSV/JSON exports omit the workload token mix and the active chart/cost basis (`src/export.ts` snapshot and CSV builders).
-  - CSV rows carry no catalog or benchmark-snapshot date, only per-row pricing/mapping status.
-  - Two-option pair exports are built inline in `src/extension.ts` (CSV/snapshot/PNG for Compare tools) rather than in `src/export.ts`, and have no dedicated provenance tests.
-  - Cost-unit-label logic is duplicated across `src/export.ts` and `src/recommend.ts` instead of a single `costUnit()`-style helper, risking drift between what's shown and what's exported.
-- **Deliverables:** add workload (token mix) and chart/cost-basis fields to snapshot JSON and CSV; add catalog/benchmark dates to CSV rows (already present in the JSON snapshot); move the pair export builders into `src/export.ts` alongside the single-option ones; consolidate unit-label logic into one shared function used everywhere a unit is displayed or exported.
-- **Dependencies:** existing snapshot/CSV/badge builders in `src/export.ts`; existing pair-export code path.
-- **Acceptance:** bump the snapshot schema version with a documented migration note; every export (single and pair) round-trips with its cost unit, workload assumption, tested benchmark variant and pricing source intact. Tests assert no export can present two rows on different units without both units labelled.
-
-### Integration evidence matrix and schema version detection — M
-
-- **Gap:** Copilot chat session files that fail to parse are only counted as `unsupported`, with no detail on what changed or what to do next (`src/usage.ts`'s session parser). The OpenCode CLI's own version is never captured, so a "tier-shape volatility" schema change can't be distinguished from a bug. There's no single place recording which client/platform/version combinations have been verified.
-- **Deliverables:** record a lightweight schema fingerprint (e.g. which known fields were present/absent) for files marked `unsupported`, and surface an actionable message ("this session file doesn't match any known Copilot chat schema — please file an issue with the fingerprint") instead of a bare count; capture `opencode --version` (or equivalent) into the diagnostics already shown for OpenCode discovery failures; add `docs/integrations.md` recording the client × platform × version evidence matrix referenced by `docs/opencode-integration.md` and `docs/cli-investigation.md`, with a dated fixture captured per verified client release.
-- **Dependencies:** existing `unsupported`/`unrecognized` diagnostics in `src/usage.ts` and `src/opencode.ts`; existing fixtures under `test/fixtures/usage/` and `test/fixtures/cli/`.
-- **Acceptance:** a session or CLI output that no longer matches a known schema degrades to a visible, actionable explanation — never a silent zero or an unexplained count. Fixture tests cover at least one drifted-schema case per integration.
-
-## Tier 2 — New delivery candidates
+## Tier 1 — New delivery candidates
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
-
-### Extension settings contribution — S
-
-- **Gap:** the extension contributes no `contributes.configuration` in `package.json`; watching defaults, retention, and chart defaults live only in `globalState`/`workspaceState` with no user-facing settings UI.
-- **Deliverables:** add a `paretoGhc.*` settings section (watch-on-scan default, retention window from the task above, default chart view/task) that mirrors and can override the existing stored state, migrating existing `globalState` values on first read.
-- **Dependencies:** none beyond current state storage; this is a prerequisite for the retention and status tasks above if they aren't already done.
-- **Acceptance:** settings changes take effect without reload where feasible; existing users' current behavior is unchanged until they touch a setting.
 
 ### Per-row pricing age — S
 
@@ -101,13 +45,13 @@ Admission criterion: new user value that meets every "Requirements across future
 - **Gap:** users must manually reopen the panel to notice a pinned model's price, score, mapping or availability changed between refreshes.
 - **Deliverables:** an opt-in notification (VS Code information message) on refresh when a pinned/watched model's price, benchmark score, mapping status, or availability changes since the last snapshot, citing both the old and new snapshot per `src/drift.ts`.
 - **Dependencies:** `src/drift.ts`'s existing snapshot retention; existing pin storage.
-- **Acceptance:** off by default (opt-in); no alert fires from noise-threshold-sized drift once that task is delivered; alert text cites both snapshot dates.
+- **Acceptance:** off by default (opt-in); no alert fires from noise-threshold-sized drift once Benchmark uncertainty and drift noise threshold is delivered; alert text cites both snapshot dates.
 
 ### Snapshot import (read-only reopen) — M
 
 - **Gap:** exported snapshot JSON can be shared but never reloaded into the extension to inspect what was compared at export time.
 - **Deliverables:** an **Import snapshot** command/webview action that loads a previously exported snapshot JSON and renders it read-only, clearly labelled as historical (not live data), validated against the snapshot schema version with a clear error for an incompatible or corrupted file.
-- **Dependencies:** the snapshot export format defined in `src/export.ts` (and the version bump from the exports task above).
+- **Dependencies:** the snapshot export format defined in `src/export.ts` (snapshot schema version 3 with the `kind` discriminator).
 - **Acceptance:** an imported snapshot can never be mistaken for live data in the UI; a version mismatch fails with an explanatory message rather than misrendering.
 
 ### Additional editor storage roots — M
@@ -124,7 +68,7 @@ Admission criterion: new user value that meets every "Requirements across future
 - **Dependencies:** existing table view and chart rendering in `webview/main.ts`.
 - **Acceptance:** every chart-only piece of information (frontier membership, quadrant highlight) is also available through the accessible table.
 
-## Tier 3 — Feasibility investigations
+## Tier 2 — Feasibility investigations
 
 Admission criterion: establish supported data access, an explicit consent model, and a validation approach before delivery is scheduled. Effort below covers investigation only; listing one does not authorize inference, spending, account changes, or additional data collection.
 
@@ -139,14 +83,14 @@ Admission criterion: establish supported data access, an explicit consent model,
 
 - **Gap:** usage history is single-machine only; teams that want an aggregate view have no supported path today.
 - **Deliverables:** investigate merging user-exported, explicitly-shared, anonymized usage summaries (no network collection by the extension itself) — covering de-identification, consent per contributor, and unit compatibility across contributors' different plans.
-- **Dependencies:** the exports task above (Provenance-complete exports) for a well-formed export to merge.
+- **Dependencies:** a well-formed export to merge — snapshot JSON (`src/export.ts`) or stored usage summaries (`src/usage.ts`).
 - **Acceptance:** a written recommendation covering privacy, consent, and whether merged data can stay honestly comparable across differing plans/units; no aggregation is implemented from this task alone.
 
 ### Upstream schema change early warning — S investigation
 
 - **Gap:** a Copilot Chat or OpenCode release that changes its session/tier-info shape is discovered only when a user hits `unsupported`/`unrecognized` output.
 - **Deliverables:** evaluate a CI job that runs the existing fixtures against newly released Copilot Chat and OpenCode versions (in an isolated, credential-free environment) to catch schema drift before users do.
-- **Dependencies:** the schema fingerprinting from the evidence-matrix task above; existing three-platform CI discovery jobs.
+- **Dependencies:** the shipped schema fingerprinting (`UsageSchemaFingerprint` in `src/usage.ts`, `fingerprintOpenCodeOutput` in `src/opencode.ts`); existing three-platform CI discovery jobs.
 - **Acceptance:** a feasibility verdict on whether such a job can run without real credentials or an account, and a recommendation on cadence and alerting.
 
 ## Requirements across future work

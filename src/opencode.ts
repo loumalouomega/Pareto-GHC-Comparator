@@ -27,6 +27,79 @@ export class OpenCodeError extends Error {
   }
 }
 
+/**
+ * Content-free fingerprint of `opencode models --verbose` output: block and
+ * field-presence counters only, never ids, names, rates, or paths. Safe to
+ * paste into an issue alongside the CLI version.
+ */
+export interface OpenCodeSchemaFingerprint {
+  version: 1;
+  blocks: number;
+  jsonFailures: number;
+  missingId: number;
+  missingProvider: number;
+  missingName: number;
+  invalidProvider: number;
+}
+export function fingerprintOpenCodeOutput(
+  output: unknown,
+): OpenCodeSchemaFingerprint {
+  const empty: OpenCodeSchemaFingerprint = {
+    version: 1,
+    blocks: 0,
+    jsonFailures: 0,
+    missingId: 0,
+    missingProvider: 0,
+    missingName: 0,
+    invalidProvider: 0,
+  };
+  if (typeof output !== "string") return empty;
+  const blocks = splitBlocks(output);
+  const fp: OpenCodeSchemaFingerprint = { ...empty, blocks: blocks.length };
+  for (const { body } of blocks) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch {
+      fp.jsonFailures++;
+      continue;
+    }
+    if (!object(raw)) {
+      fp.jsonFailures++;
+      continue;
+    }
+    if (!str(raw.id)) fp.missingId++;
+    if (!str(raw.providerID, 100)) fp.missingProvider++;
+    else if (!/^[\w\-.]+$/.test(raw.providerID as string))
+      fp.invalidProvider++;
+    if (!str(raw.name)) fp.missingName++;
+  }
+  return fp;
+}
+export const formatOpenCodeFingerprint = (
+  fp: OpenCodeSchemaFingerprint,
+): string =>
+  `schema v1 blocks=${fp.blocks} jsonFailures=${fp.jsonFailures} missingId=${fp.missingId} missingProvider=${fp.missingProvider} missingName=${fp.missingName} invalidProvider=${fp.invalidProvider}`;
+
+/**
+ * Validate `opencode --version` output. Returns the dotted version without a
+ * leading `v` (e.g. "1.18.30"), or undefined when unrecognized. Bounded and
+ * value-only: no paths, environment, or model data cross this boundary.
+ */
+export function parseOpenCodeVersion(output: unknown): string | undefined {
+  if (typeof output !== "string") return undefined;
+  const first = output.trim().split(/\s+/)[0] ?? "";
+  if (!first || first.length > 50) return undefined;
+  const match = first.match(/^v?(\d+\.\d+\.\d+[A-Za-z0-9.\-+]*)$/);
+  return match ? match[1].slice(0, 50) : undefined;
+}
+const openCodeVersionLabel = (version: string | undefined): string =>
+  version ? `OpenCode CLI ${version}` : "OpenCode CLI (version unavailable)";
+const withOpenCodeVersion = (
+  message: string,
+  version: string | undefined,
+): string => `${message} (${openCodeVersionLabel(version)}.)`;
+
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown, max = 200): v is string =>
@@ -125,18 +198,18 @@ function splitBlocks(output: string): { ref: string; body: string }[] {
  * Only whitelisted fields cross the boundary; raw provider configs never do.
  */
 export function parseModels(output: unknown): AvailableModel[] {
-  if (typeof output !== "string")
-    throw new OpenCodeError(
-      "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
+  const parseFailure = (): OpenCodeError =>
+    new OpenCodeError(
+      `OpenCode returned unrecognized model data (${formatOpenCodeFingerprint(fingerprintOpenCodeOutput(output))}). ` +
+        "This output doesn't match any known `opencode models --verbose` schema — " +
+        "please file an issue with the fingerprint and your OpenCode CLI version (`opencode --version`). " +
+        "Retry; the previous listing is retained.",
       "parse",
     );
+  if (typeof output !== "string") throw parseFailure();
   if (output.trim() === "") return [];
   const blocks = splitBlocks(output);
-  if (!blocks.length)
-    throw new OpenCodeError(
-      "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
-      "parse",
-    );
+  if (!blocks.length) throw parseFailure();
   const models: AvailableModel[] = [];
   const seen = new Set<string>();
   for (const { body } of blocks) {
@@ -144,10 +217,7 @@ export function parseModels(output: unknown): AvailableModel[] {
     try {
       raw = JSON.parse(body);
     } catch {
-      throw new OpenCodeError(
-        "OpenCode returned unrecognized model data. Retry; the previous listing is retained.",
-        "parse",
-      );
+      throw parseFailure();
     }
     if (
       !object(raw) ||
@@ -369,6 +439,19 @@ export function createOpenCodeRunner(
 }
 const defaultRunner: OpenCodeRunner = (args) => createOpenCodeRunner()(args);
 
+/** Best-effort `opencode --version` probe; never throws, never blocks discovery. */
+export async function getOpenCodeVersion(
+  runner: OpenCodeRunner,
+): Promise<string | undefined> {
+  try {
+    const result = await runner(["--version"]);
+    if (result.code !== 0) return undefined;
+    return parseOpenCodeVersion(result.stdout);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Run discovery and parse the listing; throws OpenCodeError with actionable messages. */
 export async function discoverOpenCode(
   runner: OpenCodeRunner = defaultRunner,
@@ -393,16 +476,37 @@ export async function discoverOpenCode(
   }
   if (result.code !== 0) {
     const detail = result.stderr.trim().slice(0, 200);
+    const version = await getOpenCodeVersion(runner);
     throw new OpenCodeError(
-      `OpenCode discovery failed (exit ${result.code}).${detail ? ` ${detail}` : ""} Retry; the previous listing is retained.`,
+      withOpenCodeVersion(
+        `OpenCode discovery failed (exit ${result.code}).${detail ? ` ${detail}` : ""} Retry; the previous listing is retained.`,
+        version,
+      ),
       "command",
     );
   }
-  const models = parseModels(result.stdout);
-  if (!models.length)
+  let models: AvailableModel[];
+  try {
+    models = parseModels(result.stdout);
+  } catch (error) {
+    if (error instanceof OpenCodeError && error.kind === "parse") {
+      const version = await getOpenCodeVersion(runner);
+      throw new OpenCodeError(
+        withOpenCodeVersion(error.message, version),
+        "parse",
+      );
+    }
+    throw error;
+  }
+  if (!models.length) {
+    const version = await getOpenCodeVersion(runner);
     throw new OpenCodeError(
-      "No OpenCode models listed. Connect a provider (`opencode providers login` or /connect), then refresh.",
+      withOpenCodeVersion(
+        "No OpenCode models listed. Connect a provider (`opencode providers login` or /connect), then refresh.",
+        version,
+      ),
       "empty",
     );
+  }
   return models;
 }

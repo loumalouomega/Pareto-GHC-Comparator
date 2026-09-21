@@ -4,6 +4,7 @@
 // projections are never bills. Undocumented values stay null and plans without
 // verified rules are unavailable rather than approximated. See docs/billing.md.
 import { sources } from "./sources";
+import { costUnit } from "./types";
 import type {
   Billing,
   Options,
@@ -175,12 +176,7 @@ export const planRegistry: readonly PlanEntry[] = [
   },
 ];
 
-const billingUnit = (billing: Billing): "AI credits" | "premium requests" | "USD" =>
-  billing === "credits"
-    ? "AI credits"
-    : billing === "legacy"
-      ? "premium requests"
-      : "USD";
+const billingUnit = costUnit;
 const billingLabel = (billing: Billing) =>
   billing === "credits"
     ? "AI credits"

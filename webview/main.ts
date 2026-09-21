@@ -12,6 +12,7 @@ import type {
 } from "../src/types";
 import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
+import { costUnit, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert } from "../src/freshness";
@@ -92,6 +93,8 @@ const color = (provider: string): string => {
 };
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
+  freeBarChart: Chart<"bar"> | undefined,
+  customChart: Chart<"bar"> | undefined,
   initialized = false;
 let appliedRevision = -1;
 let budgetDraft: Record<Billing, number> = { credits: 1, legacy: 1, usd: 1 };
@@ -119,6 +122,20 @@ let byokDraft: Record<
   { input: string; read: string; write: string; output: string }
 > = {};
 let usageFullPaths = false;
+// Manually picked head-to-head set for the custom comparison tray: local
+// webview state only (persisted via vscode.setState), never sent to the
+// host, so no message validation or storage migration applies. Capped so
+// the tray stays a glanceable S-sized view.
+const customCap = 6;
+let customPicks: string[] = [];
+let currentTab: SectionTab = "compare";
+function persistUi() {
+  try {
+    vscode.setState?.({ tab: currentTab, customPicks });
+  } catch {
+    // setState is best-effort persistence; picks still work for the session.
+  }
+}
 // Mirrors Options["scenario"].origin/history for the pending draft: reset to
 // "user" on any manual edit, set to "history" only by the prefill button.
 let scenarioOrigin: "user" | "history" = "user";
@@ -128,6 +145,7 @@ const collapsedFamilies = new Set<string>();
 const collapsedModels = new Set<string>();
 const mappingLabels = {
   exact: "Exact match",
+  inferred: "Inferred match (unverified)",
   user: "User selected",
   selection: "Needs selection",
   missing: "Missing benchmark",
@@ -364,6 +382,266 @@ function drawChart() {
     },
   });
 }
+/** Free-tier intelligence bar below the Pareto chart: score-only ranking of
+ * free-tier models (cost is zero, so no cost unit applies). Host-computed in
+ * `freeBar`, sorted by score descending; clicking a bar selects the row. */
+function drawFreeBar() {
+  if (!state) return;
+  const entries = state.freeBar ?? [];
+  const show = state.options.source === "opencode" && entries.length > 0;
+  el("free-bar-wrap").hidden = !show;
+  const list = el("free-bar-list");
+  list.replaceChildren();
+  freeBarChart?.destroy();
+  freeBarChart = undefined;
+  if (!show) return;
+  const presetName =
+    state.options.preset[0].toUpperCase() + state.options.preset.slice(1);
+  el("free-bar-title").textContent = `Best free options · ${presetName} index`;
+  el("free-bar").setAttribute(
+    "aria-label",
+    `${entries.length} free-tier models ranked by ${state.options.preset} score. The list below provides all values and model selection.`,
+  );
+  const byId = new Map(state.rows.map((r) => [r.id, r]));
+  for (const e of entries) {
+    const li = document.createElement("li");
+    const row = byId.get(e.id);
+    li.textContent =
+      `${e.name}: ${format(e.score)} points` +
+      (row?.frontier ? " · Pareto frontier" : "");
+    list.append(li);
+  }
+  const wrap = el("free-bar-chart-wrap");
+  wrap.style.height = `${Math.max(120, entries.length * 30 + 48)}px`;
+  const foreground = getComputedStyle(document.body).color;
+  const grid =
+    getComputedStyle(document.body)
+      .getPropertyValue("--vscode-panel-border")
+      .trim() || "#88888833";
+  freeBarChart = new Chart(el<HTMLCanvasElement>("free-bar"), {
+    type: "bar",
+    data: {
+      labels: entries.map((e) => e.name),
+      datasets: [
+        {
+          label: "Score",
+          data: entries.map((e) => e.score),
+          backgroundColor: entries.map((e) => {
+            const row = byId.get(e.id);
+            return row ? colorForRow(row) : color("Unknown");
+          }),
+          borderWidth: entries.map((e) =>
+            e.id === state!.selected ? 3 : 1,
+          ),
+          borderColor: entries.map((e) =>
+            e.id === state!.selected
+              ? foreground
+              : (byId.get(e.id) ? colorForRow(byId.get(e.id)!) : color("Unknown")),
+          ),
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const e = entries[item.dataIndex];
+              return `${e.name}: ${format(e.score)} points${byId.get(e.id)?.frontier ? " · Pareto frontier" : ""}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: `${presetName} index · higher is better`,
+            color: foreground,
+          },
+          ticks: { color: foreground },
+          grid: { color: grid },
+        },
+        y: {
+          ticks: { color: foreground, autoSkip: false },
+          grid: { display: false },
+        },
+      },
+      onClick: (_, elements) => {
+        const hit = elements[0];
+        if (hit) send("select", { id: entries[hit.index].id });
+      },
+    },
+  });
+}
+function toggleCustomPick(id: string, on: boolean) {
+  const next = new Set(customPicks);
+  if (on) {
+    if (!next.has(id) && next.size >= customCap) {
+      el("custom-empty").textContent =
+        `Holding ${customCap} of ${customCap} picks — remove one to pick another.`;
+      return;
+    }
+    next.add(id);
+  } else next.delete(id);
+  customPicks = [...next];
+  persistUi();
+  syncPickBoxes();
+  renderDetails();
+  renderCustom();
+}
+function syncPickBoxes() {
+  for (const box of Array.from(
+    document.querySelectorAll<HTMLInputElement>('#rows input[type="checkbox"]'),
+  )) {
+    const id = box.dataset.pickId;
+    if (!id) continue;
+    box.checked = customPicks.includes(id);
+    box.disabled = !box.checked && customPicks.length >= customCap;
+  }
+}
+/** Manual head-to-head tray: table plus score bar for the picked rows, in
+ * the current task and native cost unit. A pick that leaves the view stays
+ * listed until removed — never silently swapped for another row. */
+function renderCustom() {
+  if (!state) return;
+  customPicks = [...new Set(customPicks)].slice(0, customCap);
+  const byId = new Map(state.rows.map((r) => [r.id, r]));
+  const unit = costUnit(state.options.billing);
+  el("custom-cost-heading").textContent =
+    unit === "premium requests"
+      ? "Requests"
+      : state.options.display.chart === "task"
+        ? `${unit} / task`
+        : unit;
+  const empty = el("custom-empty");
+  const wrap = el("custom-chart-wrap");
+  const body = el("custom-rows");
+  body.replaceChildren();
+  customChart?.destroy();
+  customChart = undefined;
+  (el("custom-clear") as HTMLButtonElement).disabled =
+    customPicks.length === 0;
+  if (!customPicks.length) {
+    empty.textContent = "No models picked yet — use Pick in the table above.";
+    wrap.hidden = true;
+    return;
+  }
+  empty.textContent =
+    customPicks.length >= customCap
+      ? `Holding ${customCap} of ${customCap} picks — remove one to pick another.`
+      : "";
+  const scored = customPicks.flatMap((id) => {
+    const row = byId.get(id);
+    return row && row.score !== null ? [{ id, row }] : [];
+  });
+  wrap.hidden = scored.length === 0;
+  if (scored.length) {
+    const presetName =
+      state.options.preset[0].toUpperCase() + state.options.preset.slice(1);
+    wrap.style.height = `${Math.max(110, scored.length * 30 + 48)}px`;
+    const foreground = getComputedStyle(document.body).color;
+    const grid =
+      getComputedStyle(document.body)
+        .getPropertyValue("--vscode-panel-border")
+        .trim() || "#88888833";
+    customChart = new Chart(el<HTMLCanvasElement>("custom-chart"), {
+      type: "bar",
+      data: {
+        labels: scored.map(({ row }) => row.name),
+        datasets: [
+          {
+            label: "Score",
+            data: scored.map(({ row }) => row.score!),
+            backgroundColor: scored.map(({ row }) => colorForRow(row)),
+          },
+        ],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (item) => {
+                const { row } = scored[item.dataIndex];
+                return `${row.name}: ${format(row.score)} score · ${format(row.cost)} ${unitNoun(state!.options.billing)}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: `${presetName} index · higher is better`,
+              color: foreground,
+            },
+            ticks: { color: foreground },
+            grid: { color: grid },
+          },
+          y: {
+            ticks: { color: foreground, autoSkip: false },
+            grid: { display: false },
+          },
+        },
+        onClick: (_, elements) => {
+          const hit = elements[0];
+          if (hit) send("select", { id: scored[hit.index].id });
+        },
+      },
+    });
+  }
+  for (const id of customPicks) {
+    const row = byId.get(id);
+    const tr = document.createElement("tr");
+    if (row) {
+      const name = document.createElement("td"),
+        button = text("button", row.name, "model-button") as HTMLButtonElement;
+      button.dataset.modelId = row.id;
+      button.onclick = () => send("select", { id: row.id });
+      name.append(button);
+      if (state.recommendation.modelIds.includes(row.id))
+        name.append(text("span", "★ Recommended", "recommended"));
+      tr.append(
+        name,
+        text("td", format(row.score)),
+        text("td", format(row.cost)),
+        text(
+          "td",
+          row.frontier
+            ? "Pareto frontier"
+            : row.reasons.length
+              ? row.reasons.join(" ")
+              : "Dominated",
+          row.frontier ? "frontier" : "",
+        ),
+      );
+    } else {
+      tr.append(
+        text("td", id, "hint"),
+        text("td", "—"),
+        text("td", "—"),
+        text("td", "No longer in view — remove to clear."),
+      );
+    }
+    const removeCell = document.createElement("td"),
+      remove = text("button", "Remove", "secondary") as HTMLButtonElement;
+    remove.setAttribute("aria-label", `Remove ${row?.name ?? id} from custom comparison`);
+    remove.onclick = () => toggleCustomPick(id, false);
+    removeCell.append(remove);
+    tr.append(removeCell);
+    body.append(tr);
+  }
+}
 function renderDetails() {
   if (!state) return;
   const target = el("details");
@@ -400,6 +678,14 @@ function renderDetails() {
     send("copy", { id: row.id });
   };
   target.append(copy);
+  const picked = customPicks.includes(row.id);
+  const pickToggle = text(
+    "button",
+    picked ? "★ Remove from custom comparison" : "☆ Pick for custom comparison",
+  ) as HTMLButtonElement;
+  pickToggle.onclick = () =>
+    toggleCustomPick(row.id, !customPicks.includes(row.id));
+  target.append(pickToggle);
   if (row.invocable) {
     target.append(
       text("p", `${row.invocable.ref} — ${row.invocable.usage}`, "hint"),
@@ -848,9 +1134,9 @@ function renderChecklist() {
   const allButton = el<HTMLButtonElement>("include-all");
   const noneButton = el<HTMLButtonElement>("include-none");
   if (allButton)
-    allButton.textContent = searching ? "Select matching" : "Select all";
+    allButton.textContent = searching ? "✅ Select matching" : "✅ Select all";
   if (noneButton)
-    noneButton.textContent = searching ? "Clear matching" : "Select none";
+    noneButton.textContent = searching ? "🧹 Clear matching" : "🧹 Select none";
   const checklistEl = el("checklist");
   checklistEl.replaceChildren();
   if (!groups.length && !flat.length) {
@@ -1233,9 +1519,22 @@ function renderUsage() {
   el("usage-diagnostics").textContent = d
     ? `Completeness: ${d.malformed} malformed records · ${d.unsupported} unsupported files · ${d.unreadable} unreadable files · ${d.stale} stale contributions · ${d.missingTokens} requests missing tokens · ${d.estimatedTokens} estimated requests. Prefill and credit budgets use fully observed token pairs only.`
     : "";
-  el("usage-watching").textContent = state.usageWatching
-    ? "Watching for new sessions."
-    : "";
+  el("usage-watching").textContent = state.usagePaused
+    ? "Watching paused. Stored usage kept."
+    : state.usageWatching
+      ? "Watching for new sessions."
+      : "";
+  const pauseBtn = el<HTMLButtonElement>("usage-pause");
+  pauseBtn.hidden = !state.usageWatching && !state.usagePaused;
+  pauseBtn.textContent = state.usagePaused
+    ? "▶️ Resume watching"
+    : "⏸️ Pause watching";
+  const retentionInput = el<HTMLInputElement>("usage-retention");
+  if (document.activeElement !== retentionInput)
+    retentionInput.value =
+      state.usageRetentionDays === undefined
+        ? ""
+        : String(state.usageRetentionDays);
   const summary = el("usage-summary");
   const modelsEl = el("usage-models"),
     daysEl = el("usage-days"),
@@ -1251,6 +1550,22 @@ function renderUsage() {
   }
   const num = (n: number) =>
     new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
+  const completenessNote = (c: NonNullable<typeof u>["completeness"]) => c
+    ? `${c.observedPairs} fully observed pairs (${c.observedZeroPairs} observed zero pairs) · ${c.missingPairs} missing-token requests · ${c.estimatedPairs} estimated requests` +
+      (c.fallbackMultipliers ? ` · Unknown model — default multiplier applied (${c.fallbackMultipliers} requests)` : "")
+    : "Completeness unavailable";
+  el("usage-diagnostics").textContent += ` ${completenessNote(u.completeness)}. Token totals include available fields only; missing fields are not observed zeros.`;
+  const prints = (u.schemaFingerprints ?? []).slice(0, 5);
+  if (prints.length)
+    el("usage-diagnostics").textContent +=
+      " Unsupported files don't match any known Copilot chat schema — please file an issue with the fingerprint(s): " +
+      prints
+        .map(
+          ({ fingerprint, files }) =>
+            `${files} file(s): ${formatSchemaFingerprint(fingerprint)}`,
+        )
+        .join(" · ") +
+      ".";
   const range = u.dateRange
     ? `${new Date(u.dateRange.from).toLocaleDateString()} – ${new Date(u.dateRange.to).toLocaleDateString()}`
     : "no dated requests";
@@ -1258,7 +1573,8 @@ function renderUsage() {
     `${u.requestCount} requests · ${num(u.promptTokens)} prompt + ${num(u.outputTokens)} output tokens · ` +
     `≈${num(u.premiumEstimate)} premium requests · ${u.fileCount} files · ${range} · ` +
     `scanned ${new Date(u.scannedAt).toLocaleString()}` +
-    (u.estimatedTokens ? ` · ${u.estimatedTokens} text-estimated` : "");
+    (u.estimatedTokens ? ` · ${u.estimatedTokens} text-estimated` : "") +
+    (u.completeness?.fallbackMultipliers ? " · Unknown model — default multiplier applied" : "");
   const table = (title: string, head: string[], rows: string[][]) => {
     const wrap = document.createElement("div");
     wrap.append(text("h3", title));
@@ -1287,7 +1603,7 @@ function renderUsage() {
     modelsEl.append(
       table(
         "By model",
-        ["Model", "Requests", "Prompt", "Output", "Premium ≈"],
+        ["Model", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
         u.models
           .slice(0, 12)
           .map((m) => [
@@ -1296,6 +1612,7 @@ function renderUsage() {
             num(m.promptTokens),
             num(m.outputTokens),
             String(m.premiumEstimate),
+            completenessNote(m.completeness),
           ]),
       ),
     );
@@ -1303,7 +1620,7 @@ function renderUsage() {
     daysEl.append(
       table(
         "By day",
-        ["Date", "Requests", "Prompt", "Output", "Premium ≈"],
+        ["Date", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
         u.days
           .slice(-14)
           .map((d) => [
@@ -1312,6 +1629,7 @@ function renderUsage() {
             num(d.promptTokens),
             num(d.outputTokens),
             String(d.premiumEstimate),
+            completenessNote(d.completeness),
           ]),
       ),
     );
@@ -1319,13 +1637,14 @@ function renderUsage() {
     const shown = u.workspaces.slice(0, 20);
     const wrap = table(
       "By workspace",
-      ["Workspace", "Requests", "Prompt", "Output", "Premium ≈"],
+      ["Workspace", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
       shown.map((w) => [
         workspaceLabel(w.path, w.id, usageFullPaths),
         String(w.requests),
         num(w.promptTokens),
         num(w.outputTokens),
         String(w.premiumEstimate),
+        completenessNote(w.completeness),
       ]),
     );
     wrap.querySelectorAll("tbody tr").forEach((tr, i) => {
@@ -1579,8 +1898,8 @@ function renderComparison() {
   ])
     el<HTMLButtonElement>(id).disabled = !!pair;
   el("export-badge").textContent = pair
-    ? `Export ${pair.active} badge JSON`
-    : "Export badge JSON";
+    ? `🏷️ Export ${pair.active} badge JSON`
+    : "🏷️ Export badge JSON";
   if (!pair) return;
   if (showOverlay && pair.overlay) drawOverlay(pair, pair.overlay, overlayCard);
   el<HTMLSelectElement>("comparison-source-a").value =
@@ -1936,7 +2255,7 @@ function render(next: ViewState) {
   el("status").textContent = state.message;
   el<HTMLButtonElement>("refresh").disabled = state.loading;
   el<HTMLButtonElement>("key").disabled = state.loading;
-  el("key").textContent = state.hasKey ? "Update API key" : "Set API key";
+  el("key").textContent = state.hasKey ? "🔑 Update API key" : "🔑 Set API key";
   const stale = freshnessAlert(
     state.catalogDate,
     state.staticRegistryDate,
@@ -2014,18 +2333,16 @@ function render(next: ViewState) {
     legend.append(item);
   }
   renderChecklist();
+  // Native unit from the shared helper; the legacy table label stays the
+  // short bare "Requests" in both views (the full "premium requests"
+  // appears in exports).
+  const unit = costUnit(state.options.billing);
   el("cost-heading").textContent =
-    state.options.display.chart === "task"
-      ? state.options.billing === "credits"
-        ? "AI credits / task"
-        : state.options.billing === "legacy"
-          ? "Requests"
-          : "USD / task"
-      : state.options.billing === "credits"
-        ? "AI credits"
-        : state.options.billing === "legacy"
-          ? "Requests"
-          : "USD";
+    unit === "premium requests"
+      ? "Requests"
+      : state.options.display.chart === "task"
+        ? `${unit} / task`
+        : unit;
   const body = el("rows");
   body.replaceChildren();
   for (const row of state.rows) {
@@ -2066,10 +2383,22 @@ function render(next: ViewState) {
         row.frontier ? "frontier" : "",
       ),
     );
+    const pickCell = document.createElement("td"),
+      pick = document.createElement("input");
+    pick.type = "checkbox";
+    pick.dataset.pickId = row.id;
+    pick.checked = customPicks.includes(row.id);
+    pick.disabled = !pick.checked && customPicks.length >= customCap;
+    pick.setAttribute("aria-label", `Pick ${row.name} for custom comparison`);
+    pick.onchange = () => toggleCustomPick(row.id, pick.checked);
+    pickCell.append(pick);
+    tr.append(pickCell);
     body.append(tr);
   }
   renderDetails();
+  renderCustom();
   drawChart();
+  drawFreeBar();
   if (focusedModel) {
     const button = Array.from(
       document.querySelectorAll<HTMLButtonElement>(".model-button"),
@@ -2395,7 +2724,29 @@ el("include-none").onclick = () => {
   send("excludeAll", { excluded: true });
 };
 el("usage-scan").onclick = () => send("scanUsage");
+el("usage-pause").onclick = () =>
+  send(state?.usagePaused ? "resumeUsage" : "pauseUsage");
 el("usage-clear").onclick = () => send("clearUsage");
+el("usage-show").onclick = () => send("showUsageData");
+el("usage-retention").addEventListener("change", () => {
+  const input = el<HTMLInputElement>("usage-retention");
+  const raw = input.value.trim();
+  if (raw === "") {
+    send("setUsageRetention", { days: 0 });
+    return;
+  }
+  const days = Number(raw);
+  // Mirrors the host-side 0–3650 range (src/usage.ts); invalid edits revert
+  // to the stored value instead of sending a message the host must reject.
+  if (!Number.isSafeInteger(days) || days < 0 || days > 3650) {
+    input.value =
+      state?.usageRetentionDays === undefined
+        ? ""
+        : String(state.usageRetentionDays);
+    return;
+  }
+  send("setUsageRetention", { days });
+});
 el("usage-full-paths").addEventListener("input", () => {
   usageFullPaths = el<HTMLInputElement>("usage-full-paths").checked;
   renderUsage();
@@ -2457,6 +2808,13 @@ el("byok-clear").onclick = () => {
   byokDraft = {};
   renderByok();
 };
+el("custom-clear").onclick = () => {
+  customPicks = [];
+  persistUi();
+  syncPickBoxes();
+  renderDetails();
+  renderCustom();
+};
 el("export-png").onclick = () => {
   // Export lives on the Settings tab, and charts drawn while their panel is
   // hidden have no size: lay the panel that owns the exported chart(s)
@@ -2468,7 +2826,10 @@ el("export-png").onclick = () => {
     panel.classList.add("offscreen");
     panel.hidden = false;
     if (state?.comparison) renderComparison();
-    else drawChart();
+    else {
+      drawChart();
+      drawFreeBar();
+    }
   }
   try {
     const canvas = el("chart") as HTMLCanvasElement;
@@ -2484,7 +2845,7 @@ el("export-png").onclick = () => {
       ctx.fillStyle = getComputedStyle(document.body).color;
       ctx.font = "20px sans-serif";
       ctx.fillText(
-        `A: ${state.comparison.sides.A.name} vs B: ${state.comparison.sides.B.name} · ${state.comparison.overlay.unit}`,
+        `A: ${state.comparison.sides.A.name} vs B: ${state.comparison.sides.B.name} · ${state.comparison.overlay.unit} · ${state.comparison.sides.A.options.display.chart} basis · catalog ${state.catalogDate} · benchmarks ${state.version ?? "unknown"}`,
         20,
         35,
       );
@@ -2497,10 +2858,11 @@ el("export-png").onclick = () => {
       );
     } else if (state?.comparison) {
       for (const [index, side] of (["A", "B"] as const).entries()) {
+        const sideOptions = state.comparison.sides[side].options;
         ctx.fillStyle = getComputedStyle(document.body).color;
         ctx.font = "20px sans-serif";
         ctx.fillText(
-          `${side}: ${state.comparison.sides[side].name} · ${state.comparison.sides[side].options.billing}`,
+          `${side}: ${state.comparison.sides[side].name} · ${costUnit(sideOptions.billing)} · ${sideOptions.display.chart} basis · catalog ${state.catalogDate}`,
           index * 800 + 20,
           35,
         );
@@ -2512,6 +2874,15 @@ el("export-png").onclick = () => {
           800,
         );
       }
+    } else if (state) {
+      ctx.fillStyle = getComputedStyle(document.body).color;
+      ctx.font = "20px sans-serif";
+      ctx.fillText(
+        `Pareto GHC · ${state.options.preset} · ${costUnit(state.options.billing)} · ${state.options.display.chart} basis · catalog ${state.catalogDate} · benchmarks ${state.version ?? "unknown"}`,
+        20,
+        35,
+      );
+      ctx.drawImage(canvas, 0, 60, exportCanvas.width, 820);
     } else ctx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
     send("exportPng", { png: exportCanvas.toDataURL("image/png") });
   } finally {
@@ -2526,7 +2897,9 @@ window.addEventListener("message", (event) => {
 });
 new MutationObserver(() => {
   drawChart();
+  drawFreeBar();
   renderComparison();
+  renderCustom();
 }).observe(document.body, {
   attributes: true,
   attributeFilter: ["class", "style"],
@@ -2534,6 +2907,7 @@ new MutationObserver(() => {
 const sectionTabs = ["compare", "tools", "plan", "usage", "settings"] as const;
 type SectionTab = (typeof sectionTabs)[number];
 function showTab(tab: SectionTab, focus = false) {
+  currentTab = tab;
   for (const id of sectionTabs) {
     const button = el<HTMLButtonElement>(`tab-${id}`);
     const active = id === tab;
@@ -2542,10 +2916,14 @@ function showTab(tab: SectionTab, focus = false) {
     el(`panel-${id}`).hidden = !active;
     if (active && focus) button.focus();
   }
-  // Remember the open tab across webview reloads.
-  vscode.setState?.({ tab });
+  // Remember the open tab (and local custom picks) across webview reloads.
+  persistUi();
   // Charts laid out while their panel was hidden have no size; redraw them.
-  if (tab === "compare" && state) drawChart();
+  if (tab === "compare" && state) {
+    drawChart();
+    drawFreeBar();
+    renderCustom();
+  }
   if (tab === "tools" && state) renderComparison();
 }
 sectionTabs.forEach((id, index) => {
@@ -2568,7 +2946,15 @@ sectionTabs.forEach((id, index) => {
     showTab(next, true);
   };
 });
-const savedTab = (vscode.getState?.() as { tab?: unknown } | undefined)?.tab;
+const savedUi = vscode.getState?.() as
+  | { tab?: unknown; customPicks?: unknown }
+  | undefined;
+const savedTab = savedUi?.tab;
+customPicks = Array.isArray(savedUi?.customPicks)
+  ? (savedUi.customPicks as unknown[])
+      .filter((x): x is string => typeof x === "string")
+      .slice(0, customCap)
+  : [];
 showTab(
   sectionTabs.includes(savedTab as SectionTab)
     ? (savedTab as SectionTab)

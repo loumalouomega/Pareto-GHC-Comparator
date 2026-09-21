@@ -6,8 +6,11 @@ import path from "node:path";
 import {
   OpenCodeError,
   discoverOpenCode,
+  fingerprintOpenCodeOutput,
+  getOpenCodeVersion,
   opencodeBenchmarkFamilies,
   parseModels,
+  parseOpenCodeVersion,
 } from "../src/opencode";
 import { compare, estimate, parseOptions, savedOptions } from "../src/compare";
 import { parseMessage } from "../src/messages";
@@ -448,6 +451,124 @@ test("default runner spawns the CLI directly without a shell", async () => {
   }
 });
 
+test("CLI version parsing and drifted output fingerprint fail closed", async () => {
+  const { readFile } = await import("node:fs/promises");
+  assert.equal(parseOpenCodeVersion("1.18.30\n"), "1.18.30");
+  assert.equal(parseOpenCodeVersion("v1.18.30"), "1.18.30");
+  assert.equal(parseOpenCodeVersion("1.18.30+exp.sha.5114f84"), "1.18.30+exp.sha.5114f84");
+  assert.equal(parseOpenCodeVersion("1.18.30 (extra words)"), "1.18.30");
+  assert.equal(parseOpenCodeVersion(`1.18.30-${"x".repeat(60)}`), undefined);
+  assert.equal(parseOpenCodeVersion("garbage"), undefined);
+  assert.equal(parseOpenCodeVersion(""), undefined);
+  assert.equal(parseOpenCodeVersion(42), undefined);
+  assert.equal(
+    await getOpenCodeVersion(async () => ({
+      code: 0,
+      stdout: "1.18.30\n",
+      stderr: "",
+    })),
+    "1.18.30",
+  );
+  assert.equal(
+    await getOpenCodeVersion(async () => ({ code: 1, stdout: "", stderr: "" })),
+    undefined,
+  );
+  assert.equal(
+    await getOpenCodeVersion(async () => {
+      throw new Error("spawn failed");
+    }),
+    undefined,
+  );
+  const known = await readFile(
+    "test/fixtures/opencode/verbose-1.18.30.txt",
+    "utf8",
+  );
+  assert.equal(parseModels(known).length, 2);
+  const drifted = await readFile("test/fixtures/opencode/drifted.txt", "utf8");
+  assert.deepEqual(fingerprintOpenCodeOutput(drifted), {
+    version: 1,
+    blocks: 0,
+    jsonFailures: 0,
+    missingId: 0,
+    missingProvider: 0,
+    missingName: 0,
+    invalidProvider: 0,
+  });
+  // The fingerprint is shape-only: no ids, names, or rates leak into it.
+  assert.ok(!JSON.stringify(fingerprintOpenCodeOutput(model())).includes("kimi"));
+  assert.deepEqual(fingerprintOpenCodeOutput(42), {
+    version: 1,
+    blocks: 0,
+    jsonFailures: 0,
+    missingId: 0,
+    missingProvider: 0,
+    missingName: 0,
+    invalidProvider: 0,
+  });
+  assert.deepEqual(
+    fingerprintOpenCodeOutput(
+      [
+        block("good/a", {
+          id: "a",
+          providerID: "good",
+          name: "A",
+          cost: { input: 1, output: 1, cache: { read: 1, write: 1 } },
+          limit: { context: 10 },
+          variants: {},
+        }),
+        "stray/garbage\n{not valid json}",
+        block("empty/b", {}),
+        block("weird/c", { id: "c", providerID: "has space", name: "C" }),
+        "array/d\n[1, {\"a\": 1}]",
+      ].join("\n"),
+    ),
+    {
+      version: 1,
+      blocks: 5,
+      jsonFailures: 2,
+      missingId: 1,
+      missingProvider: 1,
+      missingName: 1,
+      invalidProvider: 1,
+    },
+  );
+  assert.throws(() => parseModels(drifted), /schema v1 blocks=0/);
+  assert.throws(() => parseModels(drifted), /file an issue/);
+  // Discovery attaches the probed CLI version to parse failures.
+  await assert.rejects(
+    discoverOpenCode(async (args) =>
+      args[0] === "--version"
+        ? { code: 0, stdout: "1.18.30\n", stderr: "" }
+        : { code: 0, stdout: drifted, stderr: "" },
+    ),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "parse" &&
+      /OpenCode CLI 1\.18\.30/.test(error.message) &&
+      /schema v1/.test(error.message),
+  );
+  // A failed version probe degrades to "version unavailable", never a block.
+  await assert.rejects(
+    discoverOpenCode(async (args) =>
+      args[0] === "--version"
+        ? { code: 1, stdout: "", stderr: "" }
+        : { code: 0, stdout: drifted, stderr: "" },
+    ),
+    (error) =>
+      error instanceof OpenCodeError && /version unavailable/.test(error.message),
+  );
+  await assert.rejects(
+    discoverOpenCode(async (args) =>
+      args[0] === "--version"
+        ? { code: 0, stdout: "9.9.9", stderr: "" }
+        : { code: 0, stdout: "", stderr: "" },
+    ),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "empty" &&
+      /9\.9\.9/.test(error.message),
+  );
+});
 test("known OpenCode families resolve without user selection", () => {
   assert.ok(opencodeBenchmarkFamilies["opencode-go/kimi-k2.7-code"]);
   const rows = compare(parseModels(model()), [benchmark("a", "Kimi K2.7 Code (Reasoning)")], usdOptions());

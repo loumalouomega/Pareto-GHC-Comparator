@@ -4,17 +4,18 @@
 // converted, because a per-interaction multiplier is not a token-workload
 // cost. See docs/billing.md.
 import { planRegistryDate, planSources } from "./plans";
-import type { Billing, ChartType } from "./types";
+import { costUnit, type Billing, type ChartType, type CostUnit } from "./types";
+// Re-exported so existing `normalize`-module importers keep working; the
+// canonical definition lives in types.ts (a leaf module) so plans.ts can
+// share it without an import cycle.
+export { costUnit };
+export type { CostUnit };
 
 export const usdPerAiCredit = 0.01;
 export const conversionDate = planRegistryDate;
 export const conversionSources: readonly string[] = [planSources.modelsPricing];
 export const allowanceTreatment =
   "Pay-as-you-go rate equivalent: included plan allowance and the monthly plan fee are not counted. Use the monthly spending scenario for allowance-aware spending.";
-
-export type CostUnit = "AI credits" | "premium requests" | "USD";
-export const costUnit = (billing: Billing): CostUnit =>
-  billing === "credits" ? "AI credits" : billing === "legacy" ? "premium requests" : "USD";
 
 export const normalizeReasons = {
   legacy:

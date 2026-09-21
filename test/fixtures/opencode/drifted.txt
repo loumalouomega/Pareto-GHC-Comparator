@@ -1,0 +1,1 @@
+{"schema": "models.v2", "models": [{"modelId": "kimi-k2.7-code", "provider": "opencode-go", "pricing": "per-token"}]}

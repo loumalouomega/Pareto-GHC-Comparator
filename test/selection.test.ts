@@ -117,7 +117,7 @@ test("mapping recognizes Anthropic aliases and preserves all reasoning variants"
     resolveBenchmark(opus, [
       benchmark("c", "Claude Opus 5 (Adaptive Reasoning, Max Effort)"),
     ]).status,
-    "exact",
+    "inferred",
   );
 });
 test("comparison propagates explicit mapping status and candidate IDs", () => {

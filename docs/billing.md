@@ -64,7 +64,7 @@ Every quantity is rounded to 1e-6 before a boundary comparison, so floating-poin
 
 **Comparison mode**: each A/B option keeps its own plan and requests, so switching one option's source or billing can make its scenario unavailable (never silently converted). The delta between options is a separate sentence from the selected-row cost delta, comparing only the range ends (low−low, high−high) and only when both options project the same unit with a documented fee — otherwise it names the reason (off, unavailable, different units, or an undocumented fee) instead of a number. Scenarios are saved with workload profiles like every other workload setting.
 
-**Exports.** CSV and snapshot exports include the plan registry date and a `scenario` block labelled "Estimated monthly spending scenario (projection, not a bill)", with the same field-by-field provenance shown in the UI (provider-verified with its date and sources, your own input, observed history with its window, or a displayed estimate).
+**Exports.** CSV and snapshot exports include the plan registry date and a `scenario` block labelled "Estimated monthly spending scenario (projection, not a bill)", with the same field-by-field provenance shown in the UI (provider-verified with its date and sources, your own input, observed history with its window, or a displayed estimate). Every export also carries a `costBasis` block (native unit, task/workload/legacy basis, configured vs. effective token mix, legacy plan) and per-row catalog/benchmark-snapshot dates, so the workload assumption behind a cost is never ambiguous.
 
 ## USD equivalents (comparison mode)
 
@@ -76,7 +76,7 @@ Compare options has an optional **Show USD equivalents** toggle (off by default)
 - **Cost basis**: a converted value only appears for a row with a valid cost (finite, non-negative); zero (e.g. a free-tier row) converts to $0.
 - **The comparison delta**: a USD-equivalent B − A delta appears only when the toggle is on, both sides convert (neither legacy nor an unpriced selection), and the same cost basis and workload apply — the same requirements the native cost delta already uses. Otherwise the delta names why (which side didn't convert, or which basis/workload mismatch), never a silent number.
 - **Scope**: this only affects comparison-mode panels, the delta sentence, and exports. It never changes single-view costs, charts, frontiers, or the recommendation — cost units still never mix within a chart or frontier.
-- **Exports**: CSV rows gain `usd_equivalent` and `usd_conversion` columns per row (status `native`, `converted`, `unavailable`, or `off` when the toggle isn't set), alongside the existing `cost`/`cost_unit` columns; the pair snapshot's `options[]` entries gain `costNormalization` (the selected row's conversion) and the top level gains `usdCostDelta`.
+- **Exports**: CSV rows gain `usd_equivalent` and `usd_conversion` columns per row (status `native`, `converted`, `unavailable`, or `off` when the toggle isn't set), alongside the existing `cost`/`cost_unit` columns; the pair snapshot's `options[]` entries gain `costNormalization` (the selected row's conversion) and the top level gains `usdCostDelta`. Pair rows keep their own native `cost_unit` and `costBasis` even when the sides bill differently, so two units on one export are always both labelled.
 
 ## Overlay view (comparison mode)
 
