@@ -6,18 +6,16 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 
 ## How this file works
 
-- Tiers are ordered by recommended execution order. Tier 2 states its admission criterion; tasks within a tier follow dependency order.
+- Tiers are ordered by recommended execution order. Each tier states its admission criterion; tasks within a tier follow dependency order.
 - Each task defines the current gap, deliverables, dependencies, and acceptance criteria. Reference tasks by name rather than their position in the list.
 - Remove completed tasks after recording verified implementation guidance in `AGENTS.md` and user-visible changes in `CHANGELOG.md`. Remove empty tiers. This file tracks only candidate future work — it does not keep a running summary of what already shipped; `AGENTS.md` is the record of current verified behavior and `CHANGELOG.md` of what changed and when.
 - Link a corresponding GitHub issue when one exists. The issue holds the request and discussion; this file defines the proposed scope. Verify claims against the code before treating them as implemented behavior.
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-The last shipped tier (Tier 1: free-tier intelligence bar and custom comparison tray) draws a score-only OpenCode free-tier ranking under the Pareto chart and a webview-local manual pick tray; see `AGENTS.md`'s "Two-option comparison and Tier 1 delivery" section for the record. Before it, the extension settings contribution shipped `paretoGhc.usage.watchOnScan`, `paretoGhc.usage.retentionDays`, and `paretoGhc.chart.defaultView` — an explicitly configured value wins, otherwise stored state applies unchanged, and invalid values are ignored. Changes take effect without reload (consent-checked rescans, watcher stop/start, immediate chart apply) and never grant consent or scan. See `AGENTS.md`'s "Profiles and saved-state migration" section for the record.
+Below, Tier 1 is new delivery candidates that meet the "Requirements across future work" principles. Tier 2 is feasibility investigations that must establish feasibility before delivery is scheduled.
 
-Below, Tier 2 is new delivery candidates that meet the "Requirements across future work" principles. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
-
-## Tier 2 — New delivery candidates
+## Tier 1 — New delivery candidates
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
@@ -47,13 +45,13 @@ Admission criterion: new user value that meets every "Requirements across future
 - **Gap:** users must manually reopen the panel to notice a pinned model's price, score, mapping or availability changed between refreshes.
 - **Deliverables:** an opt-in notification (VS Code information message) on refresh when a pinned/watched model's price, benchmark score, mapping status, or availability changes since the last snapshot, citing both the old and new snapshot per `src/drift.ts`.
 - **Dependencies:** `src/drift.ts`'s existing snapshot retention; existing pin storage.
-- **Acceptance:** off by default (opt-in); no alert fires from noise-threshold-sized drift once that task is delivered; alert text cites both snapshot dates.
+- **Acceptance:** off by default (opt-in); no alert fires from noise-threshold-sized drift once Benchmark uncertainty and drift noise threshold is delivered; alert text cites both snapshot dates.
 
 ### Snapshot import (read-only reopen) — M
 
 - **Gap:** exported snapshot JSON can be shared but never reloaded into the extension to inspect what was compared at export time.
 - **Deliverables:** an **Import snapshot** command/webview action that loads a previously exported snapshot JSON and renders it read-only, clearly labelled as historical (not live data), validated against the snapshot schema version with a clear error for an incompatible or corrupted file.
-- **Dependencies:** the snapshot export format defined in `src/export.ts` (and the version bump from the exports task above).
+- **Dependencies:** the snapshot export format defined in `src/export.ts` (snapshot schema version 3 with the `kind` discriminator).
 - **Acceptance:** an imported snapshot can never be mistaken for live data in the UI; a version mismatch fails with an explanatory message rather than misrendering.
 
 ### Additional editor storage roots — M
@@ -70,7 +68,7 @@ Admission criterion: new user value that meets every "Requirements across future
 - **Dependencies:** existing table view and chart rendering in `webview/main.ts`.
 - **Acceptance:** every chart-only piece of information (frontier membership, quadrant highlight) is also available through the accessible table.
 
-## Tier 3 — Feasibility investigations
+## Tier 2 — Feasibility investigations
 
 Admission criterion: establish supported data access, an explicit consent model, and a validation approach before delivery is scheduled. Effort below covers investigation only; listing one does not authorize inference, spending, account changes, or additional data collection.
 
@@ -85,14 +83,14 @@ Admission criterion: establish supported data access, an explicit consent model,
 
 - **Gap:** usage history is single-machine only; teams that want an aggregate view have no supported path today.
 - **Deliverables:** investigate merging user-exported, explicitly-shared, anonymized usage summaries (no network collection by the extension itself) — covering de-identification, consent per contributor, and unit compatibility across contributors' different plans.
-- **Dependencies:** the exports task above (Provenance-complete exports) for a well-formed export to merge.
+- **Dependencies:** a well-formed export to merge — snapshot JSON (`src/export.ts`) or stored usage summaries (`src/usage.ts`).
 - **Acceptance:** a written recommendation covering privacy, consent, and whether merged data can stay honestly comparable across differing plans/units; no aggregation is implemented from this task alone.
 
 ### Upstream schema change early warning — S investigation
 
 - **Gap:** a Copilot Chat or OpenCode release that changes its session/tier-info shape is discovered only when a user hits `unsupported`/`unrecognized` output.
 - **Deliverables:** evaluate a CI job that runs the existing fixtures against newly released Copilot Chat and OpenCode versions (in an isolated, credential-free environment) to catch schema drift before users do.
-- **Dependencies:** the schema fingerprinting from the evidence-matrix task above; existing three-platform CI discovery jobs.
+- **Dependencies:** the shipped schema fingerprinting (`UsageSchemaFingerprint` in `src/usage.ts`, `fingerprintOpenCodeOutput` in `src/opencode.ts`); existing three-platform CI discovery jobs.
 - **Acceptance:** a feasibility verdict on whether such a job can run without real credentials or an account, and a recommendation on cadence and alerting.
 
 ## Requirements across future work
