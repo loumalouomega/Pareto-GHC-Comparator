@@ -1390,5 +1390,24 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#details")).toContainText(
       "no per-model confidence interval",
     );
+    // Workload sensitivity: breakpoint ranges recomputed from the current
+    // tokens, labelled as a what-if sweep — never measured history.
+    await page.locator("#input").fill("1000");
+    await page.locator("#output").fill("1000");
+    await expect(page.locator("#sensitivity-rows tr")).not.toHaveCount(0);
+    await expect(page.locator("#sensitivity-note")).toContainText(
+      "2,000 tokens",
+    );
+    await expect(page.locator("#sensitivity-card")).toContainText(
+      "not measured cost",
+    );
+    await page.locator("#output").fill("9000");
+    await expect(page.locator("#sensitivity-note")).toContainText("10,000 tokens");
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await expect(page.locator("#sensitivity-note")).toContainText(
+      "at least two comparable models",
+    );
+    await page.locator("#filter").fill("");
+    await expect(page.locator("#sensitivity-rows tr")).not.toHaveCount(0);
     expect(errors).toEqual([]);
   });

@@ -19,13 +19,6 @@ Below, Tier 1 is new delivery candidates that meet the "Requirements across futu
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
-### Workload sensitivity view — M
-
-- **Gap:** the Pareto frontier is computed for one fixed workload/token-mix at a time; there's no way to see how sensitive the ranking is to that assumption.
-- **Deliverables:** an optional view that sweeps the input:output token ratio (and/or request volume) across a range and shows where frontier membership or the top recommendation changes, clearly labelled as a what-if sweep, never a measured cost.
-- **Dependencies:** existing Pareto frontier computation (`src/compare.ts`/`src/comparison.ts`); existing per-task fixed-mix chart view.
-- **Acceptance:** the sweep never claims to be observed data; it's clearly distinguished from the Usage tab's actual measured history.
-
 ### Watchlist change alerts — M
 
 - **Gap:** users must manually reopen the panel to notice a pinned model's price, score, mapping or availability changed between refreshes.

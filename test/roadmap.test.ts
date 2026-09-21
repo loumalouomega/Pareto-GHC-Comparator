@@ -11,6 +11,7 @@ import {
   freeSpotlight,
   freeBar,
   loadMappings,
+  markFrontier,
   migrateOptions,
   modelThinkingOf,
   parseOptions,
@@ -46,7 +47,8 @@ import {
 } from "../src/usage";
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
-import { defaults, type AvailableModel, type Benchmark, type PricingInfo, type PricingSource } from "../src/types";
+import { defaults, type AvailableModel, type Benchmark, type PricingInfo, type PricingSource, type Row } from "../src/types";
+import { compressBreakpoints, frontierIds, mixCost, sweepMix } from "../src/sensitivity";
 import { parseScenario, planRegistryDate, projectScenario } from "../src/plans";
 import { staticEntries, staticModels, isStaticSource, staticPricingSources, staticRegistryDate } from "../src/staticSources";
 import { sources, defaultBilling, allowedBilling, isLiveSource } from "../src/sources";
@@ -828,6 +830,120 @@ test("free bar ranks scored free-tier models by score descending", () => {
     freeBar([freeA, freeB, paid], models, { ...usd, billing: "credits" }).map((e) => e.name),
     ["Free B", "Free A"],
   );
+});
+
+test("workload sweep prices mixes from breakdowns and matches the frontier", () => {
+  const srow = (id: string, cost: number | null, score: number | null): Row => ({
+    id,
+    modelId: id,
+    baseModelId: id,
+    name: id,
+    provider: "P",
+    score,
+    cost,
+    frontier: false,
+    reasons: [],
+    dominatedBy: [],
+    mappingStatus: "exact",
+    candidateIds: [],
+  });
+  // frontierIds follows the same dominance rule as markFrontier.
+  const synthetic = [srow("a", 1, 10), srow("b", 2, 20), srow("c", 1, 20), srow("d", null, 30)];
+  assert.deepEqual(
+    [...frontierIds(synthetic)].sort(),
+    markFrontier(synthetic).filter((r) => r.frontier).map((r) => r.id).sort(),
+  );
+  assert.deepEqual(frontierIds(synthetic), ["c"]);
+  // mixCost honors disjoint buckets with write falling back to input.
+  const priced = srow("p", 0.002, 90);
+  const withRates: Row = {
+    ...priced,
+    breakdown: {
+      inputTokens: 1000,
+      readTokens: 0,
+      writeTokens: 0,
+      outputTokens: 1000,
+      rates: { input: 1, read: 2, write: null, output: 10 },
+      divisor: 1000000,
+      unit: "USD",
+    },
+  };
+  assert.equal(mixCost(withRates, { input: 1000, read: 0, write: 0, output: 1000 }, "usd"), 0.011);
+  assert.equal(mixCost(withRates, { input: 0, read: 0, write: 100, output: 0 }, "usd"), 0.0001);
+  assert.equal(mixCost({ ...priced, score: null }, { input: 1, read: 0, write: 0, output: 0 }, "usd"), null);
+  assert.equal(
+    mixCost({ ...withRates, breakdown: { ...withRates.breakdown!, divisor: 0 } }, { input: 1, read: 0, write: 0, output: 0 }, "usd"),
+    null,
+  );
+  // Legacy rows without a breakdown stay constant; anything else unpriced is null.
+  assert.equal(mixCost(priced, { input: 5, read: 5, write: 5, output: 5000 }, "legacy"), 0.002);
+  assert.equal(mixCost(priced, { input: 5, read: 0, write: 0, output: 5 }, "usd"), null);
+});
+
+test("sweep breakpoints track frontier and recommendation changes", () => {
+  const model = (
+    id: string,
+    name: string,
+    extra: Partial<AvailableModel> = {},
+  ): AvailableModel => ({
+    id,
+    name,
+    family: id,
+    maxInputTokens: 500000,
+    source: "opencode",
+    ...extra,
+  });
+  const bench = (id: string, name: string, score: number): Benchmark => ({
+    id,
+    slug: id,
+    name,
+    provider: "P",
+    scores: { general: score, coding: score, agentic: score },
+  });
+  const available = [
+    model("opencode:zen/a", "A", { freeTier: true }),
+    model("opencode:paid/b", "B", { rates: { input: 1, read: 1, write: null, output: 10 } }),
+    model("opencode:paid/c", "C", { rates: { input: 10, read: 10, write: null, output: 1 } }),
+  ];
+  const benchmarks = [bench("a", "A", 70), bench("b", "B", 95), bench("c", "C", 90)];
+  const options = {
+    ...defaults,
+    source: "opencode" as const,
+    billing: "usd" as const,
+    display: { ...defaults.display, chart: "workload" as const },
+    tokens: { input: 1000, read: 0, write: 0, output: 1000 },
+    recommendation: {
+      ...defaults.recommendation,
+      budgets: { ...defaults.recommendation.budgets, usd: 0.005 },
+    },
+  };
+  const rows = compare(available, benchmarks, options);
+  assert.equal(rows.length, 3);
+  // The mid-sweep step reuses the workload tokens, so it must agree with compare().
+  const steps = sweepMix(rows, options, 2000);
+  assert.equal(steps.length, 11);
+  const mid = steps.find((s) => s.share === 50)!;
+  assert.deepEqual(
+    [...mid.frontierIds].sort(),
+    rows.filter((r) => r.frontier).map((r) => r.id).sort(),
+  );
+  // Input-heavy mixes favour the cheap-input model; output-heavy mixes flip both frontier and recommendation.
+  const ranges = compressBreakpoints(steps);
+  assert.ok(ranges.length > 1);
+  assert.deepEqual(ranges[0].recommendedIds, [rows.find((r) => r.modelId === "opencode:paid/b")!.id]);
+  const last = ranges[ranges.length - 1];
+  assert.deepEqual(last.recommendedIds, [rows.find((r) => r.modelId === "opencode:paid/c")!.id]);
+  // A flat sweep compresses to a single range; degenerate inputs yield none.
+  assert.equal(compressBreakpoints([]).length, 0);
+  assert.equal(sweepMix(rows, options, 2000, 1).length, 0);
+  const legacyRows = [
+    { ...rows[0], cost: 2, breakdown: undefined },
+    { ...rows[1], cost: 3, breakdown: undefined },
+  ];
+  const legacySteps = sweepMix(legacyRows, { ...options, billing: "legacy" }, 2000);
+  assert.equal(legacySteps.length, 11);
+  assert.ok(legacySteps.every((s) => s.frontierIds.length === 2));
+  assert.equal(compressBreakpoints(legacySteps).length, 1);
 });
 
 test("coverage: recommendations and profiles branches", () => {  const empty = recommend([], defaults);
@@ -1813,7 +1929,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "sensitivity-card", "sensitivity-title", "sensitivity-note", "sensitivity-rows", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

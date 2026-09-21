@@ -14,6 +14,11 @@ import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
 import { costUnit, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
+import {
+  compressBreakpoints,
+  sensitivityFallbackTotal,
+  sweepMix,
+} from "../src/sensitivity";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { freshnessAlert, pricingAge } from "../src/freshness";
 import { plansFor } from "../src/plans";
@@ -381,6 +386,54 @@ function drawChart() {
       },
     },
   });
+}
+/** What-if workload sweep: breakpoint ranges where the recommendation and
+ * frontier stay constant as the output share varies. Pure client-side
+ * arithmetic from each row's cost breakdown — no host round trip, and the
+ * sweep never touches measured usage history. */
+function renderSensitivity() {
+  if (!state) return;
+  const body = el("sensitivity-rows");
+  const note = el("sensitivity-note");
+  body.replaceChildren();
+  const comparable = state.rows.filter(
+    (r) => r.cost !== null && r.score !== null,
+  );
+  if (comparable.length < 2) {
+    note.textContent =
+      "Needs at least two comparable models in the current view.";
+    return;
+  }
+  const workloadTotal =
+    state.options.tokens.input + state.options.tokens.output;
+  const total =
+    workloadTotal > 0 ? workloadTotal : sensitivityFallbackTotal;
+  const ranges = compressBreakpoints(
+    sweepMix(state.rows, state.options, total),
+  );
+  note.textContent =
+    state.options.billing === "legacy"
+      ? "Legacy billing charges per interaction, so the ranking cannot move with the token mix."
+      : workloadTotal > 0
+        ? `Sweeping output share 0–100% of ${total.toLocaleString("en")} tokens (cache read/write held at the current workload).`
+        : `The current workload has no input/output tokens, so sweeping an illustrative ${sensitivityFallbackTotal.toLocaleString("en")}-token total instead.`;
+  const byId = new Map(state.rows.map((r) => [r.id, r.name]));
+  const names = (ids: string[]) =>
+    ids.length ? ids.map((id) => byId.get(id) ?? id).join(", ") : "—";
+  for (const range of ranges) {
+    const tr = document.createElement("tr");
+    tr.append(
+      text(
+        "td",
+        range.from === range.to
+          ? `${range.from}%`
+          : `${range.from}–${range.to}%`,
+      ),
+      text("td", names(range.recommendedIds)),
+      text("td", names(range.frontierIds)),
+    );
+    body.append(tr);
+  }
 }
 /** Free-tier intelligence bar below the Pareto chart: score-only ranking of
  * free-tier models (cost is zero, so no cost unit applies). Host-computed in
@@ -2414,6 +2467,7 @@ function render(next: ViewState) {
   }
   renderDetails();
   renderCustom();
+  renderSensitivity();
   drawChart();
   drawFreeBar();
   if (focusedModel) {
