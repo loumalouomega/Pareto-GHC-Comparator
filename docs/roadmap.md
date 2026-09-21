@@ -19,13 +19,6 @@ Below, Tier 1 is new delivery candidates that meet the "Requirements across futu
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
-### Per-row pricing age — S
-
-- **Gap:** the footer shows one catalog-wide staleness alert past 90 days (`src/freshness.ts`); an individual stale row isn't distinguishable from a fresh one.
-- **Deliverables:** show each row's own pricing-source date (already carried in export provenance) in the model details panel, with the same 90-day threshold used for a per-row flag.
-- **Dependencies:** `src/freshness.ts`; per-row pricing source/date already tracked for exports.
-- **Acceptance:** a row with stale pricing is visibly flagged even when the catalog as a whole is fresh, and vice versa.
-
 ### Benchmark uncertainty and drift noise threshold — M
 
 - **Gap:** scores are shown as single numbers with no confidence interval, and `src/drift.ts` reports every delta between snapshots verbatim, however small.

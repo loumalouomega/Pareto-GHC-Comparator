@@ -425,6 +425,11 @@ for (const theme of ["light", "dark", "high-contrast"])
         };
         state.optionsRevision++;
       }
+      // Test-only branch for the per-row pricing-age UI test: backdate the
+      // catalog so a catalog-priced row reads stale without touching code.
+      if (m.type === "__catalogDate") {
+        state.catalogDate = String(m.date ?? "");
+      }
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
       }
@@ -1334,6 +1339,33 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#custom-rows tr")).toHaveCount(0);
     await expect(page.locator("#custom-empty")).toHaveText(
       /No models picked yet/,
+    );
+    // Per-row pricing age: a catalog-priced row shows no flag while its
+    // source is fresh, then a stale notice that auto-opens More details
+    // once the catalog date goes stale — independent of the footer alert.
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await expect(page.locator("#details")).toContainText(
+      "Pricing: Copilot catalog (2026-09-10)",
+    );
+    await expect(page.locator("#details")).not.toContainText(
+      "pricing source is",
+    );
+    await page.evaluate(() =>
+      (window as any).hostMessage({ type: "__catalogDate", date: "2020-01-01" }),
+    );
+    await expect(page.locator("#details")).toContainText(
+      "pricing source is",
+    );
+    await expect(page.locator("#details")).toContainText("may be stale");
+    await expect(page.locator("#details .more-details")).toHaveAttribute(
+      "open",
+      "",
+    );
+    await page.evaluate(() =>
+      (window as any).hostMessage({ type: "__catalogDate", date: "2026-09-10" }),
+    );
+    await expect(page.locator("#details")).not.toContainText(
+      "pricing source is",
     );
     expect(errors).toEqual([]);
   });

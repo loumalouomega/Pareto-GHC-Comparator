@@ -15,7 +15,7 @@ import { sources } from "../src/sources";
 import { costUnit, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
 import { workspaceLabel } from "../src/workspaceLabel";
-import { freshnessAlert } from "../src/freshness";
+import { freshnessAlert, pricingAge } from "../src/freshness";
 import { plansFor } from "../src/plans";
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -661,7 +661,10 @@ function renderDetails() {
       row.mapping ||
       row.pricing?.suggestion ||
       row.pricing?.byok?.stale ||
-      row.pricing?.status === "unresolved"
+      row.pricing?.status === "unresolved" ||
+      (row.pricing &&
+        pricingAge(row.pricing, state.catalogDate, state.staticRegistryDate)
+          .stale)
     )
       detailsMoreOpen = true;
   }
@@ -983,7 +986,7 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
       ? p.source === "copilot-catalog"
         ? `Copilot catalog (${state.catalogDate})`
         : p.source === "legacy-multiplier"
-          ? "Legacy plan multiplier"
+          ? `Legacy plan multiplier (${state.catalogDate})`
           : p.source === "opencode-cli"
             ? "OpenCode CLI live rate"
             : `Static registry (${state.staticRegistryDate})`
@@ -997,6 +1000,15 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
             ? "Not comparable in this billing mode"
             : "Unresolved";
   target.append(text("p", `Pricing: ${sourceText}`, "hint"));
+  const age = pricingAge(p, state.catalogDate, state.staticRegistryDate);
+  if (age.stale && age.date !== null && age.daysOld !== null)
+    target.append(
+      text(
+        "p",
+        `This row's pricing source is ${age.daysOld} days old (${age.date}) — rates may be stale (see docs/catalog.md).`,
+        "notice",
+      ),
+    );
   if (p.status === "unresolved" && p.reason)
     target.append(text("p", p.reason, "notice"));
   if (p.byok?.stale)

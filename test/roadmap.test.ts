@@ -23,7 +23,7 @@ import {
   variantDisplayName,
 } from "../src/compare";
 import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
-import { freshnessAlert } from "../src/freshness";
+import { freshnessAlert, pricingAge } from "../src/freshness";
 import { driftOf, selectPrevSnapshot } from "../src/drift";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { loadByokStore, mergeByokForm, parseByokFormStore, parseByokStore } from "../src/byok";
@@ -46,7 +46,7 @@ import {
 } from "../src/usage";
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
-import { defaults, type AvailableModel, type Benchmark } from "../src/types";
+import { defaults, type AvailableModel, type Benchmark, type PricingInfo, type PricingSource } from "../src/types";
 import { parseScenario, planRegistryDate, projectScenario } from "../src/plans";
 import { staticEntries, staticModels, isStaticSource, staticPricingSources, staticRegistryDate } from "../src/staticSources";
 import { sources, defaultBilling, allowedBilling, isLiveSource } from "../src/sources";
@@ -986,6 +986,65 @@ test("freshness alert stays silent for current dates and nudges when stale", () 
     "2026-01-01",
   );
   assert.match(stalePlans ?? "", /plans 2026-01-01/);
+});
+
+test("per-row pricing age flags stale sources with the shared 90-day threshold", () => {
+  const now = Date.parse("2026-09-20T00:00:00Z");
+  const priced = (source: PricingSource): PricingInfo => ({ status: "priced", source });
+  // Day-precision boundary: exactly 90 days old is fresh, 91 days is stale.
+  assert.equal(
+    pricingAge(priced("copilot-catalog"), "2026-06-22", "2026-09-11", now).stale,
+    false,
+  );
+  const stale = pricingAge(priced("copilot-catalog"), "2026-06-21", "2026-09-11", now);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.date, "2026-06-21");
+  assert.equal(stale.daysOld, 91);
+  // Legacy multipliers ride with the catalog; static rows with their registry.
+  assert.equal(
+    pricingAge(priced("legacy-multiplier"), "2026-06-21", "2026-09-11", now).stale,
+    true,
+  );
+  const registry = pricingAge(priced("static-registry"), "2026-09-10", "2026-06-21", now);
+  assert.equal(registry.date, "2026-06-21");
+  assert.equal(registry.stale, true);
+  // A fresh row under a stale catalog stays clean.
+  assert.equal(
+    pricingAge(priced("static-registry"), "2026-01-01", "2026-09-11", now).stale,
+    false,
+  );
+  // Registry-provenance BYOK uses its own date.
+  const registryByok: PricingInfo = {
+    status: "byok",
+    source: "byok",
+    byok: {
+      provenance: { kind: "registry", registry: "codex", registryId: "x", registryDate: "2026-01-01" },
+    },
+  };
+  assert.equal(
+    pricingAge(registryByok, "2026-09-10", "2026-09-11", now).stale,
+    true,
+  );
+  // Never flagged: live CLI rates, free tier, manual BYOK, unresolved, cross-unit.
+  const undated: PricingInfo[] = [
+    { status: "priced", source: "opencode-cli" },
+    { status: "free", source: "opencode-cli" },
+    { status: "byok", source: "byok", byok: { provenance: { kind: "manual" } } },
+    { status: "unresolved", source: "none" },
+    { status: "not-comparable", source: "none" },
+  ];
+  for (const p of undated)
+    assert.deepEqual(pricingAge(p, "2026-01-01", "2026-01-01", now), {
+      date: null,
+      stale: false,
+      daysOld: null,
+    });
+  // An unparseable date is reported without a flag, never as fresh.
+  assert.deepEqual(pricingAge(priced("copilot-catalog"), "not-a-date", "2026-09-11", now), {
+    date: "not-a-date",
+    stale: false,
+    daysOld: null,
+  });
 });
 
 test("snapshot and badge exports reflect displayed rows", () => {

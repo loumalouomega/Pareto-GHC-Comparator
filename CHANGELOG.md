@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- Per-row pricing age: model details now show each row's own pricing-source date (catalog, registry, or applied-registry rate) with a stale-source flag past the same 90-day threshold as the footer nudge, computed independently so either can fire without the other; More details opens by itself for a stale-priced row. Live CLI rates, free-tier zeros, manual BYOK rates, and unresolved prices carry no source date and are never flagged.
+
 ## 1.2.0
 
 ### Changed
