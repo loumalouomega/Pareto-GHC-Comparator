@@ -6,6 +6,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ### Added
 
+- Benchmark drift noise threshold: score changes under 1 index point between snapshots now read as within measurement noise (for example `48 (+0.3, noise)` in the table, with the reasoning in model details), grounded in Artificial Analysis's published sub-±1% 95% confidence interval for the Intelligence Index. No per-model interval is shown or implied — the benchmark source publishes none for these indices, and model details say so explicitly.
 - Per-row pricing age: model details now show each row's own pricing-source date (catalog, registry, or applied-registry rate) with a stale-source flag past the same 90-day threshold as the footer nudge, computed independently so either can fire without the other; More details opens by itself for a stale-priced row. Live CLI rates, free-tier zeros, manual BYOK rates, and unresolved prices carry no source date and are never flagged.
 
 ## 1.2.0

@@ -24,7 +24,7 @@ import {
 } from "../src/compare";
 import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
 import { freshnessAlert, pricingAge } from "../src/freshness";
-import { driftOf, selectPrevSnapshot } from "../src/drift";
+import { driftOf, noiseThreshold, selectPrevSnapshot } from "../src/drift";
 import { workspaceLabel } from "../src/workspaceLabel";
 import { loadByokStore, mergeByokForm, parseByokFormStore, parseByokStore } from "../src/byok";
 import { usageMultiplier } from "../src/usageMultipliers";
@@ -1138,6 +1138,30 @@ test("drift computes per-preset deltas with unknown, not zero, for gaps", () => 
   assert.equal(coding.a.delta, 0);
   assert.equal(coding.b.delta, 1);
   assert.deepEqual(driftOf(undefined, curr, "general"), {});
+});
+
+test("drift flags sub-threshold deltas as measurement noise", () => {
+  assert.equal(noiseThreshold, 1);
+  const prev = {
+    version: "4.2",
+    fetchedAt: 1000,
+    models: [
+      { id: "tiny", slug: "tiny", name: "Tiny", provider: "P", scores: { general: 50, coding: 50, agentic: 50 } },
+    ],
+  };
+  const curr = (score: number | null) => [
+    { id: "tiny", slug: "tiny", name: "Tiny", provider: "P", scores: { general: score, coding: score, agentic: score } },
+  ];
+  // Boundary: just under 1 point is noise, exactly 1 is a real change.
+  assert.equal(driftOf(prev, curr(50.99), "general").tiny.noisy, true);
+  assert.equal(driftOf(prev, curr(51), "general").tiny.noisy, false);
+  assert.equal(driftOf(prev, curr(51.01), "general").tiny.noisy, false);
+  // Sign is irrelevant; an exact zero is noise (no claimed change).
+  assert.equal(driftOf(prev, curr(49.5), "general").tiny.noisy, true);
+  assert.equal(driftOf(prev, curr(50), "general").tiny.noisy, true);
+  // Unknown deltas are never labelled noise.
+  assert.equal(driftOf(prev, curr(null), "general").tiny.noisy, false);
+  assert.equal(driftOf(prev, curr(null), "general").tiny.delta, null);
 });
 
 test("previous snapshots validate, stay older, and never equal current", () => {

@@ -768,6 +768,11 @@ function renderDetails() {
         "p",
         `Selected index score: ${format(row.score)} · version ${state.version ?? "unknown"}`,
       ),
+      text(
+        "p",
+        "Artificial Analysis publishes no per-model confidence interval for these indices — score shown as reported.",
+        "hint",
+      ),
     );
     more.append(text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"));
     if ((row.requests ?? 0) > 0)
@@ -785,7 +790,7 @@ function renderDetails() {
           "p",
           drift.delta === null
             ? `Score change unknown: previous snapshot v${state.prevVersion} has no comparable score.`
-            : `Score change since v${state.prevVersion} (retrieved ${state.prevFetchedAt ? new Date(state.prevFetchedAt).toLocaleString() : "unknown date"}): ${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)} (was ${format(drift.prevScore)}).`,
+            : `Score change since v${state.prevVersion} (retrieved ${state.prevFetchedAt ? new Date(state.prevFetchedAt).toLocaleString() : "unknown date"}): ${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)} (was ${format(drift.prevScore)}).${drift.noisy ? " Within measurement noise — a change under 1 index point does not imply a real change." : ""}`,
           "hint",
         ),
       );
@@ -2378,7 +2383,7 @@ function render(next: ViewState) {
     const scoreText =
       format(row.score) +
       (drift && drift.delta !== null
-        ? ` (${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)})`
+        ? ` (${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)}${drift.noisy ? ", noise" : ""})`
         : "");
     tr.append(
       name,

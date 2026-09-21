@@ -430,6 +430,16 @@ for (const theme of ["light", "dark", "high-contrast"])
       if (m.type === "__catalogDate") {
         state.catalogDate = String(m.date ?? "");
       }
+      // Test-only branch for the drift-noise UI test: install a previous
+      // snapshot version plus one noisy and one real drift entry.
+      if (m.type === "__drift") {
+        state.prevVersion = "4.2";
+        state.prevFetchedAt = Date.parse("2026-09-01T00:00:00Z");
+        state.drift = {
+          gpt: { prevScore: 47.7, delta: 0.3, noisy: true },
+          mini: { prevScore: 20, delta: 10, noisy: false },
+        };
+      }
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
       }
@@ -1366,6 +1376,19 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await expect(page.locator("#details")).not.toContainText(
       "pricing source is",
+    );
+    // Drift noise: a sub-threshold delta reads as measurement noise in the
+    // table cell and details, while a larger delta stays verbatim. No
+    // per-model interval is ever shown — the details say so explicitly.
+    await page.evaluate(() => (window as any).hostMessage({ type: "__drift" }));
+    await expect(page.locator("#rows")).toContainText("(+0.3, noise)");
+    await expect(page.locator("#rows")).toContainText("(+10)");
+    await expect(page.locator("#rows")).not.toContainText("(+10, noise)");
+    await expect(page.locator("#details")).toContainText(
+      "Within measurement noise",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "no per-model confidence interval",
     );
     expect(errors).toEqual([]);
   });

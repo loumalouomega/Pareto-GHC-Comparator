@@ -19,13 +19,6 @@ Below, Tier 1 is new delivery candidates that meet the "Requirements across futu
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
-### Benchmark uncertainty and drift noise threshold — M
-
-- **Gap:** scores are shown as single numbers with no confidence interval, and `src/drift.ts` reports every delta between snapshots verbatim, however small.
-- **Deliverables:** show a published confidence interval only where the upstream source (Artificial Analysis) actually reports one — otherwise label "no interval published," never fabricate one; add a documented noise threshold below which a drift delta is labelled "within measurement noise" instead of implying a real change.
-- **Dependencies:** `src/drift.ts`; whatever interval data Artificial Analysis's API actually exposes (verify before committing to delivery — may need a short feasibility check first).
-- **Acceptance:** no interval is invented for a source that doesn't publish one. The noise threshold is documented and covered by a drift test at and around the boundary.
-
 ### Workload sensitivity view — M
 
 - **Gap:** the Pareto frontier is computed for one fixed workload/token-mix at a time; there's no way to see how sensitive the ranking is to that assumption.
@@ -38,7 +31,7 @@ Admission criterion: new user value that meets every "Requirements across future
 - **Gap:** users must manually reopen the panel to notice a pinned model's price, score, mapping or availability changed between refreshes.
 - **Deliverables:** an opt-in notification (VS Code information message) on refresh when a pinned/watched model's price, benchmark score, mapping status, or availability changes since the last snapshot, citing both the old and new snapshot per `src/drift.ts`.
 - **Dependencies:** `src/drift.ts`'s existing snapshot retention; existing pin storage.
-- **Acceptance:** off by default (opt-in); no alert fires from noise-threshold-sized drift once Benchmark uncertainty and drift noise threshold is delivered; alert text cites both snapshot dates.
+- **Acceptance:** off by default (opt-in); no alert fires for noise-flagged drift (`ScoreDrift.noisy` in `src/drift.ts`); alert text cites both snapshot dates.
 
 ### Snapshot import (read-only reopen) — M
 

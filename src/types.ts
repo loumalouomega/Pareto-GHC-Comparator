@@ -178,6 +178,8 @@ export interface Benchmark {
 export interface ScoreDrift {
   prevScore: number | null;
   delta: number | null;
+  /** True when a known delta is smaller than the documented noise threshold. */
+  noisy: boolean;
 }
 export type TokenProvenance = "observed" | "estimated" | "missing";
 /**

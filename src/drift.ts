@@ -1,5 +1,16 @@
 import { validSnapshot } from "./api";
 import type { Benchmark, Preset, ScoreDrift, Snapshot } from "./types";
+/**
+ * Drift deltas smaller than this many index points read as "within
+ * measurement noise" instead of implying a real change. Basis: Artificial
+ * Analysis publishes a 95% confidence interval of less than ±1% for the
+ * Intelligence Index (see its intelligence-benchmarking methodology); an
+ * absolute 1-point threshold is conservative relative to that across the
+ * observed 20–60 score range, and applies uniformly to every preset since
+ * no per-preset interval is published. Never a per-model figure: the
+ * upstream Free API exposes no confidence interval for language models.
+ */
+export const noiseThreshold = 1;
 export function selectPrevSnapshot(
   prevRaw: unknown,
   curr: Snapshot,
@@ -20,12 +31,12 @@ export function driftOf(
     const p = byId.get(b.id);
     const prevScore = p ? p.scores[preset] : null;
     const currScore = b.scores[preset];
+    const delta =
+      prevScore !== null && currScore !== null ? currScore - prevScore : null;
     out[b.id] = {
       prevScore,
-      delta:
-        prevScore !== null && currScore !== null
-          ? currScore - prevScore
-          : null,
+      delta,
+      noisy: delta !== null && Math.abs(delta) < noiseThreshold,
     };
   }
   return out;
