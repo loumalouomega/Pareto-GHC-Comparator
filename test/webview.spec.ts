@@ -7,7 +7,7 @@ import {
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
-import { compare, registryRateFor } from "../src/compare";
+import { compare, freeBar, registryRateFor } from "../src/compare";
 import { mergeByokForm, parseByokFormStore } from "../src/byok";
 import {
   historyScenarioPrefill,
@@ -55,6 +55,22 @@ const benchmarks: Benchmark[] = [
     name: "Kimi K2.7 Code",
     provider: "Moonshot AI",
     scores: { general: 45, coding: 52, agentic: 30 },
+  },
+  // Free-tier Zen models for the OpenCode intelligence-bar UI test: each
+  // name exactly matches its model so the benchmark resolves without aliases.
+  {
+    id: "zen-alpha",
+    slug: "zen-alpha-free",
+    name: "Zen Alpha Free",
+    provider: "Zen",
+    scores: { general: 30, coding: 32, agentic: 22 },
+  },
+  {
+    id: "zen-beta",
+    slug: "zen-beta-free",
+    name: "Zen Beta Free",
+    provider: "Zen",
+    scores: { general: 22, coding: 24, agentic: 18 },
   },
   // Slug-only identifier match for "unknown-model" below: no catalog alias
   // hits it, so it only ever shows up as an unverified mapping suggestion.
@@ -191,6 +207,23 @@ const opencodeAvailable = [
     maxInputTokens: 1050000,
     source: "opencode" as const,
   },
+  // Zero-cost Zen free-tier models for the intelligence-bar UI test.
+  {
+    id: "opencode:zen/alpha-free",
+    name: "Zen Alpha Free",
+    family: "zen",
+    maxInputTokens: 200000,
+    source: "opencode" as const,
+    freeTier: true,
+  },
+  {
+    id: "opencode:zen/beta-free",
+    name: "Zen Beta Free",
+    family: "zen",
+    maxInputTokens: 200000,
+    source: "opencode" as const,
+    freeTier: true,
+  },
 ];
 for (const theme of ["light", "dark", "high-contrast"])
   test(`chart, selection, filtering, and keyboard in ${theme}`, async ({
@@ -226,6 +259,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       checklist: [],
       groups: [],
       freeSpotlight: { enabled: false, explanation: "" },
+      freeBar: [],
     };
     let profiles: ProfileStore = { version: 1, items: [] };
     let mappings: Record<string, string> = {};
@@ -449,6 +483,11 @@ for (const theme of ["light", "dark", "high-contrast"])
           byok: state.byok,
         },
       );
+      state.freeBar = freeBar(listed, state.models, state.options, mappings, undefined, {
+        excluded: [...excluded],
+        usedCounts,
+        byok: state.byok,
+      });
       state.budgetSuggestion = suggestBudget(
         state.usage,
         state.options.billing,
@@ -613,7 +652,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.keyboard.press("Home");
     await expect(page.locator("#panel-compare")).toBeVisible();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
-    await expect(page.locator("canvas")).toBeVisible();
+    await expect(page.locator("#chart")).toBeVisible();
     // Intelligence vs. cost per task is the default chart view.
     await expect(page.locator("#chart-title")).toHaveText(
       "Intelligence vs. cost per task",
@@ -621,7 +660,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#cost-heading")).toHaveText("AI credits / task");
     await expect(page.locator("#tokens")).toBeHidden();
     await expect(page.locator("#display-chart")).toHaveValue("task");
-    await expect(page.locator("canvas")).toHaveAttribute(
+    await expect(page.locator("#chart")).toHaveAttribute(
       "aria-label",
       /per task/,
     );
@@ -629,7 +668,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Settings");
     await page.locator("#display-quadrant").uncheck();
     await openTab("Tool analysis");
-    await expect(page.locator("canvas")).toBeVisible();
+    await expect(page.locator("#chart")).toBeVisible();
     await expect
       .poll(() =>
         messages.some(
@@ -822,14 +861,14 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#billing")).toHaveValue("usd");
     await expect(page.locator("#eyebrow")).toHaveText("PARETO / OPENCODE");
     await expect(page.locator("#cost-heading")).toHaveText("USD / task");
-    await expect(page.locator("#count")).toHaveText("1 plotted / 3 models");
+    await expect(page.locator("#count")).toHaveText("3 plotted / 5 models");
     await expect(page.locator("#recommendation-result")).toContainText(
       "Kimi K2.7 Code",
     );
     await expect(page.locator("#recommendation-result")).toContainText("USD");
-    await expect(page.locator("#rows tr")).toHaveCount(3);
+    await expect(page.locator("#rows tr")).toHaveCount(5);
     await expect(page.locator('#billing option[value="legacy"]')).toBeHidden();
-    await expect(page.locator("canvas")).toHaveAttribute("aria-label", /USD/);
+    await expect(page.locator("#chart")).toHaveAttribute("aria-label", /USD/);
 
     // Pricing assistance: a same-identifier static-registry rate is offered,
     // unverified, for an unpriced provider-billed model — independent of its
@@ -965,7 +1004,7 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(
       page.locator("#rows tr").first().locator("td").nth(2),
     ).toHaveText("0");
-    await expect(page.locator("canvas")).toHaveAttribute(
+    await expect(page.locator("#chart")).toHaveAttribute(
       "aria-label",
       /linear cost scale/,
     );
@@ -1245,5 +1284,56 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Compare tools");
     await page.locator("#comparison-enabled").uncheck();
     await expect(page.locator("#comparison-panels")).toBeHidden();
+    await openTab("Tool analysis");
+    // Free-tier intelligence bar: hidden outside OpenCode, score-descending
+    // ranking below the Pareto chart once the OpenCode source is selected.
+    await expect(page.locator("#free-bar-wrap")).toBeHidden();
+    await page.locator("#source").selectOption("opencode");
+    await expect(page.locator("#free-bar-wrap")).toBeVisible();
+    await expect(page.locator("#free-bar-title")).toHaveText(
+      "Best free options · General index",
+    );
+    await expect(page.locator("#free-bar-list li")).toHaveCount(2);
+    expect(await page.locator("#free-bar-list li").allTextContents()).toEqual([
+      "Zen Alpha Free: 30 points · Pareto frontier",
+      "Zen Beta Free: 22 points",
+    ]);
+    // Clicking a bar selects that row on the host (canvas center lands on
+    // the second bar of the two-row chart).
+    // The bar carries the host-computed ranking (order, scores, frontier
+    // flags) with an accessible list; row selection itself goes through the
+    // same covered table buttons, so no pixel-targeted canvas click here.
+    await expect(page.locator("#free-bar")).toHaveAttribute(
+      "aria-label",
+      /2 free-tier models ranked by general score/,
+    );
+    await page.locator("#source").selectOption("copilot");
+    await expect(page.locator("#free-bar-wrap")).toBeHidden();
+    // Custom comparison tray: manual picks render head-to-head on the
+    // current task and cost basis; a pick that leaves the view stays listed
+    // until removed, never silently swapped.
+    await expect(page.locator("#custom-empty")).toHaveText(
+      /No models picked yet/,
+    );
+    await page.locator('#rows input[type="checkbox"]').first().check();
+    await expect(page.locator("#custom-rows tr")).toHaveCount(1);
+    await expect(page.locator("#custom-chart-wrap")).toBeVisible();
+    await expect(page.locator("#custom-empty")).toBeEmpty();
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await page
+      .getByRole("button", { name: "☆ Pick for custom comparison" })
+      .click();
+    await expect(page.locator("#custom-rows tr")).toHaveCount(2);
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await expect(page.locator("#custom-rows")).toContainText(
+      "No longer in view",
+    );
+    await page.locator("#filter").fill("");
+    await expect(page.locator("#custom-rows tr")).toHaveCount(2);
+    await page.locator("#custom-clear").click();
+    await expect(page.locator("#custom-rows tr")).toHaveCount(0);
+    await expect(page.locator("#custom-empty")).toHaveText(
+      /No models picked yet/,
+    );
     expect(errors).toEqual([]);
   });

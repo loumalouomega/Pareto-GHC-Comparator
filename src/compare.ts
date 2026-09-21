@@ -12,6 +12,7 @@ import {
   type ByokStore,
   type CatalogEntry,
   type CostBreakdown,
+  type FreeBarEntry,
   type MappingIssue,
   type Options,
   type PricingInfo,
@@ -795,8 +796,7 @@ export function compare(
   return markFrontier(rows);
 }
 
-export function freeSpotlight(
-  available: AvailableModel[],
+export function freeSpotlight(  available: AvailableModel[],
   benchmarks: Benchmark[],
   options: Options,
   overrides: Record<string, string> = {},
@@ -848,4 +848,45 @@ export function freeSpotlight(
 }
 function pick(r: Row): { id: string; name: string; score: number } {
   return { id: r.id, name: r.name, score: r.score! };
+}
+/**
+ * Free-tier models ranked by benchmark score for the intelligence bar below
+ * the Pareto chart. Same baseline as `freeSpotlight` (checklist and text
+ * filter apply; `freeOnly`/`onlyMine` are ignored) but billing-independent:
+ * only a score is required, since free-tier costs are zero and the bar
+ * carries no cost unit. Sorted by score descending, then cost ascending
+ * (unpriced last), then name for determinism. Empty for non-OpenCode
+ * sources. Scores are never invented: rows without a score are excluded.
+ */
+export function freeBar(
+  available: AvailableModel[],
+  benchmarks: Benchmark[],
+  options: Options,
+  overrides: Record<string, string> = {},
+  entries = catalog,
+  extra: {
+    pins?: Record<string, string[]>;
+    excluded?: string[];
+    byok?: ByokStore;
+    usedCounts?: Map<string, number>;
+  } = {},
+): FreeBarEntry[] {
+  if (options.source !== "opencode") return [];
+  const baseline = { ...options, freeOnly: false, onlyMine: false };
+  const free = compare(available, benchmarks, baseline, overrides, entries, {
+    ...extra,
+  }).filter(
+    (r) =>
+      r.score !== null &&
+      available.find((m) => m.id === r.modelId)?.freeTier === true,
+  );
+  return [...free]
+    .sort(
+      (a, b) =>
+        b.score! - a.score! ||
+        (a.cost ?? Number.POSITIVE_INFINITY) -
+          (b.cost ?? Number.POSITIVE_INFINITY) ||
+        a.name.localeCompare(b.name),
+    )
+    .map((r) => ({ id: r.id, name: r.name, score: r.score! }));
 }

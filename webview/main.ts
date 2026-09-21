@@ -93,6 +93,8 @@ const color = (provider: string): string => {
 };
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
+  freeBarChart: Chart<"bar"> | undefined,
+  customChart: Chart<"bar"> | undefined,
   initialized = false;
 let appliedRevision = -1;
 let budgetDraft: Record<Billing, number> = { credits: 1, legacy: 1, usd: 1 };
@@ -120,6 +122,20 @@ let byokDraft: Record<
   { input: string; read: string; write: string; output: string }
 > = {};
 let usageFullPaths = false;
+// Manually picked head-to-head set for the custom comparison tray: local
+// webview state only (persisted via vscode.setState), never sent to the
+// host, so no message validation or storage migration applies. Capped so
+// the tray stays a glanceable S-sized view.
+const customCap = 6;
+let customPicks: string[] = [];
+let currentTab: SectionTab = "compare";
+function persistUi() {
+  try {
+    vscode.setState?.({ tab: currentTab, customPicks });
+  } catch {
+    // setState is best-effort persistence; picks still work for the session.
+  }
+}
 // Mirrors Options["scenario"].origin/history for the pending draft: reset to
 // "user" on any manual edit, set to "history" only by the prefill button.
 let scenarioOrigin: "user" | "history" = "user";
@@ -366,6 +382,266 @@ function drawChart() {
     },
   });
 }
+/** Free-tier intelligence bar below the Pareto chart: score-only ranking of
+ * free-tier models (cost is zero, so no cost unit applies). Host-computed in
+ * `freeBar`, sorted by score descending; clicking a bar selects the row. */
+function drawFreeBar() {
+  if (!state) return;
+  const entries = state.freeBar ?? [];
+  const show = state.options.source === "opencode" && entries.length > 0;
+  el("free-bar-wrap").hidden = !show;
+  const list = el("free-bar-list");
+  list.replaceChildren();
+  freeBarChart?.destroy();
+  freeBarChart = undefined;
+  if (!show) return;
+  const presetName =
+    state.options.preset[0].toUpperCase() + state.options.preset.slice(1);
+  el("free-bar-title").textContent = `Best free options · ${presetName} index`;
+  el("free-bar").setAttribute(
+    "aria-label",
+    `${entries.length} free-tier models ranked by ${state.options.preset} score. The list below provides all values and model selection.`,
+  );
+  const byId = new Map(state.rows.map((r) => [r.id, r]));
+  for (const e of entries) {
+    const li = document.createElement("li");
+    const row = byId.get(e.id);
+    li.textContent =
+      `${e.name}: ${format(e.score)} points` +
+      (row?.frontier ? " · Pareto frontier" : "");
+    list.append(li);
+  }
+  const wrap = el("free-bar-chart-wrap");
+  wrap.style.height = `${Math.max(120, entries.length * 30 + 48)}px`;
+  const foreground = getComputedStyle(document.body).color;
+  const grid =
+    getComputedStyle(document.body)
+      .getPropertyValue("--vscode-panel-border")
+      .trim() || "#88888833";
+  freeBarChart = new Chart(el<HTMLCanvasElement>("free-bar"), {
+    type: "bar",
+    data: {
+      labels: entries.map((e) => e.name),
+      datasets: [
+        {
+          label: "Score",
+          data: entries.map((e) => e.score),
+          backgroundColor: entries.map((e) => {
+            const row = byId.get(e.id);
+            return row ? colorForRow(row) : color("Unknown");
+          }),
+          borderWidth: entries.map((e) =>
+            e.id === state!.selected ? 3 : 1,
+          ),
+          borderColor: entries.map((e) =>
+            e.id === state!.selected
+              ? foreground
+              : (byId.get(e.id) ? colorForRow(byId.get(e.id)!) : color("Unknown")),
+          ),
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const e = entries[item.dataIndex];
+              return `${e.name}: ${format(e.score)} points${byId.get(e.id)?.frontier ? " · Pareto frontier" : ""}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: `${presetName} index · higher is better`,
+            color: foreground,
+          },
+          ticks: { color: foreground },
+          grid: { color: grid },
+        },
+        y: {
+          ticks: { color: foreground, autoSkip: false },
+          grid: { display: false },
+        },
+      },
+      onClick: (_, elements) => {
+        const hit = elements[0];
+        if (hit) send("select", { id: entries[hit.index].id });
+      },
+    },
+  });
+}
+function toggleCustomPick(id: string, on: boolean) {
+  const next = new Set(customPicks);
+  if (on) {
+    if (!next.has(id) && next.size >= customCap) {
+      el("custom-empty").textContent =
+        `Holding ${customCap} of ${customCap} picks — remove one to pick another.`;
+      return;
+    }
+    next.add(id);
+  } else next.delete(id);
+  customPicks = [...next];
+  persistUi();
+  syncPickBoxes();
+  renderDetails();
+  renderCustom();
+}
+function syncPickBoxes() {
+  for (const box of Array.from(
+    document.querySelectorAll<HTMLInputElement>('#rows input[type="checkbox"]'),
+  )) {
+    const id = box.dataset.pickId;
+    if (!id) continue;
+    box.checked = customPicks.includes(id);
+    box.disabled = !box.checked && customPicks.length >= customCap;
+  }
+}
+/** Manual head-to-head tray: table plus score bar for the picked rows, in
+ * the current task and native cost unit. A pick that leaves the view stays
+ * listed until removed — never silently swapped for another row. */
+function renderCustom() {
+  if (!state) return;
+  customPicks = [...new Set(customPicks)].slice(0, customCap);
+  const byId = new Map(state.rows.map((r) => [r.id, r]));
+  const unit = costUnit(state.options.billing);
+  el("custom-cost-heading").textContent =
+    unit === "premium requests"
+      ? "Requests"
+      : state.options.display.chart === "task"
+        ? `${unit} / task`
+        : unit;
+  const empty = el("custom-empty");
+  const wrap = el("custom-chart-wrap");
+  const body = el("custom-rows");
+  body.replaceChildren();
+  customChart?.destroy();
+  customChart = undefined;
+  (el("custom-clear") as HTMLButtonElement).disabled =
+    customPicks.length === 0;
+  if (!customPicks.length) {
+    empty.textContent = "No models picked yet — use Pick in the table above.";
+    wrap.hidden = true;
+    return;
+  }
+  empty.textContent =
+    customPicks.length >= customCap
+      ? `Holding ${customCap} of ${customCap} picks — remove one to pick another.`
+      : "";
+  const scored = customPicks.flatMap((id) => {
+    const row = byId.get(id);
+    return row && row.score !== null ? [{ id, row }] : [];
+  });
+  wrap.hidden = scored.length === 0;
+  if (scored.length) {
+    const presetName =
+      state.options.preset[0].toUpperCase() + state.options.preset.slice(1);
+    wrap.style.height = `${Math.max(110, scored.length * 30 + 48)}px`;
+    const foreground = getComputedStyle(document.body).color;
+    const grid =
+      getComputedStyle(document.body)
+        .getPropertyValue("--vscode-panel-border")
+        .trim() || "#88888833";
+    customChart = new Chart(el<HTMLCanvasElement>("custom-chart"), {
+      type: "bar",
+      data: {
+        labels: scored.map(({ row }) => row.name),
+        datasets: [
+          {
+            label: "Score",
+            data: scored.map(({ row }) => row.score!),
+            backgroundColor: scored.map(({ row }) => colorForRow(row)),
+          },
+        ],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (item) => {
+                const { row } = scored[item.dataIndex];
+                return `${row.name}: ${format(row.score)} score · ${format(row.cost)} ${unitNoun(state!.options.billing)}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: `${presetName} index · higher is better`,
+              color: foreground,
+            },
+            ticks: { color: foreground },
+            grid: { color: grid },
+          },
+          y: {
+            ticks: { color: foreground, autoSkip: false },
+            grid: { display: false },
+          },
+        },
+        onClick: (_, elements) => {
+          const hit = elements[0];
+          if (hit) send("select", { id: scored[hit.index].id });
+        },
+      },
+    });
+  }
+  for (const id of customPicks) {
+    const row = byId.get(id);
+    const tr = document.createElement("tr");
+    if (row) {
+      const name = document.createElement("td"),
+        button = text("button", row.name, "model-button") as HTMLButtonElement;
+      button.dataset.modelId = row.id;
+      button.onclick = () => send("select", { id: row.id });
+      name.append(button);
+      if (state.recommendation.modelIds.includes(row.id))
+        name.append(text("span", "★ Recommended", "recommended"));
+      tr.append(
+        name,
+        text("td", format(row.score)),
+        text("td", format(row.cost)),
+        text(
+          "td",
+          row.frontier
+            ? "Pareto frontier"
+            : row.reasons.length
+              ? row.reasons.join(" ")
+              : "Dominated",
+          row.frontier ? "frontier" : "",
+        ),
+      );
+    } else {
+      tr.append(
+        text("td", id, "hint"),
+        text("td", "—"),
+        text("td", "—"),
+        text("td", "No longer in view — remove to clear."),
+      );
+    }
+    const removeCell = document.createElement("td"),
+      remove = text("button", "Remove", "secondary") as HTMLButtonElement;
+    remove.setAttribute("aria-label", `Remove ${row?.name ?? id} from custom comparison`);
+    remove.onclick = () => toggleCustomPick(id, false);
+    removeCell.append(remove);
+    tr.append(removeCell);
+    body.append(tr);
+  }
+}
 function renderDetails() {
   if (!state) return;
   const target = el("details");
@@ -402,6 +678,14 @@ function renderDetails() {
     send("copy", { id: row.id });
   };
   target.append(copy);
+  const picked = customPicks.includes(row.id);
+  const pickToggle = text(
+    "button",
+    picked ? "★ Remove from custom comparison" : "☆ Pick for custom comparison",
+  ) as HTMLButtonElement;
+  pickToggle.onclick = () =>
+    toggleCustomPick(row.id, !customPicks.includes(row.id));
+  target.append(pickToggle);
   if (row.invocable) {
     target.append(
       text("p", `${row.invocable.ref} — ${row.invocable.usage}`, "hint"),
@@ -2099,10 +2383,22 @@ function render(next: ViewState) {
         row.frontier ? "frontier" : "",
       ),
     );
+    const pickCell = document.createElement("td"),
+      pick = document.createElement("input");
+    pick.type = "checkbox";
+    pick.dataset.pickId = row.id;
+    pick.checked = customPicks.includes(row.id);
+    pick.disabled = !pick.checked && customPicks.length >= customCap;
+    pick.setAttribute("aria-label", `Pick ${row.name} for custom comparison`);
+    pick.onchange = () => toggleCustomPick(row.id, pick.checked);
+    pickCell.append(pick);
+    tr.append(pickCell);
     body.append(tr);
   }
   renderDetails();
+  renderCustom();
   drawChart();
+  drawFreeBar();
   if (focusedModel) {
     const button = Array.from(
       document.querySelectorAll<HTMLButtonElement>(".model-button"),
@@ -2512,6 +2808,13 @@ el("byok-clear").onclick = () => {
   byokDraft = {};
   renderByok();
 };
+el("custom-clear").onclick = () => {
+  customPicks = [];
+  persistUi();
+  syncPickBoxes();
+  renderDetails();
+  renderCustom();
+};
 el("export-png").onclick = () => {
   // Export lives on the Settings tab, and charts drawn while their panel is
   // hidden have no size: lay the panel that owns the exported chart(s)
@@ -2523,7 +2826,10 @@ el("export-png").onclick = () => {
     panel.classList.add("offscreen");
     panel.hidden = false;
     if (state?.comparison) renderComparison();
-    else drawChart();
+    else {
+      drawChart();
+      drawFreeBar();
+    }
   }
   try {
     const canvas = el("chart") as HTMLCanvasElement;
@@ -2591,7 +2897,9 @@ window.addEventListener("message", (event) => {
 });
 new MutationObserver(() => {
   drawChart();
+  drawFreeBar();
   renderComparison();
+  renderCustom();
 }).observe(document.body, {
   attributes: true,
   attributeFilter: ["class", "style"],
@@ -2599,6 +2907,7 @@ new MutationObserver(() => {
 const sectionTabs = ["compare", "tools", "plan", "usage", "settings"] as const;
 type SectionTab = (typeof sectionTabs)[number];
 function showTab(tab: SectionTab, focus = false) {
+  currentTab = tab;
   for (const id of sectionTabs) {
     const button = el<HTMLButtonElement>(`tab-${id}`);
     const active = id === tab;
@@ -2607,10 +2916,14 @@ function showTab(tab: SectionTab, focus = false) {
     el(`panel-${id}`).hidden = !active;
     if (active && focus) button.focus();
   }
-  // Remember the open tab across webview reloads.
-  vscode.setState?.({ tab });
+  // Remember the open tab (and local custom picks) across webview reloads.
+  persistUi();
   // Charts laid out while their panel was hidden have no size; redraw them.
-  if (tab === "compare" && state) drawChart();
+  if (tab === "compare" && state) {
+    drawChart();
+    drawFreeBar();
+    renderCustom();
+  }
   if (tab === "tools" && state) renderComparison();
 }
 sectionTabs.forEach((id, index) => {
@@ -2633,7 +2946,15 @@ sectionTabs.forEach((id, index) => {
     showTab(next, true);
   };
 });
-const savedTab = (vscode.getState?.() as { tab?: unknown } | undefined)?.tab;
+const savedUi = vscode.getState?.() as
+  | { tab?: unknown; customPicks?: unknown }
+  | undefined;
+const savedTab = savedUi?.tab;
+customPicks = Array.isArray(savedUi?.customPicks)
+  ? (savedUi.customPicks as unknown[])
+      .filter((x): x is string => typeof x === "string")
+      .slice(0, customCap)
+  : [];
 showTab(
   sectionTabs.includes(savedTab as SectionTab)
     ? (savedTab as SectionTab)

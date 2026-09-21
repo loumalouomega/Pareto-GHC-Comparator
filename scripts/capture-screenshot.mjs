@@ -8,7 +8,7 @@ const { html } = require("../src/html.ts");
 const { validSnapshot } = require("../src/api.ts");
 const { catalog, catalogDate } = require("../src/catalog.ts");
 const { optionResult } = require("../src/comparison.ts");
-const { freeSpotlight } = require("../src/compare.ts");
+const { freeBar, freeSpotlight } = require("../src/compare.ts");
 const { driftOf } = require("../src/drift.ts");
 const { loadByokStore } = require("../src/byok.ts");
 const { suggestBudget } = require("../src/usage.ts");
@@ -122,6 +122,12 @@ const state = {
   checklist,
   groups: result.groups,
   freeSpotlight: freeSpotlightState,
+  freeBar: freeBar(available, snapshot.models, options, mappings, undefined, {
+    pins: {},
+    excluded: [],
+    byok,
+    usedCounts,
+  }),
   message:
     "Live benchmark preview · 10 catalog models with explicitly selected reasoning variants. Copilot account availability has not been queried.",
 };

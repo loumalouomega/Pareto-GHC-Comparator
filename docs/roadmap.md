@@ -13,21 +13,9 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-The last shipped tier (extension settings contribution): `paretoGhc.usage.watchOnScan`, `paretoGhc.usage.retentionDays`, and `paretoGhc.chart.defaultView` mirror the stored watching default, retention window, and chart basis — an explicitly configured value wins, otherwise stored state applies unchanged, and invalid values are ignored. Changes take effect without reload (consent-checked rescans, watcher stop/start, immediate chart apply) and never grant consent or scan. See `AGENTS.md`'s "Profiles and saved-state migration" section for the record.
+The last shipped tier (Tier 1: free-tier intelligence bar and custom comparison tray) draws a score-only OpenCode free-tier ranking under the Pareto chart and a webview-local manual pick tray; see `AGENTS.md`'s "Two-option comparison and Tier 1 delivery" section for the record. Before it, the extension settings contribution shipped `paretoGhc.usage.watchOnScan`, `paretoGhc.usage.retentionDays`, and `paretoGhc.chart.defaultView` — an explicitly configured value wins, otherwise stored state applies unchanged, and invalid values are ignored. Changes take effect without reload (consent-checked rescans, watcher stop/start, immediate chart apply) and never grant consent or scan. See `AGENTS.md`'s "Profiles and saved-state migration" section for the record.
 
 Below, Tier 2 is new delivery candidates that meet the "Requirements across future work" principles. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
-
-## Tier 1 — Easy comparison non-priced models (Free tier OpenCode) 
-
-Admission criterion: It works
-
-### One simple bar below the apreto graphic — S
-
-Below the pareto plot a single bar comparing just by inteligence index (ort whatever criteria relevenant) the Free tier models, so it is possible to know which is the best free option at the moment.
-
-### Allow creating custom comparisons — S
-
-Allow to create comparisons of manually selected models.
 
 ## Tier 2 — New delivery candidates
 

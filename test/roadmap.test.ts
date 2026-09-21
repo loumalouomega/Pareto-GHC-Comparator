@@ -9,6 +9,7 @@ import {
   efficiencyOf,
   estimate,
   freeSpotlight,
+  freeBar,
   loadMappings,
   migrateOptions,
   modelThinkingOf,
@@ -750,6 +751,83 @@ test("coverage: free spotlight empty, free-only, and paid-to-best", () => {
   const withBoth = freeSpotlight([free, paidOnly], both, usd);
   assert.ok(withBoth.bestFree && withBoth.bestOverall);
   assert.ok((withBoth.gapPoints ?? 0) > 0);
+});
+
+test("free bar ranks scored free-tier models by score descending", () => {
+  const usd = { ...defaults, source: "opencode" as const, billing: "usd" as const };
+  assert.deepEqual(freeBar([], [], usd), []);
+  assert.deepEqual(freeBar([], [], { ...defaults, source: "copilot" }), []);
+  const paid: AvailableModel = {
+    id: "opencode:opencode-go/paid",
+    name: "Paid",
+    family: "paid",
+    maxInputTokens: 500000,
+    source: "opencode",
+    rates: { input: 1, read: 1, write: null, output: 1 },
+  };
+  const freeA: AvailableModel = {
+    id: "opencode:opencode/free-a",
+    name: "Free A",
+    family: "free",
+    maxInputTokens: 500000,
+    source: "opencode",
+    freeTier: true,
+  };
+  const freeB: AvailableModel = {
+    id: "opencode:opencode/free-b",
+    name: "Free B",
+    family: "free",
+    maxInputTokens: 500000,
+    source: "opencode",
+    freeTier: true,
+  };
+  const unscored: AvailableModel = {
+    id: "opencode:opencode/free-c",
+    name: "Free C",
+    family: "free",
+    maxInputTokens: 500000,
+    source: "opencode",
+    freeTier: true,
+  };
+  const models: Benchmark[] = [
+    { id: "fa", slug: "fa", name: "Free A", provider: "P", scores: { general: 70, coding: 70, agentic: 70 } },
+    { id: "fb", slug: "fb", name: "Free B", provider: "P", scores: { general: 85, coding: 85, agentic: 85 } },
+    { id: "p", slug: "p", name: "Paid", provider: "P", scores: { general: 95, coding: 95, agentic: 95 } },
+  ];
+  const bar = freeBar([freeA, freeB, unscored, paid], models, usd);
+  // Paid and unscored rows never appear; ranking is score-only, descending.
+  assert.deepEqual(bar.map((e) => e.name), ["Free B", "Free A"]);
+  assert.deepEqual(bar[0], { id: bar[0].id, name: "Free B", score: 85 });
+  // Non-OpenCode sources have no free tier.
+  assert.deepEqual(freeBar([freeA, freeB], models, { ...defaults, source: "copilot" }), []);
+  // The bar ignores the free-only and only-mine restrictions so it stays put
+  // while searching, but checklist exclusions still apply.
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, { ...usd, freeOnly: true }).map((e) => e.name),
+    ["Free B", "Free A"],
+  );
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, { ...usd, onlyMine: true }, {}, undefined, { usedCounts: new Map() }).map((e) => e.name),
+    ["Free B", "Free A"],
+  );
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, usd, {}, undefined, { excluded: [freeB.id] }).map((e) => e.name),
+    ["Free A"],
+  );
+  // Score ties break by name for a deterministic order.
+  const tied: Benchmark[] = [
+    { id: "fa", slug: "fa", name: "Free A", provider: "P", scores: { general: 80, coding: 80, agentic: 80 } },
+    { id: "fb", slug: "fb", name: "Free B", provider: "P", scores: { general: 80, coding: 80, agentic: 80 } },
+  ];
+  assert.deepEqual(
+    freeBar([freeB, freeA], tied, usd).map((e) => e.name),
+    ["Free A", "Free B"],
+  );
+  // The bar is billing-independent: scores resolve even where USD costs do not.
+  assert.deepEqual(
+    freeBar([freeA, freeB, paid], models, { ...usd, billing: "credits" }).map((e) => e.name),
+    ["Free B", "Free A"],
+  );
 });
 
 test("coverage: recommendations and profiles branches", () => {  const empty = recommend([], defaults);
@@ -1652,7 +1730,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

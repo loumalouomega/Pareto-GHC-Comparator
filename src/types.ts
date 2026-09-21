@@ -568,6 +568,16 @@ export interface FreeSpotlight {
   cheapestToBest?: { id: string; name: string; cost: number };
   explanation: string;
 }
+/**
+ * One free-tier model ranked by its benchmark score for the free-tier
+ * intelligence bar. Score-only: free-tier costs are zero, so no cost unit
+ * is carried or mixed here.
+ */
+export interface FreeBarEntry {
+  id: string;
+  name: string;
+  score: number;
+}
 export interface ChecklistEntry {
   id: string;
   name: string;
@@ -644,5 +654,7 @@ export interface ViewState {
   checklist: ChecklistEntry[];
   groups: ChecklistFamily[];
   freeSpotlight: FreeSpotlight;
+  /** Free-tier models with scores for the intelligence bar, sorted by score descending. Empty for non-OpenCode sources. */
+  freeBar: FreeBarEntry[];
   exportNote?: string;
 }

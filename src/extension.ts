@@ -16,6 +16,7 @@ import { catalogDate } from "./catalog";
 import { invocableRef } from "./invocable";
 import {
   compare,
+  freeBar,
   freeSpotlight,
   loadMappings,
   parseOptions,
@@ -606,6 +607,14 @@ export function activate(context: vscode.ExtensionContext) {
       undefined,
       { pins, excluded: excludedFor(options.source), byok, usedCounts },
     );
+    const bar = freeBar(
+      available,
+      snapshot?.models ?? [],
+      options,
+      overrides,
+      undefined,
+      { pins, excluded: excludedFor(options.source), byok, usedCounts },
+    );
     const comparable = rows.filter((r) => r.cost !== null && r.score !== null);
     const bestOverall = comparable.length
       ? [...comparable].sort(
@@ -673,6 +682,7 @@ export function activate(context: vscode.ExtensionContext) {
       checklist,
       groups,
       freeSpotlight: freeSpotlightState,
+      freeBar: bar,
       exportNote: exportNote || undefined,
     };
     if (comparison?.enabled) {
