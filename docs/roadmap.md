@@ -17,6 +17,18 @@ The last shipped tier (extension settings contribution): `paretoGhc.usage.watchO
 
 Below, Tier 2 is new delivery candidates that meet the "Requirements across future work" principles. Tier 3 is feasibility investigations that must establish feasibility before delivery is scheduled.
 
+## Tier 1 — Easy comparison non-priced models (Free tier OpenCode) 
+
+Admission criterion: It works
+
+### One simple bar below the apreto graphic — S
+
+Below the pareto plot a single bar comparing just by inteligence index (ort whatever criteria relevenant) the Free tier models, so it is possible to know which is the best free option at the moment.
+
+### Allow creating custom comparisons — S
+
+Allow to create comparisons of manually selected models.
+
 ## Tier 2 — New delivery candidates
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
