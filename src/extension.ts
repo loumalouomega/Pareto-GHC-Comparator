@@ -74,6 +74,8 @@ import type {
   UsageSummary,
   ViewState,
 } from "./types";
+import { costUnit } from "./types";
+import { summarizeWatchChanges, watchlistChanges } from "./watchlist";
 const secretName = "artificialAnalysis.apiKey";
 export function activate(context: vscode.ExtensionContext) {
   const cacheUri = vscode.Uri.joinPath(
@@ -528,6 +530,9 @@ export function activate(context: vscode.ExtensionContext) {
     message = "",
     exportNote = "",
     hasKey = false;
+  let watchlistAlerts = Boolean(
+    context.globalState.get("watchlistAlerts", false),
+  );
   let profileStore = loadProfiles(context.globalState.get("profiles"));
   let optionsRevision = 0;
   let comparison = loadComparison(context.globalState.get("comparison"));
@@ -683,6 +688,7 @@ export function activate(context: vscode.ExtensionContext) {
       groups,
       freeSpotlight: freeSpotlightState,
       freeBar: bar,
+      watchlistAlerts,
       exportNote: exportNote || undefined,
     };
     if (comparison?.enabled) {
@@ -795,6 +801,9 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const refresh = async (force = false) => {
     if (loading) return;
+    // The pre-load snapshot is the "before" for watchlist change alerts;
+    // service.cached() below overwrites it, so capture it first.
+    const previous = snapshot;
     loading = true;
     message = "Loading comparison data…";
     render();
@@ -810,6 +819,55 @@ export function activate(context: vscode.ExtensionContext) {
         Date.now() - snapshot.fetchedAt >= cacheTtl
           ? "Using a cached snapshot older than 24 hours. Refresh data to update."
           : "Benchmark data ready.";
+      // Opt-in watchlist alerts: compare pinned rows between the previous
+      // and the new snapshot (same availability and options), then notify
+      // once. First loads, unchanged snapshots, and failures stay silent.
+      if (
+        watchlistAlerts &&
+        previous &&
+        snapshot.fetchedAt !== previous.fetchedAt
+      ) {
+        const listed = availableBySource[options.source];
+        const usedCounts = usedCountsFor();
+        const watchExtra = {
+          pins,
+          excluded: excludedFor(options.source),
+          byok,
+          usedCounts,
+        };
+        const prevRows = compare(
+          listed,
+          previous.models,
+          options,
+          overrides,
+          undefined,
+          watchExtra,
+        );
+        const currRows = compare(
+          listed,
+          snapshot.models,
+          options,
+          overrides,
+          undefined,
+          watchExtra,
+        );
+        const changes = watchlistChanges({
+          pins,
+          prevRows,
+          currRows,
+          availableIds: listed.map((m) => m.id),
+          excludedIds: excludedFor(options.source),
+          source: options.source,
+          unit: costUnit(options.billing),
+        });
+        if (changes.length) {
+          const action = await vscode.window.showInformationMessage(
+            summarizeWatchChanges(changes, previous, snapshot),
+            "Open comparison",
+          );
+          if (action === "Open comparison") panel?.reveal();
+        }
+      }
     } catch (error) {
       message =
         error instanceof ApiError
@@ -1283,6 +1341,15 @@ export function activate(context: vscode.ExtensionContext) {
                 if (selected === `${modelId}::${bench}`) selected = modelId;
                 render();
               }
+            } else if (m.type === "watchlistAlerts") {
+              // Global opt-in for pinned-model refresh notifications; never
+              // per-option, so it bypasses the comparison store entirely.
+              watchlistAlerts = m.enabled;
+              await context.globalState.update(
+                "watchlistAlerts",
+                watchlistAlerts,
+              );
+              render();
             } else if (m.type === "byok") {
               // Manual whole-store save from the BYOK form; the message is
               // already validated to manual-only provenance (parseByokFormStore).

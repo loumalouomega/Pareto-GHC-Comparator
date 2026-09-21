@@ -284,6 +284,35 @@ test("extension discovers Copilot models, serves cached data, validates messages
     },
   };
   (globalThis as any).__paretoVscodeMock = mock;
+  // Watchlist tests below drive manual refreshes through the real download
+  // path. BenchmarkService captures fetch at construction, so the stub must
+  // precede activate; per-refresh scores come from the mutable apiGeneral.
+  const apiModel = (id: string, slug: string, name: string, general: number) => ({
+    id,
+    slug,
+    name,
+    model_creator: { name: "OpenAI" },
+    evaluations: {
+      artificial_analysis_intelligence_index: general,
+      artificial_analysis_coding_index: 40,
+      artificial_analysis_agentic_index: 20,
+    },
+  });
+  let apiGeneral = 32;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({
+      pagination: { page: 1, has_more: false },
+      intelligence_index_version: "4.4",
+      data: [
+        apiModel("aa", "gpt-5-mini", "GPT-5 mini", apiGeneral),
+        apiModel("other", "other", "Other (high)", 30),
+      ],
+    }),
+  })) as unknown as typeof fetch;
   const bundle = await build({
     entryPoints: ["src/extension.ts"],
     bundle: true,
@@ -350,6 +379,42 @@ test("extension discovers Copilot models, serves cached data, validates messages
   assert.match(last().message, /Could not apply/);
   await receiver({ type: "pin", id: "gpt-5-mini", benchmarkId: "aa" });
   await receiver({ type: "pin", id: "gpt-5-mini", benchmarkId: "other" });
+  // Watchlist change alerts: the opt-in persists and surfaces in ViewState;
+  // a manual refresh that downloads a new snapshot notifies once about the
+  // pinned model's score change, citing both snapshot versions.
+  await receiver({ type: "watchlistAlerts", enabled: true });
+  assert.equal(state.get("watchlistAlerts"), true);
+  assert.equal(last().watchlistAlerts, true);
+  const infos: unknown[][] = [];
+  const infoMessage = mock.window.showInformationMessage;
+  mock.window.showInformationMessage = async (...args: unknown[]) => {
+    infos.push(args);
+    return "Scan locally";
+  };
+  await receiver({ type: "refresh" });
+  assert.ok(
+    infos.some(
+      (a) =>
+        String(a[0]).includes("Watchlist changes") &&
+        String(a[0]).includes("v4.3 → v4.4") &&
+        String(a[0]).includes("GPT-5 mini"),
+    ),
+  );
+  // Opting out silences further refreshes; re-enabling with an unchanged
+  // snapshot stays silent too (same scores, only a new retrieval timestamp).
+  await receiver({ type: "watchlistAlerts", enabled: false });
+  assert.equal(last().watchlistAlerts, false);
+  // Scores move again on the next download, but the disabled flag silences it.
+  apiGeneral = 33;
+  await receiver({ type: "refresh" });
+  const watchInfos = () =>
+    infos.filter((a) => String(a[0]).includes("Watchlist changes"));
+  assert.equal(watchInfos().length, 1);
+  await receiver({ type: "watchlistAlerts", enabled: true });
+  await receiver({ type: "refresh" });
+  assert.equal(watchInfos().length, 1);
+  globalThis.fetch = realFetch;
+  mock.window.showInformationMessage = infoMessage;
   const leaves = () =>
     last().groups.flatMap((g: any) => g.models.flatMap((m: any) => m.leaves));
   const variantIds = leaves().map((leaf: any) => leaf.id);

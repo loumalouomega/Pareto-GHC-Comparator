@@ -49,6 +49,7 @@ import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
 import { defaults, type AvailableModel, type Benchmark, type PricingInfo, type PricingSource, type Row } from "../src/types";
 import { compressBreakpoints, frontierIds, mixCost, sweepMix } from "../src/sensitivity";
+import { summarizeWatchChanges, watchlistChanges } from "../src/watchlist";
 import { parseScenario, planRegistryDate, projectScenario } from "../src/plans";
 import { staticEntries, staticModels, isStaticSource, staticPricingSources, staticRegistryDate } from "../src/staticSources";
 import { sources, defaultBilling, allowedBilling, isLiveSource } from "../src/sources";
@@ -944,6 +945,119 @@ test("sweep breakpoints track frontier and recommendation changes", () => {
   assert.equal(legacySteps.length, 11);
   assert.ok(legacySteps.every((s) => s.frontierIds.length === 2));
   assert.equal(compressBreakpoints(legacySteps).length, 1);
+});
+
+test("watchlist reports pinned-model changes and stays silent otherwise", () => {
+  const wrow = (
+    id: string,
+    modelId: string,
+    name: string,
+    cost: number | null,
+    score: number | null,
+    mappingStatus: Row["mappingStatus"] = "exact",
+  ): Row => ({
+    id,
+    modelId,
+    baseModelId: modelId,
+    name,
+    provider: "P",
+    score,
+    cost,
+    frontier: false,
+    reasons: [],
+    dominatedBy: [],
+    mappingStatus,
+    candidateIds: [],
+  });
+  const prev = [
+    wrow("gpt-5-mini::aa", "gpt-5-mini", "GPT-5 mini · A", 1, 48),
+    wrow("gpt-5-mini::bb", "gpt-5-mini", "GPT-5 mini · B", 1, 50),
+    wrow("steady::cc", "steady", "Steady", 2, 60),
+    wrow("unmapped::dd", "unmapped", "Unmapped", null, null, "missing"),
+  ];
+  const curr = [
+    wrow("gpt-5-mini::aa", "gpt-5-mini", "GPT-5 mini · A", 1.5, 48.3),
+    wrow("gpt-5-mini::bb", "gpt-5-mini", "GPT-5 mini · B", 1, 52),
+    wrow("steady::cc", "steady", "Steady", 2, 60),
+    wrow("unmapped::dd", "unmapped", "Unmapped", null, null, "missing"),
+  ];
+  const base = {
+    prevRows: prev,
+    currRows: curr,
+    availableIds: ["gpt-5-mini", "steady", "unmapped"],
+    excludedIds: [] as string[],
+    source: "copilot" as const,
+    unit: "AI credits",
+  };
+  // Price change alerts; sub-threshold score drift and nulls stay silent.
+  const changes = watchlistChanges({
+    ...base,
+    pins: { "gpt-5-mini": ["aa", "bb"], steady: ["cc"], unmapped: ["dd"] },
+  });
+  assert.deepEqual(
+    changes.map((c) => [c.kind, c.name]),
+    [
+      ["price", "GPT-5 mini · A"],
+      ["score", "GPT-5 mini · B"],
+    ],
+  );
+  assert.match(changes[0].before, /1 AI credits/);
+  assert.match(changes[0].after, /1\.5 AI credits/);
+  // Mapping changes alert with labels; a pin with no rows on either side
+  // reads as not discovered when it belongs to the current source.
+  const mapped = watchlistChanges({
+    ...base,
+    prevRows: prev,
+    currRows: curr.map((r) =>
+      r.id === "steady::cc" ? { ...r, mappingStatus: "missing" as const } : r,
+    ),
+    pins: { steady: ["cc"], gone: ["ee"] },
+  });
+  assert.deepEqual(
+    mapped.map((c) => [c.kind, c.before, c.after]),
+    [
+      ["availability", "Discovered", "Not discovered"],
+      ["mapping", "Exact match", "Missing benchmark"],
+    ],
+  );
+  // Availability is stateless and source-scoped: same-source pins missing
+  // from discovery alert, cross-source pins, excluded pins, and empty pins
+  // stay silent — as does everything when no rows are comparable at all.
+  const away = watchlistChanges({
+    ...base,
+    prevRows: [],
+    currRows: [wrow("other::x", "other", "Other", 1, 10)],
+    availableIds: ["other"],
+    source: "opencode" as const,
+    pins: {
+      "opencode:zen/gone": ["z"],
+      "gpt-5-mini": ["aa"],
+      other: [],
+      "opencode:zen/hidden": ["z"],
+    },
+    excludedIds: ["opencode:zen/hidden"],
+  });
+  assert.deepEqual(
+    away.map((c) => [c.kind, c.name]),
+    [["availability", "opencode:zen/gone"]],
+  );
+  assert.deepEqual(
+    watchlistChanges({ ...base, pins: {} }),
+    [],
+  );
+  assert.deepEqual(
+    watchlistChanges({ ...base, currRows: [], pins: { steady: ["cc"] } }),
+    [],
+  );
+  // The summary cites both snapshot versions and retrieval dates.
+  const summary = summarizeWatchChanges(
+    changes,
+    { version: "4.2", fetchedAt: 1000, models: [] },
+    { version: "4.3", fetchedAt: 2000, models: [] },
+  );
+  assert.match(summary, /v4\.2 → v4\.3/);
+  assert.match(summary, /GPT-5 mini · A: price/);
+  assert.match(summary, /GPT-5 mini · B: score/);
 });
 
 test("coverage: recommendations and profiles branches", () => {  const empty = recommend([], defaults);
@@ -1929,7 +2043,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "sensitivity-card", "sensitivity-title", "sensitivity-note", "sensitivity-rows", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "sensitivity-card", "sensitivity-title", "sensitivity-note", "sensitivity-rows", "watchlist-alerts", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");

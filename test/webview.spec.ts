@@ -260,6 +260,7 @@ for (const theme of ["light", "dark", "high-contrast"])
       groups: [],
       freeSpotlight: { enabled: false, explanation: "" },
       freeBar: [],
+      watchlistAlerts: false,
     };
     let profiles: ProfileStore = { version: 1, items: [] };
     let mappings: Record<string, string> = {};
@@ -440,6 +441,7 @@ for (const theme of ["light", "dark", "high-contrast"])
           mini: { prevScore: 20, delta: 10, noisy: false },
         };
       }
+      if (m.type === "watchlistAlerts") state.watchlistAlerts = m.enabled;
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
       }
@@ -1409,5 +1411,18 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#filter").fill("");
     await expect(page.locator("#sensitivity-rows tr")).not.toHaveCount(0);
+    // Watchlist opt-in: the Settings checkbox posts the toggle the host
+    // validates (never wrapped to a comparison side — see send()).
+    await openTab("Settings");
+    await expect(page.locator("#watchlist-alerts")).not.toBeChecked();
+    await page.locator("#watchlist-alerts").check();
+    await expect
+      .poll(() =>
+        messages.some(
+          (m) => m.type === "watchlistAlerts" && (m as any).enabled === true,
+        ),
+      )
+      .toBeTruthy();
+    await openTab("Tool analysis");
     expect(errors).toEqual([]);
   });

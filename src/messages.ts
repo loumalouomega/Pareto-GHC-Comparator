@@ -111,6 +111,8 @@ export function parseMessage(raw: unknown): HostMessage {
     return { type: "pin", id: m.id, benchmarkId: m.benchmarkId };
   if (m.type === "unpin" && string(m.id) && string(m.benchmarkId))
     return { type: "unpin", id: m.id, benchmarkId: m.benchmarkId };
+  if (m.type === "watchlistAlerts" && typeof m.enabled === "boolean")
+    return { type: "watchlistAlerts", enabled: m.enabled };
   if (m.type === "exclude" && string(m.id) && typeof m.excluded === "boolean")
     return { type: "exclude", id: m.id, excluded: m.excluded };
   if (

@@ -19,13 +19,6 @@ Below, Tier 1 is new delivery candidates that meet the "Requirements across futu
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
-### Watchlist change alerts — M
-
-- **Gap:** users must manually reopen the panel to notice a pinned model's price, score, mapping or availability changed between refreshes.
-- **Deliverables:** an opt-in notification (VS Code information message) on refresh when a pinned/watched model's price, benchmark score, mapping status, or availability changes since the last snapshot, citing both the old and new snapshot per `src/drift.ts`.
-- **Dependencies:** `src/drift.ts`'s existing snapshot retention; existing pin storage.
-- **Acceptance:** off by default (opt-in); no alert fires for noise-flagged drift (`ScoreDrift.noisy` in `src/drift.ts`); alert text cites both snapshot dates.
-
 ### Snapshot import (read-only reopen) — M
 
 - **Gap:** exported snapshot JSON can be shared but never reloaded into the extension to inspect what was compared at export time.

@@ -38,7 +38,8 @@ const text = (tag: string, value: string, className?: string) => {
 };
 const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
   vscode.postMessage(
-    state?.comparison && !["ready", "comparison", "target"].includes(type)
+    state?.comparison &&
+    !["ready", "comparison", "target", "watchlistAlerts"].includes(type)
       ? {
           type: "target",
           side: state.comparison.active,
@@ -46,6 +47,8 @@ const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
         }
       : { type, ...extra },
   );
+// "watchlistAlerts" stays unwrapped above: the toggle is global state, not
+// per-option, so it must never switch the Editing side as a side effect.
 // Targets a specific side directly, regardless of which one is Editing — for
 // controls on the Compare tools tab (like the Tool A/Tool B pickers) that
 // must be able to set up both sides without switching Editing back and forth.
@@ -2362,6 +2365,8 @@ function render(next: ViewState) {
     state.options.source !== "opencode";
   (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
   (el("only-mine") as HTMLInputElement).checked = state.options.onlyMine;
+  (el("watchlist-alerts") as HTMLInputElement).checked =
+    state.watchlistAlerts;
   const usageSummary = state.usage;
   const prefill = el("usage-prefill") as HTMLButtonElement;
   prefill.disabled = !usageSummary || usageSummary.medianSample === 0;
@@ -2886,6 +2891,13 @@ el("custom-clear").onclick = () => {
   renderDetails();
   renderCustom();
 };
+// Global opt-in, sent immediately (not through the debounced options flow)
+// and never wrapped to a comparison side (see send above).
+el("watchlist-alerts").addEventListener("change", () => {
+  send("watchlistAlerts", {
+    enabled: el<HTMLInputElement>("watchlist-alerts").checked,
+  });
+});
 el("export-png").onclick = () => {
   // Export lives on the Settings tab, and charts drawn while their panel is
   // hidden have no size: lay the panel that owns the exported chart(s)

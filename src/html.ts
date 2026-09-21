@@ -118,6 +118,8 @@ export function html(
      <div class="controls"><button id="include-all" class="secondary">✅ Select all</button><button id="include-none" class="secondary">🧹 Select none</button><label class="checkbox-label"><input id="only-mine" type="checkbox">Only my models</label>
   <label class="filter">Filter models for selection<input id="checklist-search" type="search" placeholder="Filter families, models, or thinking levels" maxlength="200"></label></div>
   <p class="hint" id="checklist-hint">Families contain models; models with multiple thinking variants expand. Select a family, a model, or an individual thinking level. While filtering, bulk actions apply to matching models.</p>
+  <div class="controls"><label class="checkbox-label"><input id="watchlist-alerts" type="checkbox">Watchlist change alerts</label></div>
+  <p class="hint">Off by default. When on, refreshing benchmark data notifies once if a pinned model's price, score, mapping, or availability changed since the previous snapshot.</p>
   <div id="checklist"></div>
   </section>
   <section class="card" aria-labelledby="exports-title">

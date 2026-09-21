@@ -545,6 +545,7 @@ export type HostMessage =
   | { type: "mapping"; id: string; benchmarkId: string }
   | { type: "pin"; id: string; benchmarkId: string }
   | { type: "unpin"; id: string; benchmarkId: string }
+  | { type: "watchlistAlerts"; enabled: boolean }
   | { type: "exclude"; id: string; excluded: boolean }
   | { type: "excludeMany"; ids: string[]; excluded: boolean }
   | { type: "excludeAll"; excluded: boolean }
@@ -658,5 +659,7 @@ export interface ViewState {
   freeSpotlight: FreeSpotlight;
   /** Free-tier models with scores for the intelligence bar, sorted by score descending. Empty for non-OpenCode sources. */
   freeBar: FreeBarEntry[];
+  /** Opt-in refresh notifications for pinned-model changes. Off by default. */
+  watchlistAlerts: boolean;
   exportNote?: string;
 }

@@ -122,6 +122,7 @@ const state = {
   checklist,
   groups: result.groups,
   freeSpotlight: freeSpotlightState,
+  watchlistAlerts: false,
   freeBar: freeBar(available, snapshot.models, options, mappings, undefined, {
     pins: {},
     excluded: [],
