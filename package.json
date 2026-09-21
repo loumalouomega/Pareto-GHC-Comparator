@@ -2,7 +2,7 @@
   "name": "pareto-ghc-comparator",
   "displayName": "Pareto GHC Comparator",
   "description": "Compare available GitHub Copilot models by benchmark quality and estimated usage cost.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "kratos-multiphysics",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -39,7 +39,10 @@
         },
         "paretoGhc.chart.defaultView": {
           "type": "string",
-          "enum": ["task", "workload"],
+          "enum": [
+            "task",
+            "workload"
+          ],
           "default": "task",
           "description": "Default chart cost basis for views without a saved chart choice. Changing it applies to the open chart immediately; picking a basis in the panel saves a view preference that then takes precedence until the setting changes again."
         }
