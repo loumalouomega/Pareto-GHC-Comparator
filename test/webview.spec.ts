@@ -1045,6 +1045,64 @@ for (const theme of ["light", "dark", "high-contrast"])
     await page.locator("#include-all").click();
     await expect(page.locator("#count")).toHaveText("4 plotted / 5 models");
     await openTab("Tool analysis");
+    // Keyboard traversal of the chart: focus it, walk the plotted points with
+    // the arrow keys, and select one with Enter. Every step is announced, and
+    // the announcement carries the chart's own facts.
+    await page.locator("#chart").focus();
+    await expect(page.locator("#chart-status")).toContainText("index points at");
+    const first = await page.locator("#chart-status").textContent();
+    await page.keyboard.press("ArrowRight");
+    const second = await page.locator("#chart-status").textContent();
+    expect(second).not.toEqual(first);
+    await expect(page.locator("#chart-status")).toContainText("index points at");
+    // End jumps to the last plotted model, Home back to the first.
+    await page.keyboard.press("End");
+    const lastStatus = await page.locator("#chart-status").textContent();
+    expect(lastStatus).not.toEqual(second);
+    await page.keyboard.press("Home");
+    expect(await page.locator("#chart-status").textContent()).toEqual(first);
+    // Enter selects the focused point exactly as a click does.
+    const focusedName = (await page.locator("#chart-status").textContent())!
+      .split(":")[0];
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#details")).toContainText(focusedName);
+    // The screen-reader description of the chart carries the same facts as the
+    // drawing: frontier membership and the most-attractive quadrant.
+    const described = await page.locator("#chart-desc").textContent();
+    expect(described).toMatch(/index points at/);
+    expect(described).toMatch(/Pareto frontier/);
+    // The table repeats the chart's quadrant rule rather than leaving it in the
+    // drawing alone — and only while the region is actually shaded, so the two
+    // can never disagree.
+    await expect(page.locator("#rows")).toContainText(
+      "Dominated by Gemini 3.8 Flash",
+    );
+    await expect(page.locator("#rows")).not.toContainText(
+      "Most attractive quadrant",
+    );
+    await openTab("Settings");
+    await page.locator("#display-quadrant").check();
+    await openTab("Tool analysis");
+    await expect(page.locator("#rows")).toContainText(
+      "Most attractive quadrant",
+    );
+    await expect(page.locator("#chart-desc")).toContainText(
+      "most attractive quadrant",
+    );
+    await openTab("Settings");
+    await page.locator("#display-quadrant").uncheck();
+    await openTab("Tool analysis");
+    await expect(page.locator("#rows")).not.toContainText(
+      "Most attractive quadrant",
+    );
+    // The encodings are documented rather than implied.
+    await expect(page.locator("#chart-hint")).toContainText(
+      "ring around the point",
+    );
+    await expect(page.locator("#chart-hint")).toContainText(
+      "colour-blind-safe palette",
+    );
+
     await page.getByLabel("Filter models", { exact: true }).fill("unmapped");
     await expect(page.locator("#count")).toHaveText("0 plotted / 1 models");
     await expect(page.locator("#empty")).toBeVisible();

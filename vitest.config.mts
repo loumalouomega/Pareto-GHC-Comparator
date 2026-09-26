@@ -20,12 +20,13 @@ export default defineConfig({
       // again for the read-only snapshot import, whose validation and view
       // builder are pure and measured end to end, and once more for the
       // per-source usage roots, whose registry and attribution are covered
-      // directly.)
+      // directly, and once more for the chart accessibility module, whose
+      // palette invariant and point summaries are asserted directly.)
       thresholds: {
-        lines: 97.58,
+        lines: 97.64,
         functions: 99,
-        branches: 93.81,
-        statements: 96.72,
+        branches: 93.89,
+        statements: 96.81,
       },
     },
   },

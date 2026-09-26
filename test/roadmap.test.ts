@@ -27,6 +27,17 @@ import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
 import { freshnessAlert, pricingAge } from "../src/freshness";
 import { driftOf, noiseThreshold, selectPrevSnapshot } from "../src/drift";
 import { workspaceLabel } from "../src/workspaceLabel";
+import {
+  assignPointColors,
+  chartDescription,
+  chartPointSummary,
+  cvdSafePalette,
+  hasFrontierRing,
+  hashedColor,
+  inAttractiveQuadrant,
+  pointMarker,
+  pointRadius,
+} from "../src/chartA11y";
 import { loadByokStore, mergeByokForm, parseByokFormStore, parseByokStore } from "../src/byok";
 import { usageMultiplier } from "../src/usageMultipliers";
 import {
@@ -2272,7 +2283,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "sensitivity-card", "sensitivity-title", "sensitivity-note", "sensitivity-rows", "snapshot-banner", "snapshot-title", "snapshot-detail", "snapshot-basis", "snapshot-limits", "snapshot-back", "header-actions", "import-snapshot", "watchlist-alerts", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "sensitivity-card", "sensitivity-title", "sensitivity-note", "sensitivity-rows", "chart-hint", "chart-desc", "chart-status", "comparison-status", "snapshot-banner", "snapshot-title", "snapshot-detail", "snapshot-basis", "snapshot-limits", "snapshot-back", "header-actions", "import-snapshot", "watchlist-alerts", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");
@@ -2609,4 +2620,126 @@ test("non-record lines and non-record appends count as malformed, not as data", 
   assert.equal(parsed.requests[0].modelId, "copilot/gpt-5-mini");
   assert.equal(parsed.requests[0].promptTokens, 10);
   assert.equal(parsed.requests[0].outputTokens, 5);
+});
+
+test("the chart palette is colour-blind safe, stable, and never shares a colour in a view", () => {
+  // Invariant behind the palette: any two entries are separable without colour
+  // vision — 8+ lightness points, 40+ degrees of hue, or a large saturation gap
+  // (a neutral grey is the standard "other" slot, separable by chroma alone).
+  for (let i = 0; i < cvdSafePalette.length; i++)
+    for (let j = i + 1; j < cvdSafePalette.length; j++) {
+      const a = cvdSafePalette[i];
+      const b = cvdSafePalette[j];
+      const lightness = Math.abs(a.l - b.l);
+      const hue = Math.abs(a.h - b.h);
+      const saturation = Math.abs(
+        parseInt(a.s, 10) - parseInt(b.s, 10),
+      );
+      assert.ok(
+        lightness >= 8 || hue >= 40 || saturation >= 40,
+        `${a.name} and ${b.name} are too close to tell apart`,
+      );
+    }
+  const ids = ["gpt-5.4", "claude-haiku", "gemini-3.8", "kimi-k2"];
+  const palette = assignPointColors(ids, "dark");
+  assert.equal(palette.size, ids.length);
+  // Two models in one view never share an exact colour.
+  assert.equal(new Set(palette.values()).size, ids.length);
+  // Stable across calls and independent of the order they arrive in.
+  assert.deepEqual(
+    [...assignPointColors(ids, "dark")],
+    [...assignPointColors([...ids].reverse(), "dark")],
+  );
+  // The two themes differ in lightness, so the same hue stays legible on both.
+  const light = assignPointColors(ids, "light");
+  for (const id of ids)
+    assert.notEqual(light.get(id), palette.get(id), id);
+  // A view larger than the palette falls back to a deterministic hashed hue
+  // rather than pretending to be unique.
+  const many = Array.from({ length: cvdSafePalette.length + 3 }, (_, i) => `m${i}`);
+  const wide = assignPointColors(many, "dark");
+  assert.equal(wide.size, many.length);
+  for (const id of many) assert.match(wide.get(id)!, /^hsl\(/);
+  assert.deepEqual([...wide], [...assignPointColors(many, "dark")]);
+  // Duplicate ids collapse to one entry.
+  assert.equal(assignPointColors(["a", "a", "b"], "dark").size, 2);
+  // The hashed fallback is documented and deterministic per theme.
+  assert.match(hashedColor("m0", "dark"), /^hsl\(\d+ 62% 68%\)$/);
+  assert.match(hashedColor("m0", "light"), /^hsl\(\d+ 62% 38%\)$/);
+  assert.equal(hashedColor("m0", "dark"), hashedColor("m0", "dark"));
+});
+
+test("point markers and the quadrant rule never rely on colour alone", () => {
+  assert.equal(pointMarker({ frontier: true, recommended: false }), "circle");
+  assert.equal(pointMarker({ frontier: false, recommended: true }), "star");
+  assert.equal(hasFrontierRing({ frontier: true }), true);
+  assert.equal(hasFrontierRing({ frontier: false }), false);
+  // Radius is a second, non-colour channel and is strictly ordered.
+  const plain = pointRadius({ frontier: false });
+  const used = pointRadius({ frontier: false, used: true });
+  const frontier = pointRadius({ frontier: true });
+  const recommended = pointRadius({ frontier: true, recommended: true });
+  assert.ok(plain < used && used < frontier && frontier < recommended);
+  // The quadrant is only claimed while the region is actually drawn.
+  const medians = { cost: 2, score: 40 };
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: 50 }, medians), true);
+  // Boundaries are inclusive, matching the drawn region.
+  assert.equal(inAttractiveQuadrant({ cost: 2, score: 40 }, medians), true);
+  assert.equal(inAttractiveQuadrant({ cost: 2.1, score: 40 }, medians), false);
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: 39 }, medians), false);
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: 50 }, undefined), false);
+  assert.equal(inAttractiveQuadrant({ cost: null, score: 50 }, medians), false);
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: null }, medians), false);
+});
+
+test("one summary sentence carries every fact the chart draws", () => {
+  const base = {
+    index: 2,
+    total: 9,
+    name: "GPT-5.4",
+    score: 48,
+    cost: 1.75,
+    unit: "AI credits per task",
+    frontier: true,
+    recommended: true,
+  };
+  const full = chartPointSummary({
+    ...base,
+    dominatedBy: [],
+    medians: { cost: 2, score: 40 },
+  });
+  assert.match(full, /GPT-5\.4/);
+  assert.match(full, /48 index points/);
+  assert.match(full, /1\.75 AI credits per task/);
+  assert.match(full, /On the Pareto frontier/);
+  assert.match(full, /Recommended/);
+  assert.match(full, /most attractive quadrant/);
+  // Only the facts that hold are stated.
+  const plain = chartPointSummary({ ...base, frontier: false, recommended: false });
+  assert.doesNotMatch(plain, /Pareto frontier|Recommended|attractive/);
+  const dominated = chartPointSummary({
+    ...base,
+    frontier: false,
+    recommended: false,
+    dominatedBy: ["GPT-5 mini", "Gemini 3.8 Flash"],
+  });
+  assert.match(dominated, /Dominated by GPT-5 mini, Gemini 3\.8 Flash/);
+  // A row the chart plots without a cost or a score says so instead of
+  // implying a zero.
+  assert.match(
+    chartPointSummary({ ...base, cost: null }),
+    /No cost estimate for this row/,
+  );
+  assert.match(
+    chartPointSummary({ ...base, score: null }),
+    /No score for this row/,
+  );
+  // A whole-chart description, including the empty case.
+  const described = chartDescription("Quality versus cost.", [full, plain]);
+  assert.match(described, /2 plotted models/);
+  assert.match(described, /GPT-5\.4/);
+  assert.match(
+    chartDescription("Quality versus cost.", []),
+    /No comparable models to plot/,
+  );
 });

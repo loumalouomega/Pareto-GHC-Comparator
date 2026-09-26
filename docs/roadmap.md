@@ -13,18 +13,7 @@ This page is aspirational, not a commitment. Items may be reordered, rescoped, o
 - Former non-goals are reconsidered below as delivery candidates or feasibility investigations. Keep data integrity and consent requirements as acceptance criteria, rather than treating whole feature areas as permanently excluded.
 - Feasibility investigations must establish feasibility before implementation is scheduled; listing one does not authorize inference, spending, account changes, or additional data collection.
 
-Below, Tier 1 is new delivery candidates that meet the "Requirements across future work" principles. Tier 2 is feasibility investigations that must establish feasibility before delivery is scheduled.
-
-## Tier 1 — New delivery candidates
-
-Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
-
-### Accessibility pass — M
-
-- **Gap:** the comparison chart is canvas-rendered with no documented keyboard or screen-reader path, and no colour-blind-safe palette check has been done.
-- **Deliverables:** keyboard navigation for chart points and the results table; an accessible data-table alternative that exposes the same information the chart shows; a colour-blind-safe palette with non-colour (shape/pattern) frontier markers.
-- **Dependencies:** existing table view and chart rendering in `webview/main.ts`.
-- **Acceptance:** every chart-only piece of information (frontier membership, quadrant highlight) is also available through the accessible table.
+Below, Tier 2 holds feasibility investigations that must establish feasibility before delivery is scheduled.
 
 ## Tier 2 — Feasibility investigations
 

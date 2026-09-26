@@ -65,6 +65,12 @@ Each successful benchmark refresh retains the previous validated snapshot locall
 
 Under the OpenCode source, the **Provider-billed (BYOK) rates** table lists models the CLI reports as provider-billed, including ones that already have an applied rate, with fields for input, cache-read, cache-write (blank means input rate), and output USD rates per million tokens. **Save BYOK rates** stores the table locally and prices those models with a visible BYOK label; empty rows remove the entry, and invalid entries keep the model unpriced. Free-tier models are never overridden. A rate applied from a suggested static-registry match (see "Resolving an unmapped model or an unpriced model" above) shows its registry and date next to the model name, with its own **Remove** control; manually typed rates show no such provenance. Saving the form again without changing a registry-applied rate keeps its provenance.
 
+### Reading the chart without a mouse or colour vision
+
+- **Keyboard:** focus any chart, then use the arrow keys to move between plotted models, `Home`/`End` to jump to the first or last, and `Enter` to select the focused one (which opens it in **Model details**). Each move is announced, and the focused point is ringed.
+- **Colour is never the only signal:** a ring marks the Pareto frontier, a star marks a recommendation, and a larger point marks a model you have used locally. Model colours come from a colour-blind-safe palette, and no two models in one view share a colour.
+- **The same facts without the chart:** the results table's **Comparison** column states frontier membership, which models dominate a row, and whether it sits in the most attractive quadrant — shown only while that region is shaded — and a screen-reader description of the chart carries the same information model by model.
+
 ## Compare options
 
 **Compare tools → Compare options** turns on a second, independent set of settings, A and B: each keeps its own source, task, billing, chart view, filters, exclusions, and pinned/overridden mappings. **Tool A** and **Tool B**, right on this tab, pick each option's source directly. **Editing** picks which option every *other* tab's controls edit (task, billing, filters, workload, and so on); switching it swaps the whole panel to that option's saved settings.
