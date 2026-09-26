@@ -6,6 +6,13 @@ Date checked: 2026-09-26. Versions: OpenCode 2.0.16 installed locally, 1.18.30 p
 
 This document is research and design only. No CI run was triggered, no workflow file was changed, and no account or credential was used. Local commands were read-only invocations of `opencode` that list models or print aggregate statistics.
 
+> **Delivered 2026-09-26.** Both decisions below have since shipped. The v2
+> discovery break is fixed by a fallback to `opencode api model.list`, and the
+> drift lane is live as `.github/workflows/drift.yml` with its classifier in
+> `src/opencodeDrift.ts`. What follows is kept as the dated record of how the
+> gap was found; the current behavior is documented in `AGENTS.md` and
+> `docs/integrations.md`.
+
 ## The gap, demonstrated rather than hypothesized
 
 The extension's entire OpenCode discovery boundary is `opencode models --verbose` (`src/opencode.ts`). Against the currently installed OpenCode, it fails:
@@ -31,7 +38,7 @@ $ npx tsx scripts/opencode-smoke.ts
 > `opencode api model.list`, whose OpenAPI `Model.Info` carries the identity,
 > limits, rates, tiers, and variants that `--verbose` used to provide, and
 > `discoverOpenCode` now falls back to it. The CI blindness described next is
-> unchanged and remains **Weekly upstream schema-drift lane**.
+> unchanged at the time, and is what the weekly `drift.yml` lane now covers.
 
 **Why CI does not catch it**, from `.github/workflows/extension.yml`:
 
@@ -67,7 +74,6 @@ So the acceptance criterion resolves cleanly: **yes for OpenCode, no for Copilot
 ## Decision
 
 **Feasible, and mostly a matter of finishing what exists. Three changes, no new infrastructure class:**
-
 1. **Separate the failure modes instead of swallowing them.** The `script` lane's `continue-on-error: true` should stay — it is correct for an external dependency — but its outcome must be *classified* using the taxonomy the code already has: `missing` (binary not found), `timeout`, `command` (non-zero exit, e.g. today's unrecognized flag), `parse`/`empty` (output shape changed), and install/network failure. `scripts/opencode-smoke.ts` already prints sanitized counts and the failure kind; the drift signal is the **combination** — pinned lane healthy *and* latest lane not — with the kind naming the class. That combination is what turns an ambiguous yellow job into a diagnosis.
 2. **Add a scheduled lane against latest.** A weekly `schedule:` cron (none exists today) running the existing smoke script on **Linux only** for cost, leaving the three-OS matrix on the pinned version where it is a release gate. Keep the pinned lane as the contract fixture: `test/fixtures/opencode/verbose-1.18.30.txt` is the known-good shape, and it should keep representing the version the parser supports.
 3. **Alert by opening or updating an issue, never by failing a release.** A weekly job that fails loudly trains everyone to ignore it, and a release gate that depends on opencode.ai makes releases hostage to a third party. The existing release discipline in `AGENTS.md` — non-gating external-service checks — is the right precedent; what is missing is a notification. An issue carrying the failure kind, the sanitized fingerprint counters, the detected version, and both lane outcomes is self-describing enough to act on.
@@ -87,7 +93,7 @@ Not applicable — no workflow or runtime code changed. A future drift lane's ow
 
 ## Open blockers
 
-- **No alert channel was chosen.** GitHub Actions annotations are free but invisible to anyone not watching a run; opening an issue is noisy but durable. This investigation recommends issues without having checked the repository's issue volume or whether a scheduled workflow is permitted to create them. Still open; owned by **Weekly upstream schema-drift lane**.
+- **No alert channel was chosen.** GitHub Actions annotations are free but invisible to anyone not watching a run; opening an issue is noisy but durable. This investigation recommends issues without having checked the repository's issue volume or whether a scheduled workflow is permitted to create them. **Resolved:** issues were chosen and shipped — the weekly `drift.yml` lane creates a `drift`-labelled issue and updates it in place, and the evaluate job downgrades any failure to a warning. Whether the repository permits a scheduled workflow to open issues is still unconfirmed.
 - ~~**The v2 replacement for `--verbose` is unknown.**~~ **Resolved.** 2.x does not need a poorer listing: `opencode api model.list` returns the full `Model.Info`, including per-million rates, long-context tiers, and variants, so the 2.x path is a port rather than a downgrade. See `docs/integrations.md` and the fallback dispatch in `discoverOpenCode`.
 - **`opencode session list --format json` returned zero rows** in this environment, so the only documented machine-readable v2 surface is unverified. If it turns out to carry token and cost fields, the OpenCode ledger question in `docs/other-client-usage-investigation.md` would need revisiting. Still open — and now of lower consequence, since the model listing no longer depends on it.
 - **Windows and macOS were not probed for the `--verbose` removal.** The flag's absence is version-level, so a platform difference is unlikely, but it is unmeasured — record as unperformed validation.

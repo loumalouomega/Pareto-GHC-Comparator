@@ -91,7 +91,21 @@ The earlier completion audit covered the then-completed roadmap. It does not cer
 - `test/webview.spec.ts`: all three themes cover comparison panels, active editor switching, cross-unit explanations, combined PNG messages, narrow layout, and usage diagnostics, plus host-driven retention/chart control sync without reload, alongside existing regression flows.
 - `test/settings.test.ts`: settings precedence (explicit defaults, invalid fallbacks, stored-chart detection) for the pure `src/settings.ts` resolver.
 - `.github/workflows/extension.yml` `Native discovery` job: the platform-discovery test file above, run remotely on Linux, macOS, and Windows and gating the release jobs. Confirmed green remotely: run [34816368954](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34816368954) (2026-09-14, commit `16e1af1`), all three OSes.
-- `scripts/opencode-smoke.ts` and the non-gating `opencode-smoke` CI job: real (unmocked) `opencode models --verbose` discovery through `discoverOpenCode`, against an isolated credential-free home, plus a real-executable path-with-spaces rerun. Output is sanitized to counts only (see `AGENTS.md`).
+- `scripts/opencode-smoke.ts` and the non-gating `opencode-smoke` CI job: real (unmocked) discovery through `discoverOpenCode` — `opencode models --verbose` on 1.x, falling back to `opencode api model.list` on 2.x — against an isolated credential-free home, plus a real-executable path-with-spaces rerun. Output is sanitized to counts only (see `AGENTS.md`).
+- `scripts/opencode-drift-report.ts` and the weekly non-gating `drift.yml` lane: classifies a pinned-vs-latest smoke pair with `assessDrift` and files or updates one tracked issue. `test/opencode-drift.test.ts` covers the verdicts, the outage exclusions, degraded reports, and the issue body; the `gh` calls and the schedule itself are not covered by tests.
+
+### Local drift-lane checks (2026-09-26)
+
+The classifier and reporter were exercised locally against real smoke output. All four paths behaved as designed and the run exited 0 in each:
+
+| Input | Verdict | Reported? |
+| --- | --- | --- |
+| real 2.0.16 report + healthy pinned report | `healthy` | no |
+| synthetic latest `kind: parse` + healthy pinned | `drift` | yes |
+| both report files absent | `no-evidence` | no |
+| latest `kind: timeout` + healthy pinned | `latest-external` | no |
+
+**Unperformed validation.** The `drift.yml` schedule has never run: scheduled workflows only fire from the default branch, so a push is required and the first real weekly execution is unverified. Whether a scheduled workflow may create issues in this repository is also unconfirmed — the `evaluate` job requests `issues: write` and downgrades any failure to a warning, so a repository that forbids it loses the issue and keeps the run annotation. The lane's first genuine detection is inherently unproven until an upstream break actually occurs; the honest claim today is that the mechanism exists and is classified correctly, not that it has caught anything. The reporter was verified end to end against a locally authenticated `gh` (issue create, then cleaned up), so the mechanics are proven while CI's `GITHUB_TOKEN` scope is not.
 
 ### OpenCode discovery evidence by environment
 

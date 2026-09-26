@@ -98,11 +98,17 @@ async function main() {
     });
     if (failures.length) process.exitCode = 1;
   } catch (error) {
+    const failure = error instanceof OpenCodeError ? error : undefined;
     report({
       ...base,
       ok: false,
       failures: ["discovery"],
-      kind: error instanceof OpenCodeError ? error.kind : "unexpected",
+      kind: failure ? failure.kind : "unexpected",
+      // Both listing surfaces' outcomes, structurally: the drift lane classifies
+      // on these and never reads the message, which is deliberately not printed.
+      ...(failure?.fallbackKind ? { fallbackKind: failure.fallbackKind } : {}),
+      // Content-free shape counters, safe to quote in a public issue.
+      ...(failure?.fingerprint ? { fingerprint: failure.fingerprint } : {}),
     });
     process.exitCode = 1;
   }

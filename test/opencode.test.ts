@@ -216,6 +216,44 @@ test("malformed output fails closed and empty output parses to no models", () =>
   assert.deepEqual(parseModels("   \n"), []);
 });
 
+test("parse failures carry content-free counters structurally", () => {
+  // A fingerprint must be computable from inside the parser's own failure path:
+  // `fingerprintOpenCodeOutput` walks the same blocks the parser does, so it can
+  // never rethrow or recurse into it.
+  assert.deepEqual(fingerprintOpenCodeOutput("opencode-go/x\n{not json"), {
+    version: 1,
+    blocks: 0,
+    jsonFailures: 1,
+    missingId: 0,
+    missingProvider: 0,
+    missingName: 0,
+    invalidProvider: 0,
+  });
+  const truncated = (() => {
+    try {
+      parseModels("opencode-go/broken\n{not json");
+      return undefined;
+    } catch (error) {
+      return error as OpenCodeError;
+    }
+  })();
+  assert.ok(truncated instanceof OpenCodeError);
+  assert.equal(truncated.kind, "parse");
+  // Unbalanced braces report through the same fingerprinted path as any other
+  // unrecognized shape, so this failure mode carries counters too.
+  assert.match(String(truncated.fingerprint), /^schema v1 blocks=/);
+  assert.ok(String(truncated.message).includes(String(truncated.fingerprint)));
+  const listFailure = (() => {
+    try {
+      parseModelList(JSON.stringify({ error: { message: "boom" } }));
+      return undefined;
+    } catch (error) {
+      return error as OpenCodeError;
+    }
+  })();
+  assert.match(String(listFailure?.fingerprint), /^list schema v1 envelope=true/);
+});
+
 test("only whitelisted fields cross the boundary", () => {
   const models = parseModels(
     model({
@@ -558,6 +596,23 @@ test("discovery falls back to the 2.x surface when 1.x cannot list", async () =>
   );
   assert.ok(empty.includes("api model.list"));
 
+  // A well-formed but empty listing on both surfaces is "no models", not a
+  // failure: neither surface is reporting an unusable shape.
+  await assert.rejects(
+    discoverOpenCode(async (args) =>
+      args[0] === "--version"
+        ? { code: 0, stdout: "2.0.16\n", stderr: "" }
+        : args[0] === "api"
+          ? { code: 0, stdout: list([]), stderr: "" }
+          : { code: 0, stdout: "", stderr: "" },
+    ),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "empty" &&
+      /Connect a provider/.test(error.message) &&
+      // Nothing failed, so there is no second surface to name.
+      error.fallbackKind === undefined,
+  );
   // When both fail, the 1.x failure is reported and the 2.x attempt named.
   const both: string[] = [];
   await assert.rejects(
@@ -572,7 +627,10 @@ test("discovery falls back to the 2.x surface when 1.x cannot list", async () =>
       /exit 1/.test(error.message) &&
       /boom/.test(error.message) &&
       /OpenCode CLI 2\.0\.16/.test(error.message) &&
-      /2\.x listing surface also failed \(command\)/.test(error.message),
+      /2\.x listing surface also failed \(command\)/.test(error.message) &&
+      // Both surfaces' outcomes are structured, so CI classifies without
+      // reading the message.
+      error.fallbackKind === "command",
   );
   assert.ok(both.includes("api model.list"));
   // The version is probed once and reused across both surfaces' diagnostics.

@@ -91,10 +91,13 @@ smoke script, disabled by default so tests stay timer-free).
 
 CI cannot see a 2.x regression on its own: the `opencode-smoke` npm lane pins
 1.18.30, the `script` lane installs latest under `continue-on-error: true`, and
-the workflow has no `schedule:` trigger. No 2.x release exists on npm at all
-(`latest` is 1.18.32), so the install-script lane is structurally the only one
-that can ever exercise v2. Early warning is **Weekly upstream schema-drift
-lane** in `docs/roadmap.md`, with the evidence in
+the release workflow has no `schedule:` trigger. No 2.x release exists on npm at
+all (`latest` is 1.18.32), so the install-script lane is structurally the only
+one that can ever exercise v2. **Early warning is now the weekly
+`drift.yml` lane** (see `AGENTS.md`): it runs both lanes on Linux, classifies
+the pair with `src/opencodeDrift.ts`, and files or updates one tracked issue
+only when the pinned release lists models and the latest one does not. Its
+evidence is in `docs/testing.md`; the underlying investigation is
 `docs/schema-drift-investigation.md`.
 
 | Client version | OS | Install method | Verified scope | Date | Evidence | Fixture |
@@ -121,7 +124,8 @@ signed-in account on macOS and Windows (CI is credential-free by design);
 install-script layout on Windows (POSIX-shell target, not exercised); the 2.x
 listing surface on macOS and Windows, and whether the `--verbose` removal also
 holds there (the flag's absence is version-level, so a platform difference is
-unlikely, but it is unmeasured — the `script` smoke lane excludes
-`windows-latest`); how long a 2.x background service takes to become ready, so
-whether the single retry is always sufficient on a cold machine; and any 2.x
-release after 2.0.16.
+unlikely, but it is unmeasured — the `script` smoke lane and the `drift.yml`
+lane both exclude `windows-latest`); how long a 2.x background service takes to
+become ready, so whether the single retry is always sufficient on a cold
+machine; any 2.x release after 2.0.16; and whether a scheduled workflow is
+permitted to open issues in this repository.

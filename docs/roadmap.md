@@ -26,13 +26,6 @@ Admission criterion: new user value that meets every "Requirements across future
 - **Dependencies:** the transcript schema, observed on one version (2.1.280, Linux only) and not documented by the vendor — so delivery is gated on drift handling, not treated as a stable format.
 - **Acceptance:** no read before explicit consent with a stated purpose; Claude figures never merge with Copilot credits or premium requests; client-reported cost fields are never adopted as prices; content is never retained; per-file fingerprints and file-an-issue guidance work as they do for Copilot.
 
-### 1.2 Weekly upstream schema-drift lane — S task
-
-- **Gap:** a release that changes a client's output shape is discovered by users, and the existing `opencode-smoke` job cannot tell a real break from an opencode.ai outage (`continue-on-error: true`, a pinned npm lane, no `schedule:` trigger).
-- **Deliverables:** classify the existing `OpenCodeFailure` kinds and `fingerprintOpenCodeOutput`/`fingerprintModelList` counters into distinguishable outcomes; add a weekly non-gating lane on latest (Linux only) alongside the pinned three-OS release gate; alert by opening or updating an issue rather than failing a release.
-- **Dependencies:** the shipped fingerprinting in `src/usage.ts`/`src/opencode.ts` and the existing smoke matrix — the drift signal is the *combination* of a healthy pinned lane and an unhealthy latest lane. Note that no 2.x release exists on npm (`latest` is 1.18.32), so an install-script lane is structurally the only one that can observe a v2 successor.
-- **Acceptance:** a real output-shape change produces an issue naming the failure kind, sanitized counters, and the detected version; an install or network failure does not; no release depends on an external service. Copilot Chat's half stays on the existing user-reported fingerprint path and is recorded as **not automatable without an account**.
-
 ## Requirements across future work
 
 These remain the acceptance requirements every task above and any future candidate must satisfy, while former product exclusions continue to be reconsidered as delivery candidates or feasibility investigations rather than permanent exclusions:

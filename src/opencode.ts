@@ -22,6 +22,17 @@ export class OpenCodeError extends Error {
   constructor(
     message: string,
     public kind: OpenCodeFailure,
+    /**
+     * Content-free shape counters as a ready-to-quote string, set when the
+     * failure came from a parser. Carried structurally rather than left inside
+     * the message so CI can report them without printing diagnostics.
+     */
+    public fingerprint?: string,
+    /**
+     * Set when the 2.x surface also failed, so both listing surfaces' outcomes
+     * are readable without parsing the message.
+     */
+    public fallbackKind?: OpenCodeFailure,
   ) {
     super(message);
   }
@@ -54,7 +65,15 @@ export function fingerprintOpenCodeOutput(
     invalidProvider: 0,
   };
   if (typeof output !== "string") return empty;
-  const blocks = splitBlocks(output);
+  let blocks: { ref: string; body: string }[];
+  try {
+    blocks = splitBlocks(output);
+  } catch {
+    // A fingerprint is a diagnostic and must be computable from inside the
+    // parser's own failure path, so it never rethrows. `splitBlocks` failing
+    // means the blocks were unreadable, which the caller reports separately.
+    return { ...empty, jsonFailures: 1 };
+  }
   const fp: OpenCodeSchemaFingerprint = { ...empty, blocks: blocks.length };
   for (const { body } of blocks) {
     let raw: unknown;
@@ -349,17 +368,30 @@ function splitBlocks(output: string): { ref: string; body: string }[] {
  * Only whitelisted fields cross the boundary; raw provider configs never do.
  */
 export function parseModels(output: unknown): AvailableModel[] {
+  const fingerprint = formatOpenCodeFingerprint(
+    fingerprintOpenCodeOutput(output),
+  );
   const parseFailure = (): OpenCodeError =>
     new OpenCodeError(
-      `OpenCode returned unrecognized model data (${formatOpenCodeFingerprint(fingerprintOpenCodeOutput(output))}). ` +
+      `OpenCode returned unrecognized model data (${fingerprint}). ` +
         "This output doesn't match any known `opencode models --verbose` schema — " +
         "please file an issue with the fingerprint and your OpenCode CLI version (`opencode --version`). " +
         "Retry; the previous listing is retained.",
       "parse",
+      fingerprint,
     );
   if (typeof output !== "string") throw parseFailure();
   if (output.trim() === "") return [];
-  const blocks = splitBlocks(output);
+  let blocks: { ref: string; body: string }[];
+  try {
+    blocks = splitBlocks(output);
+  } catch (error) {
+    // Unbalanced braces: report it through the same fingerprinted path as every
+    // other unrecognized shape, so this failure mode carries counters too.
+    if (error instanceof OpenCodeError && error.kind === "parse")
+      throw new OpenCodeError(`${error.message} (${fingerprint})`, "parse", fingerprint);
+    throw error;
+  }
   if (!blocks.length) throw parseFailure();
   const models: AvailableModel[] = [];
   const seen = new Set<string>();
@@ -463,13 +495,17 @@ export const formatModelListFingerprint = (
  * `package`, and `compatibility` are read by neither path.
  */
 export function parseModelList(payload: unknown): AvailableModel[] {
+  const fingerprint = formatModelListFingerprint(
+    fingerprintModelList(payload),
+  );
   const failure = (): OpenCodeError =>
     new OpenCodeError(
-      `OpenCode returned unrecognized model data (${formatModelListFingerprint(fingerprintModelList(payload))}). ` +
+      `OpenCode returned unrecognized model data (${fingerprint}). ` +
         "This response doesn't match any known `opencode api model.list` schema — " +
         "please file an issue with the fingerprint and your OpenCode CLI version (`opencode --version`). " +
         "Retry; the previous listing is retained.",
       "parse",
+      fingerprint,
     );
   if (typeof payload !== "string") throw failure();
   let raw: unknown;
@@ -762,10 +798,13 @@ export async function discoverOpenCode(
       ),
       "empty",
     );
-  throw fallbackError
-    ? new OpenCodeError(
-        `${base.message} The OpenCode 2.x listing surface also failed (${fallbackError.kind}).`,
-        base.kind,
-      )
-    : base;
+  if (!fallbackError) throw base;
+  // Both surfaces' outcomes are carried structurally so CI can classify the
+  // failure without reading the message.
+  throw new OpenCodeError(
+    `${base.message} The OpenCode 2.x listing surface also failed (${fallbackError.kind}).`,
+    base.kind,
+    base.fingerprint ?? fallbackError.fingerprint,
+    fallbackError.kind,
+  );
 }
