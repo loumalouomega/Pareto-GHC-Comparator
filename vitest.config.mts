@@ -16,12 +16,14 @@ export default defineConfig({
       // Ratcheted at measured coverage: any drop fails `npm run test:coverage`.
       // (Re-baselined 2026-09-14: the previous values predated several
       // features and already failed on clean HEAD; the provenance-complete
-      // exports change raises all four metrics over that baseline.)
+      // exports change raises all four metrics over that baseline. Raised
+      // again for the read-only snapshot import, whose validation and view
+      // builder are pure and measured end to end.)
       thresholds: {
-        lines: 97.2,
-        functions: 98.79,
-        branches: 92.95,
-        statements: 96.25,
+        lines: 97.5,
+        functions: 99,
+        branches: 93.7,
+        statements: 96.6,
       },
     },
   },

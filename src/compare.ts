@@ -450,6 +450,15 @@ export function pinRowId(modelId: string, benchmarkId: string): string {
   return `${modelId}::${benchmarkId}`;
 }
 
+/**
+ * The one text-filter rule, shared by the model filter in `compare()` and by
+ * the read-only snapshot import, so a filter typed in the panel narrows an
+ * imported row set exactly as it narrows a live one.
+ */
+export function matchesFilter(name: string, id: string, filter: string): boolean {
+  return `${name} ${id}`.toLowerCase().includes(filter.toLowerCase());
+}
+
 export function compare(
   available: AvailableModel[],
   benchmarks: Benchmark[],
@@ -482,9 +491,7 @@ export function compare(
         !options.onlyMine ||
         (usedCounts.get(m.id) ?? usedCounts.get(baseModelIdOf(m.id)) ?? 0) > 0,
     )
-    .filter((m) =>
-      `${m.name} ${m.id}`.toLowerCase().includes(options.filter.toLowerCase()),
-    )
+    .filter((m) => matchesFilter(m.name, m.id, options.filter))
     .flatMap((m) => {
       const source = m.source ?? "copilot";
       let entry: CatalogEntry | undefined;

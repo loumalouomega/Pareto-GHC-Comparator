@@ -539,6 +539,8 @@ export type HostMessage =
     }
   | { type: "target"; side: "A" | "B"; action: HostMessage }
   | { type: "ready" | "refresh" | "key" }
+  | { type: "importSnapshot" }
+  | { type: "importExit" }
   | { type: "source"; source: Source }
   | { type: "options"; options: Options }
   | { type: "select" | "copy"; id: string }
@@ -661,5 +663,30 @@ export interface ViewState {
   freeBar: FreeBarEntry[];
   /** Opt-in refresh notifications for pinned-model changes. Off by default. */
   watchlistAlerts: boolean;
+  /**
+   * Present only while a previously exported snapshot is reopened read-only
+   * (`src/snapshotImport.ts`). Its presence is what tells the webview the
+   * whole panel is showing historical data, never live results.
+   */
+  imported?: ImportedMeta;
   exportNote?: string;
+}
+
+/** Banner metadata for a reopened snapshot: what the file says about itself. */
+export interface ImportedMeta {
+  fileName: string;
+  kind: "single" | "comparison";
+  schemaVersion: number;
+  /** ISO timestamp from the file, or "unknown" when it stated none. */
+  exportedAt: string;
+  /** The file's own illustrative-figures disclaimer, verbatim. */
+  disclaimer: string;
+  /** Pricing-registry dates as of the export, never today's. */
+  catalogDate: string;
+  staticRegistryDate: string;
+  planRegistryDate: string;
+  /** Cost basis of the exported costs; "per side" for a pair snapshot. */
+  costBasis: { basis: string; unit: string; note: string };
+  /** Option names of a pair snapshot, e.g. ["A: Copilot", "B: Codex"]. */
+  options?: string[];
 }

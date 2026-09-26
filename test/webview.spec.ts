@@ -8,6 +8,15 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
 import { compare, freeBar, registryRateFor } from "../src/compare";
+import {
+  exportPairSnapshot,
+  exportSnapshot,
+  type PairSideInput,
+} from "../src/export";
+import {
+  importedViewState,
+  parseImportedSnapshot,
+} from "../src/snapshotImport";
 import { mergeByokForm, parseByokFormStore } from "../src/byok";
 import {
   historyScenarioPrefill,
@@ -1426,3 +1435,253 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Tool analysis");
     expect(errors).toEqual([]);
   });
+
+test("an imported snapshot renders read-only with its own provenance", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const messages: Record<string, unknown>[] = [];
+  // The state the host would send: a real exported snapshot, reopened through
+  // the real importer, so the browser sees exactly the shipped contract.
+  const liveRows = compare(available, benchmarks, structuredClone(defaults));
+  const comparable = liveRows.filter((r) => r.cost !== null && r.score !== null);
+  const dominated = comparable.find((r) => !r.frontier)!;
+  const single = exportSnapshot(
+    comparable,
+    structuredClone(defaults),
+    new Set(["gpt-5.4"]),
+    {
+      source: "copilot",
+      preset: "coding",
+      billing: "credits",
+      catalogDate: "2026-01-05",
+      staticRegistryDate: "2026-01-06",
+      planRegistryDate: "2026-01-07",
+      version: "4.0",
+      fetchedAt: Date.parse("2026-01-08T10:00:00Z"),
+      scenario: { status: "off" },
+    },
+  );
+  const pairSide = (over: Partial<PairSideInput>): PairSideInput => ({
+    side: "A",
+    name: "Copilot",
+    options: structuredClone(defaults),
+    rows: liveRows,
+    recommendation: recommend(liveRows, structuredClone(defaults)),
+    scenario: { status: "off" },
+    costNormalization: { status: "off" },
+    availabilityNote: "",
+    pricingNote: "",
+    discoveryError: "",
+    ...over,
+  });
+  const pair = exportPairSnapshot(
+    [
+      pairSide({ side: "A" }),
+      pairSide({ side: "B", name: "Codex" }),
+    ],
+    {
+      catalogDate: "2026-01-05",
+      staticRegistryDate: "2026-01-06",
+      planRegistryDate: "2026-01-07",
+      version: "4.0",
+      fetchedAt: Date.parse("2026-01-08T10:00:00Z"),
+      normalize: false,
+      usdCostDelta: null,
+    },
+  );
+  const importedView = (text: string, fileName: string) => {
+    const parsed = parseImportedSnapshot(text);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    return importedViewState(
+      {
+        snapshot: parsed.snapshot,
+        selected: {},
+        filter: "",
+        display: structuredClone(defaults.display),
+      },
+      {
+        options: structuredClone(defaults),
+        hasKey: true,
+        watchlistAlerts: false,
+        fileName,
+      },
+    );
+  };
+  let current: ViewState | undefined;
+  const post = async (state: ViewState) => {
+    current = state;
+    await page.evaluate(
+      (s) =>
+        window.dispatchEvent(
+          new MessageEvent("message", { data: { type: "state", state: s } }),
+        ),
+      state,
+    );
+  };
+  await page.exposeBinding("hostMessage", async (_, m) => {
+    messages.push(m);
+    if (m.type === "__state") await post(m.state as ViewState);
+    // Mirror the host's imported-mode navigation: a row selection updates the
+    // read-only view and re-renders it, touching nothing else.
+    if (m.type === "select" && current?.imported)
+      await post({ ...current, selected: m.id as string });
+  });
+  await page.addInitScript(() => {
+    (window as any).acquireVsCodeApi = () => ({
+      postMessage: (m: unknown) => (window as any).hostMessage(m),
+      getState: () => undefined,
+      setState: () => {},
+    });
+  });
+  await page.route("https://pareto.test/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/")
+      await route.fulfill({
+        contentType: "text/html",
+        body: html(
+          "https://pareto.test/webview.js",
+          "https://pareto.test/style.css",
+          "https://pareto.test",
+          "testnonce",
+        ),
+      });
+    else
+      await route.fulfill({
+        contentType: path.endsWith(".js")
+          ? "application/javascript"
+          : "text/css",
+        body: await readFile(`dist${path}`),
+      });
+  });
+  await page.goto("https://pareto.test/");
+  const send = (state: unknown) =>
+    page.evaluate(
+      (s) => (window as any).hostMessage({ type: "__state", state: s }),
+      state,
+    );
+
+  await send(importedView(single, "comparison.json"));
+  // The banner names the file, its export date, and says it is not live.
+  await expect(page.locator("#snapshot-banner")).toBeVisible();
+  await expect(page.locator("#snapshot-detail")).toContainText(
+    "comparison.json",
+  );
+  await expect(page.locator("#snapshot-detail")).toContainText(
+    "single-option snapshot exported",
+  );
+  await expect(page.locator("#snapshot-detail")).toContainText(
+    "This is historical data, not live results",
+  );
+  await expect(page.locator("#snapshot-basis")).toContainText(
+    "Costs are shown in AI credits on the exported task basis",
+  );
+  await expect(page.locator("#snapshot-basis")).toContainText(
+    "catalog 2026-01-05",
+  );
+  await expect(page.locator("#snapshot-limits")).toContainText("Read-only");
+  // Only the tab that renders it stays, and the live header actions go.
+  await expect(page.locator("#tab-compare")).toBeVisible();
+  await expect(page.locator("#tab-tools")).toBeHidden();
+  await expect(page.locator("#tab-plan")).toBeHidden();
+  await expect(page.locator("#tab-usage")).toBeHidden();
+  await expect(page.locator("#tab-settings")).toBeHidden();
+  await expect(page.locator("#header-actions")).toBeHidden();
+  // Live controls are disabled, the display-only ones stay usable.
+  await expect(page.locator("#source")).toBeDisabled();
+  await expect(page.locator("#preset")).toBeDisabled();
+  await expect(page.locator("#billing")).toBeDisabled();
+  await expect(page.locator("#display-chart")).toBeDisabled();
+  await expect(page.locator("#display-chart")).toHaveValue("task");
+  // The workload inputs are locked: a snapshot's costs were priced on its own
+  // token mix, and editing them here would relabel those numbers.
+  await expect(page.locator("#input")).toBeDisabled();
+  await expect(page.locator("#output")).toBeDisabled();
+  await expect(page.locator("#display-scale")).toBeEnabled();
+  await expect(page.locator("#display-sort")).toBeEnabled();
+  await expect(page.locator("#filter")).toHaveValue("", { timeout: 5000 });
+  // The exported rows, dates, and version replace the live ones.
+  await expect(page.locator("#count")).toContainText("plotted");
+  await expect(page.locator("#catalog")).toContainText(
+    "Catalog dated 2026-01-05",
+  );
+  await expect(page.locator("#provenance")).toContainText("Index v4.0");
+  // The sensitivity card explains itself instead of sweeping a snapshot.
+  await expect(page.locator("#sensitivity-note")).toContainText(
+    "Unavailable for an imported snapshot",
+  );
+  // Row details stay read-only: no copy, no pin, no mapping controls, and the
+  // dominance wording never claims a row is incomparable.
+  await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+  await expect(page.locator("#details")).toContainText(
+    "On the Pareto frontier when this snapshot was exported",
+  );
+  await expect(page.locator("#details")).not.toContainText("Copy model");
+  await expect(page.locator("#details")).not.toContainText("Pin as separate");
+  await expect(page.locator("#details .more-details")).toHaveCount(1);
+  await page.locator("#details .more-details summary").click();
+  await expect(page.locator("#details")).toContainText("Benchmark at export");
+  await expect(page.locator("#details")).toContainText("Pricing at export");
+  await expect(page.locator("#details")).not.toContainText("Apply mapping");
+  await expect(page.locator("#details")).not.toContainText("Pin");
+  await page
+    .getByRole("button", { name: dominated.name, exact: true })
+    .click();
+  await expect(page.locator("#details")).toContainText(
+    "Dominated by another exported model",
+  );
+  // The text filter still narrows the exported rows, and it posts a draft the
+  // host treats as view-only.
+  await page.locator("#filter").fill("gpt-5-mini");
+  await expect
+    .poll(() =>
+      messages.some(
+        (m) =>
+          m.type === "options" &&
+          (m.options as { filter: string }).filter === "gpt-5-mini",
+      ),
+    )
+    .toBeTruthy();
+  // A two-option snapshot reopens on the Compare tools tab, still read-only.
+  await send(importedView(pair, "pair.json"));
+  await expect(page.locator("#snapshot-detail")).toContainText("pair.json");
+  await expect(page.locator("#snapshot-detail")).toContainText(
+    "two-option snapshot",
+  );
+  await expect(page.locator("#snapshot-detail")).toContainText("A: Copilot");
+  await expect(page.locator("#snapshot-basis")).toContainText("per side");
+  await expect(page.locator("#tab-tools")).toBeVisible();
+  await expect(page.locator("#tab-compare")).toBeHidden();
+  await expect(page.locator("#panel-tools")).toBeVisible();
+  await expect(page.locator("#comparison-panels")).toContainText("A: Copilot");
+  await expect(page.locator("#comparison-panels")).toContainText("B: Codex");
+  await expect(page.locator("#comparison-delta")).toContainText("B minus A");
+  await expect(page.locator("#comparison-enabled")).toBeDisabled();
+  await expect(page.locator("#comparison-name")).toBeDisabled();
+  await expect(page.locator("#filter")).toBeDisabled();
+  // Back to live data restores every live-only surface: the tab bar, the header
+  // actions, and the controls the read-only view locked — including after the
+  // extra renders a row selection caused above. A control the live view keeps
+  // disabled for its own reasons (the comparison pickers, while comparison is
+  // off) stays disabled, so the restore is faithful rather than blanket-enable.
+  await page.locator("#snapshot-back").click();
+  await expect
+    .poll(() => messages.some((m) => m.type === "importExit"))
+    .toBeTruthy();
+  const live = structuredClone(current!) as ViewState;
+  delete live.imported;
+  await send(live);
+  await expect(page.locator("#snapshot-banner")).toBeHidden();
+  await expect(page.locator("#header-actions")).toBeVisible();
+  for (const tab of ["Compare tools", "Plan & budget", "Usage", "Settings"])
+    await expect(
+      page.getByRole("tab", { name: tab, exact: true }),
+    ).toBeVisible();
+  await expect(page.locator("#source")).toBeEnabled();
+  await expect(page.locator("#display-chart")).toBeEnabled();
+  await expect(page.locator("#input")).toBeEnabled();
+  await expect(page.locator("#filter")).toBeEnabled();
+  await expect(page.locator("#comparison-name")).toBeDisabled();
+  expect(errors).toEqual([]);
+});

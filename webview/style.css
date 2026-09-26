@@ -359,6 +359,15 @@ a {
   padding: 20px;
   margin: 0 0 18px;
 }
+/* The historical-snapshot banner: an accent edge and a heading that reads as
+   a state, not a normal card, so a reopened snapshot is never mistaken for
+   live results. */
+.snapshot-banner {
+  border-left: 4px solid var(--vscode-editorWarning-foreground, #e2b93b);
+}
+.snapshot-banner h2 {
+  margin-top: 0;
+}
 .tabs {
   display: flex;
   gap: 4px;

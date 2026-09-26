@@ -19,13 +19,6 @@ Below, Tier 1 is new delivery candidates that meet the "Requirements across futu
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
-### Snapshot import (read-only reopen) — M
-
-- **Gap:** exported snapshot JSON can be shared but never reloaded into the extension to inspect what was compared at export time.
-- **Deliverables:** an **Import snapshot** command/webview action that loads a previously exported snapshot JSON and renders it read-only, clearly labelled as historical (not live data), validated against the snapshot schema version with a clear error for an incompatible or corrupted file.
-- **Dependencies:** the snapshot export format defined in `src/export.ts` (snapshot schema version 3 with the `kind` discriminator).
-- **Acceptance:** an imported snapshot can never be mistaken for live data in the UI; a version mismatch fails with an explanatory message rather than misrendering.
-
 ### Additional editor storage roots — M
 
 - **Gap:** local usage scanning only looks at `Code` and `Code - Insiders` workspace storage roots (`src/usage.ts`'s storage-root resolution); VSCodium, Cursor, and Remote/WSL/devcontainer hosts running Copilot are invisible to it.

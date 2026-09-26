@@ -3,6 +3,7 @@ import type { Plugin, ScatterDataPoint } from "chart.js";
 import type {
   Billing,
   ChecklistFamily,
+  ImportedMeta,
   Options,
   Row,
   ScenarioHistory,
@@ -39,7 +40,16 @@ const text = (tag: string, value: string, className?: string) => {
 const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
   vscode.postMessage(
     state?.comparison &&
-    !["ready", "comparison", "target", "watchlistAlerts"].includes(type)
+    ![
+      "ready",
+      "comparison",
+      "target",
+      "watchlistAlerts",
+      // Leaving or replacing a historical snapshot is a view-level action,
+      // never an edit to one side of a comparison.
+      "importSnapshot",
+      "importExit",
+    ].includes(type)
       ? {
           type: "target",
           side: state.comparison.active,
@@ -47,8 +57,8 @@ const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
         }
       : { type, ...extra },
   );
-// "watchlistAlerts" stays unwrapped above: the toggle is global state, not
-// per-option, so it must never switch the Editing side as a side effect.
+// "watchlistAlerts" stays unwrapped above for the same reason: it is global
+// state, not per-option, so it must never switch the Editing side.
 // Targets a specific side directly, regardless of which one is Editing — for
 // controls on the Compare tools tab (like the Tool A/Tool B pickers) that
 // must be able to set up both sides without switching Editing back and forth.
@@ -399,6 +409,13 @@ function renderSensitivity() {
   const body = el("sensitivity-rows");
   const note = el("sensitivity-note");
   body.replaceChildren();
+  if (state.imported) {
+    // The sweep reprices each row from its cost breakdown, and a snapshot
+    // records no breakdown; sweeping would be an estimate of an estimate.
+    note.textContent =
+      "Unavailable for an imported snapshot: the sweep reprices rows from their cost breakdown, which a snapshot does not record. The exported costs are shown as they were exported.";
+    return;
+  }
   const comparable = state.rows.filter(
     (r) => r.cost !== null && r.score !== null,
   );
@@ -729,14 +746,18 @@ function renderDetails() {
   more.className = "more-details";
   more.append(text("summary", "More details"));
   target.append(text("h3", row.name), text("p", row.id, "hint"));
-  const copy = text(
-    "button",
-    row.invocable ? "Copy model ID" : "Copy model name",
-  ) as HTMLButtonElement;
-  copy.onclick = () => {
-    send("copy", { id: row.id });
-  };
-  target.append(copy);
+  // A snapshot records no verified client id, and Copy resolves against live
+  // discovery, so the control is absent rather than present and refused.
+  if (!state.imported) {
+    const copy = text(
+      "button",
+      row.invocable ? "Copy model ID" : "Copy model name",
+    ) as HTMLButtonElement;
+    copy.onclick = () => {
+      send("copy", { id: row.id });
+    };
+    target.append(copy);
+  }
   const picked = customPicks.includes(row.id);
   const pickToggle = text(
     "button",
@@ -754,10 +775,14 @@ function renderDetails() {
     text(
       "p",
       row.frontier
-        ? "On the Pareto frontier for the displayed models."
-        : row.dominatedBy.length
-          ? `Dominated by: ${row.dominatedBy.join(", ")}.`
-          : "Not currently comparable.",
+        ? state.imported
+          ? "On the Pareto frontier when this snapshot was exported."
+          : "On the Pareto frontier for the displayed models."
+        : state.imported
+          ? "Dominated by another exported model; the dominating models are not part of a snapshot."
+          : row.dominatedBy.length
+            ? `Dominated by: ${row.dominatedBy.join(", ")}.`
+            : "Not currently comparable.",
     ),
   );
   target.append(
@@ -787,7 +812,19 @@ function renderDetails() {
   } else if (row.cost === 0) {
     more.append(text("p", "Free tier: no usage cost.", "hint"));
   }
-  if (row.expandedBenchmarkId) {
+  if (state.imported) {
+    // Pins, mapping controls, and BYOK actions all resolve against live
+    // discovery; a snapshot shows what was recorded and nothing more.
+    if (row.benchmark)
+      more.append(
+        text(
+          "p",
+          `Benchmark at export: ${row.benchmark.name} (${row.benchmark.id})`,
+          "hint",
+        ),
+      );
+    renderImportedPricing(more, row);
+  } else if (row.expandedBenchmarkId) {
     more.append(
       text(
         "p",
@@ -811,7 +848,7 @@ function renderDetails() {
     pinButton.disabled = !row.pinnedBenchmarkId && !row.benchmark;
     more.append(pinButton);
   }
-  renderPricingDetail(more, row);
+  if (!state.imported) renderPricingDetail(more, row);
   const skip = new Set(
     [row.mapping?.reason, row.pricing?.reason].filter((r): r is string => !!r),
   );
@@ -830,7 +867,10 @@ function renderDetails() {
         "hint",
       ),
     );
-    more.append(text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"));
+    // The export records the benchmark id and name; its slug is derived from
+    // that id, so the id is what an imported row reports.
+    if (!state.imported)
+      more.append(text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"));
     if ((row.requests ?? 0) > 0)
       target.append(
         text(
@@ -910,6 +950,17 @@ function renderDetails() {
     target.append(
       text("p", state.recommendation.explanation, "recommendation-detail"),
     );
+  if (state.imported) {
+    // Everything below edits the live benchmark mapping, which a snapshot has
+    // no list to map against and no way to apply; the read-only provenance
+    // added above is the whole story for a historical row.
+    more.open = detailsMoreOpen;
+    more.ontoggle = () => {
+      detailsMoreOpen = more.open;
+    };
+    target.append(more);
+    return;
+  }
   const searchLabel = text("label", "Search benchmark variants");
   const search = document.createElement("input");
   search.id = "variant-search";
@@ -1133,6 +1184,61 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
       target.append(applyAll);
     }
   }
+}
+/**
+ * Pricing provenance for a historical row: the status, source, issue, and
+ * BYOK provenance the export recorded, and nothing else. The interactive
+ * pieces of `renderPricingDetail` (edit/remove a rate, apply a registry
+ * suggestion) are absent, because a snapshot cannot change live pricing and
+ * says so rather than offering a control that would be refused.
+ */
+function renderImportedPricing(target: HTMLElement, row: Row) {
+  if (!state || !row.pricing) return;
+  const p = row.pricing;
+  const registryLabel = (registry: string) =>
+    sources[registry as keyof typeof sources]?.label ?? registry;
+  const status =
+    p.status === "priced"
+      ? "Priced"
+      : p.status === "free"
+        ? "Free tier"
+        : p.status === "byok"
+          ? "User BYOK rate"
+          : p.status === "not-comparable"
+            ? "Not comparable in this billing mode"
+            : "Unresolved";
+  const source =
+    p.source === "copilot-catalog"
+      ? `Copilot catalog (${state.catalogDate})`
+      : p.source === "legacy-multiplier"
+        ? `Legacy plan multiplier (${state.catalogDate})`
+        : p.source === "opencode-cli"
+          ? "OpenCode CLI rate"
+          : p.source === "static-registry"
+            ? `Static registry (${state.staticRegistryDate})`
+            : p.source === "byok"
+              ? p.byok?.provenance.kind === "registry"
+                ? `Your rate from the ${registryLabel(p.byok.provenance.registry)} registry, ${p.byok.provenance.registryDate}`
+                : "Your manually entered rate"
+              : "No pricing source";
+  target.append(
+    text("p", `Pricing at export: ${status} · ${source}`, "hint"),
+  );
+  if (p.issue)
+    target.append(
+      text("p", `Pricing issue at export: ${p.issue.replace(/-/g, " ")}.`, "notice"),
+    );
+  const age = pricingAge(p, state.catalogDate, state.staticRegistryDate);
+  if (age.date)
+    target.append(
+      text(
+        "p",
+        age.stale && age.daysOld !== null
+          ? `This row's pricing source was ${age.daysOld} days old at export (${age.date}).`
+          : `This row's pricing source date: ${age.date}.`,
+        "hint",
+      ),
+    );
 }
 function groupMatches(
   groups: ChecklistFamily[],
@@ -2228,6 +2334,104 @@ el<HTMLSelectElement>("comparison-view").onchange = () =>
   send("comparison", {
     view: el<HTMLSelectElement>("comparison-view").value,
   });
+/**
+ * Historical snapshot mode. While an imported snapshot is showing, the panel
+ * keeps only the tab that renders it (Tool analysis, or Compare tools for a
+ * pair), the live-only header actions disappear, and every control that would
+ * change the comparison is disabled. The display-only toggles, the text
+ * filter, row selection, and the pick tray keep working on the exported rows,
+ * because none of them changes what was exported.
+ */
+let preImportTab: SectionTab | undefined;
+/** Enabled state of the controls the read-only view locks, captured the first
+ * time it locks them and kept until it leaves, so repeated renders while a
+ * snapshot is showing never overwrite the original with the locked value, and
+ * leaving restores exactly what the renderers decided (a comparison that is
+ * off keeps its own pickers disabled, for instance). */
+type Lockable = HTMLInputElement | HTMLSelectElement | HTMLFieldSetElement;
+let lockedControls = new Map<Lockable, boolean>();
+const importedTab = (kind: "single" | "comparison"): SectionTab =>
+  kind === "comparison" ? "tools" : "compare";
+const liveOnlyControls = [
+  "source",
+  "preset",
+  "billing",
+  "plan",
+  "display-chart",
+  "recommendation-mode",
+  "budget",
+  "score-gap",
+  "comparison-enabled",
+  "comparison-source-a",
+  "comparison-source-b",
+  "comparison-active",
+  "comparison-name",
+  "comparison-normalize",
+  "comparison-view",
+  "export-csv",
+  "export-snapshot",
+  "export-badge",
+  "export-png",
+  "import-snapshot",
+];
+function renderImportedChrome(imported: ImportedMeta | undefined) {
+  el("snapshot-banner").hidden = !imported;
+  el("header-actions").hidden = !!imported;
+  for (const id of sectionTabs)
+    el<HTMLButtonElement>(`tab-${id}`).hidden =
+      !!imported && id !== importedTab(imported.kind);
+  // Switch (or restore) the open tab before disabling anything: showTab can
+  // re-render a panel, and those renderers set their own enabled state.
+  if (imported) {
+    if (preImportTab === undefined) preImportTab = currentTab;
+    if (currentTab !== importedTab(imported.kind))
+      showTab(importedTab(imported.kind));
+  } else if (preImportTab !== undefined) {
+    const restore = preImportTab;
+    preImportTab = undefined;
+    showTab(restore);
+  }
+  const lock = (control: Lockable) => {
+    if (!lockedControls.has(control))
+      lockedControls.set(control, control.disabled);
+    control.disabled = true;
+  };
+  if (imported) {
+    for (const id of liveOnlyControls) lock(el(id));
+    lock(el("tokens") as HTMLFieldSetElement);
+    // A single snapshot's rows can still be narrowed by the text filter, which
+    // only changes which recorded rows are shown; a pair snapshot's rows were
+    // already filtered per side, so that filter is locked too.
+    if (imported.kind === "comparison") lock(el<HTMLInputElement>("filter"));
+  } else {
+    for (const [control, was] of lockedControls) control.disabled = was;
+    lockedControls.clear();
+  }
+  const filter = el<HTMLInputElement>("filter");
+  filter.title = imported
+    ? imported.kind === "comparison"
+      ? "Locked: each option's rows were filtered when the snapshot was exported."
+      : "Narrows the exported rows. The snapshot itself is unchanged."
+    : "";
+  if (!imported) return;
+  const retrieved = state?.fetchedAt
+    ? new Date(state.fetchedAt).toLocaleString()
+    : "unknown date";
+  el("snapshot-detail").textContent =
+    `${imported.fileName} · ${
+      imported.kind === "comparison" ? "two-option" : "single-option"
+    } snapshot exported ${imported.exportedAt} (schema version ${imported.schemaVersion})` +
+    (imported.options?.length ? ` · ${imported.options.join(" · ")}` : "") +
+    `. Benchmarks: index v${state?.version ?? "unknown"} retrieved ${retrieved}. ` +
+    "This is historical data, not live results: nothing here refreshes, and no action here changes your saved settings.";
+  el("snapshot-basis").textContent =
+    `Costs are shown in ${imported.costBasis.unit} on the exported ${imported.costBasis.basis} basis. ${imported.costBasis.note} ` +
+    `Registry dates as of the export: catalog ${imported.catalogDate}, static registries ${imported.staticRegistryDate}, plans ${imported.planRegistryDate}. ` +
+    "The chart basis is locked to the snapshot, so a different workload or chart view is never applied to these numbers.";
+  el("snapshot-limits").textContent =
+    "Read-only: benchmark mapping, pricing, pinning, exclusions, saved workloads, and exports are unavailable here. Rows carry only what the export recorded — cost breakdowns, dominators, and local usage are not part of a snapshot. " +
+    (imported.disclaimer ? imported.disclaimer : "");
+}
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
@@ -2475,6 +2679,8 @@ function render(next: ViewState) {
   renderSensitivity();
   drawChart();
   drawFreeBar();
+  // Last, so it wins over the enabled state the renderers above set.
+  renderImportedChrome(state.imported);
   if (focusedModel) {
     const button = Array.from(
       document.querySelectorAll<HTMLButtonElement>(".model-button"),
@@ -2649,6 +2855,10 @@ el("source").addEventListener("change", () => {
     source: el<HTMLSelectElement>("source").value,
   });
 });
+// Snapshot import/exit carry no payload: the host owns the file dialog and
+// the validated file, so the webview never names a path or sends contents.
+el("import-snapshot").addEventListener("click", () => send("importSnapshot"));
+el("snapshot-back").addEventListener("click", () => send("importExit"));
 // Tool A/Tool B on the Compare tools tab pick each side's source directly,
 // without first switching Editing to it (targets that side explicitly).
 el("comparison-source-a").addEventListener("change", () => {
@@ -3013,16 +3223,22 @@ sectionTabs.forEach((id, index) => {
   const button = el<HTMLButtonElement>(`tab-${id}`);
   button.onclick = () => showTab(id);
   button.onkeydown = (event) => {
-    const count = sectionTabs.length;
+    // Only reachable tabs take part, so arrow keys never move focus into a
+    // tab hidden by the historical snapshot view.
+    const reachable = sectionTabs.filter(
+      (t) => !el<HTMLButtonElement>(`tab-${t}`).hidden,
+    );
+    const at = reachable.indexOf(id);
+    const count = reachable.length;
     const next =
       event.key === "ArrowRight"
-        ? sectionTabs[(index + 1) % count]
+        ? reachable[(at + 1) % count]
         : event.key === "ArrowLeft"
-          ? sectionTabs[(index + count - 1) % count]
+          ? reachable[(at + count - 1) % count]
           : event.key === "Home"
-            ? sectionTabs[0]
+            ? reachable[0]
             : event.key === "End"
-              ? sectionTabs[count - 1]
+              ? reachable[count - 1]
               : undefined;
     if (!next) return;
     event.preventDefault();

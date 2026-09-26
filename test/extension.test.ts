@@ -5,9 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { validSnapshot } from "../src/api";
-import { snapshotRow } from "../src/export";
+import {
+  exportPairSnapshot,
+  exportSnapshot,
+  snapshotRow,
+  type PairSideInput,
+} from "../src/export";
 import { planRegistryDate } from "../src/plans";
-import type { Row } from "../src/types";
+import { defaults, type Row } from "../src/types";
 
 /** Minimal RFC4180-style splitter (handles quoted fields with "" escapes),
  * for asserting a CSV row's actual column count regardless of embedded commas. */
@@ -1258,4 +1263,410 @@ test("extension settings mirror stored state and apply without reload", async ()
     else process.env.APPDATA = appdata;
   }
   delete (globalThis as any).__paretoVscodeMock;
+});
+
+test("an imported snapshot reopens read-only, refuses live edits, and reopens with the panel", async () => {
+  const commands = new Map<string, () => unknown>();
+  const messages: unknown[] = [];
+  const files = new Map<string, string>();
+  const disposable = { dispose() {} };
+  const state = new Map<string, unknown>();
+  const cache = {
+    version: "4.4",
+    fetchedAt: Date.now(),
+    models: [
+      {
+        id: "aa",
+        slug: "gpt-5-mini",
+        name: "GPT-5 mini",
+        provider: "OpenAI",
+        scores: { general: 30, coding: 40, agentic: 20 },
+      },
+    ],
+  };
+  files.set("/cache/benchmarks.json", JSON.stringify(cache));
+  let receiver: (m: unknown) => Promise<void> = async () => {};
+  let disposePanel: (() => void) | undefined;
+  let openPath = "/exports/does-not-exist.json";
+  const infos: string[] = [];
+  const mock = {
+    commands: {
+      registerCommand: (id: string, fn: () => unknown) => {
+        commands.set(id, fn);
+        return disposable;
+      },
+      executeCommand: async (id: string) => commands.get(id)?.(),
+    },
+    Uri: {
+      joinPath: (root: { path: string }, ...parts: string[]) => ({
+        path: [root.path, ...parts].join("/"),
+        toString() {
+          return this.path;
+        },
+      }),
+      parse: (value: string) => ({
+        path: value,
+        toString() {
+          return value;
+        },
+      }),
+    },
+    ViewColumn: { One: 1 },
+    StatusBarAlignment: { Left: 1, Right: 100 },
+    RelativePattern: class {
+      constructor(
+        public base: unknown,
+        public pattern: string,
+      ) {}
+    },
+    window: {
+      createWebviewPanel: () => ({
+        webview: {
+          cspSource: "https://resources.test",
+          asWebviewUri: (u: unknown) => u,
+          html: "",
+          postMessage: (m: unknown) => messages.push(m),
+          onDidReceiveMessage: (fn: typeof receiver) => {
+            receiver = fn;
+            return disposable;
+          },
+        },
+        onDidDispose: (fn: () => void) => {
+          disposePanel = fn;
+          return disposable;
+        },
+        reveal() {},
+      }),
+      showOpenDialog: async () => [{ path: openPath, toString: () => openPath }],
+      showSaveDialog: async () => undefined,
+      showInformationMessage: async (...args: unknown[]) => {
+        infos.push(String(args[0]));
+        return undefined;
+      },
+      showWarningMessage: async (...args: unknown[]) => {
+        infos.push(String(args[0]));
+        return undefined;
+      },
+      createStatusBarItem: () => ({
+        text: "",
+        tooltip: "",
+        command: "",
+        shown: false,
+        show() {},
+        hide() {},
+        dispose() {},
+      }),
+    },
+    workspace: {
+      getConfiguration: () => ({
+        get: () => undefined,
+        inspect: () => ({ key: "paretoGhc", globalValue: undefined }),
+        update: async () => {},
+      }),
+      onDidChangeConfiguration: () => disposable,
+      registerTextDocumentContentProvider: () => disposable,
+      createFileSystemWatcher: () => ({
+        onDidChange() {},
+        onDidCreate() {},
+        onDidDelete() {},
+        dispose() {},
+      }),
+      fs: {
+        stat: async (uri: { path: string }) => ({
+          size: files.get(uri.path)?.length ?? 0,
+        }),
+        readFile: async (uri: { path: string }) => {
+          const found = files.get(uri.path);
+          if (found === undefined) throw new Error("missing");
+          return Buffer.from(found);
+        },
+        writeFile: async (uri: { path: string }, data: Uint8Array) => {
+          files.set(uri.path, Buffer.from(data).toString());
+        },
+        createDirectory: async () => {},
+        delete: async (uri: { path: string }) => {
+          files.delete(uri.path);
+        },
+        rename: async (from: { path: string }, to: { path: string }) => {
+          files.set(to.path, files.get(from.path)!);
+          files.delete(from.path);
+        },
+      },
+    },
+    lm: {
+      selectChatModels: async () => [
+        {
+          id: "gpt-5-mini",
+          name: "GPT-5 mini",
+          family: "gpt-5-mini",
+          maxInputTokens: 1000000,
+        },
+      ],
+      onDidChangeChatModels: () => disposable,
+    },
+    env: { clipboard: { writeText: async () => {} } },
+  };
+  (globalThis as any).__paretoVscodeMock = mock;
+  const bundle = await build({
+    entryPoints: ["src/extension.ts"],
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "esm",
+    plugins: [
+      {
+        name: "mock-vscode",
+        setup(b) {
+          b.onResolve({ filter: /^vscode$/ }, () => ({
+            path: "vscode",
+            namespace: "mock",
+          }));
+          b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
+            contents:
+              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern,StatusBarAlignment}=mock;",
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+  const extension = await import(
+    // A nonce comment keeps this bundle's data URL distinct from the other
+    // extension-host bundles in this file: identical bytes would share Node's
+    // data-URL module cache and keep the other test's vscode mock.
+    `data:text/javascript;base64,${Buffer.from(`${bundle.outputFiles[0].text}\n// pareto-import-host-test`).toString("base64")}`
+  );
+  extension.activate({
+    extensionUri: { path: "/extension" },
+    globalStorageUri: { path: "/cache" },
+    subscriptions: [],
+    globalState: {
+      get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+      update: async (key: string, value: unknown) => {
+        if (value === undefined) state.delete(key);
+        else state.set(key, value);
+      },
+    },
+    secrets: { get: async () => "", store: async () => {}, delete: async () => {} },
+  });
+  const open = () => commands.get("paretoGhc.open")!() as Promise<void>;
+  const importFile = async (contents: string, path = "/exports/snap.json") => {
+    openPath = path;
+    files.set(path, contents);
+    await (commands.get("paretoGhc.importSnapshot")!() as Promise<void>);
+  };
+  const last = () => (messages.at(-1) as any).state;
+  try {
+    await open();
+    await receiver({ type: "ready" });
+    assert.equal(last().imported, undefined);
+    assert.equal(last().rows.length, 1);
+    assert.equal(last().rows[0].name, "GPT-5 mini");
+
+    const rows: Row[] = [
+      {
+        id: "a1",
+        modelId: "a1",
+        baseModelId: "a1",
+        name: "Alpha",
+        provider: "OpenAI",
+        score: 50,
+        cost: 2,
+        frontier: true,
+        dominatedBy: [],
+        reasons: [],
+        mappingStatus: "exact",
+        candidateIds: [],
+        pricing: { status: "priced", source: "copilot-catalog" },
+      },
+      {
+        id: "a2",
+        modelId: "a2",
+        baseModelId: "a2",
+        name: "Beta",
+        provider: "OpenAI",
+        score: 30,
+        cost: 1,
+        frontier: false,
+        dominatedBy: ["a1"],
+        reasons: ["priced"],
+        mappingStatus: "inferred",
+        candidateIds: [],
+        pricing: { status: "priced", source: "copilot-catalog" },
+      },
+    ];
+    const snapshot = exportSnapshot(
+      rows,
+      defaults,
+      new Set(["a1"]),
+      {
+        source: "copilot",
+        preset: "coding",
+        billing: "credits",
+        catalogDate: "2026-01-01",
+        staticRegistryDate: "2026-01-02",
+        planRegistryDate: "2026-01-03",
+        version: "4.0",
+        fetchedAt: 5,
+        scenario: { status: "off" },
+      },
+    );
+    await importFile(snapshot);
+    assert.equal(last().imported.kind, "single");
+    assert.equal(last().imported.fileName, "snap.json");
+    assert.equal(last().imported.costBasis.basis, "task");
+    assert.equal(last().imported.costBasis.unit, "AI credits");
+    assert.equal(last().imported.catalogDate, "2026-01-01");
+    // Only the path is persisted, never the file's contents.
+    assert.equal(state.get("importedSnapshot"), "/exports/snap.json");
+    assert.match(last().message, /read-only/);
+    assert.match(last().message, /Historical data, not live results/);
+    // The historical rows, dates, and benchmark version replace the live ones.
+    assert.deepEqual(
+      last().rows.map((r: { id: string }) => r.id),
+      ["a1", "a2"],
+    );
+    assert.equal(last().catalogDate, "2026-01-01");
+    assert.equal(last().version, "4.0");
+    assert.equal(last().fetchedAt, 5);
+    assert.equal(last().selected, "a1");
+    assert.deepEqual(last().checklist, []);
+    assert.deepEqual(last().models, []);
+    assert.equal(last().usage, null);
+    assert.deepEqual(last().recommendation.modelIds, ["a1"]);
+
+    // Every live mutation is refused with an explanation, and nothing behind
+    // the historical view changes.
+    await receiver({ type: "exportCsv" });
+    assert.match(last().message, /read-only/);
+    await receiver({ type: "source", source: "codex" });
+    assert.equal(state.get("options"), undefined);
+    assert.equal(last().source, "copilot");
+    await receiver({ type: "excludeMany", ids: ["a1"], excluded: true });
+    assert.equal(state.get("excluded"), undefined);
+    await receiver({ type: "pin", id: "a1", benchmarkId: "aa" });
+    assert.equal(state.get("pins"), undefined);
+    await receiver({ type: "watchlistAlerts", enabled: true });
+    assert.equal(state.get("watchlistAlerts"), undefined);
+    assert.equal(last().imported.kind, "single");
+
+    // Display-only drafts still work, and never reach saved options.
+    await receiver({
+      type: "options",
+      options: { ...last().options, filter: "bet" },
+    });
+    assert.equal(last().rows.length, 1);
+    assert.equal(last().rows[0].id, "a2");
+    assert.equal(state.get("options"), undefined);
+    await receiver({
+      type: "options",
+      options: {
+        ...last().options,
+        filter: "",
+        display: { ...last().options.display, chart: "workload" },
+      },
+    });
+    // A chart-basis change never relabels costs the snapshot already priced.
+    assert.equal(last().options.display.chart, "task");
+    assert.equal(state.get("options"), undefined);
+
+    // Row selection stays inside the imported view.
+    await receiver({ type: "select", id: "a1" });
+    assert.equal(last().selected, "a1");
+
+    // Leaving returns the live comparison and forgets the stored path.
+    await receiver({ type: "importExit" });
+    assert.equal(last().imported, undefined);
+    assert.equal(state.get("importedSnapshot"), undefined);
+    assert.equal(last().rows[0].name, "GPT-5 mini");
+    assert.match(last().message, /Back to the live comparison/);
+
+    // A file that is not a snapshot keeps the live view and says why.
+    await importFile('{"nope":true}', "/exports/badge.json");
+    assert.equal(last().imported, undefined);
+    assert.match(last().message, /not a comparison snapshot/);
+    await importFile("not json at all", "/exports/broken.json");
+    assert.equal(last().imported, undefined);
+    assert.match(last().message, /not valid JSON/);
+    await importFile(
+      JSON.stringify({ version: 99, kind: "single", rows: [] }),
+      "/exports/future.json",
+    );
+    assert.equal(last().imported, undefined);
+    assert.match(last().message, /schema version 99/);
+    // An implausibly large file is refused before it is read.
+    files.set("/exports/huge.json", "x".repeat(10));
+    mock.workspace.fs.stat = async (uri: { path: string }) => ({
+      size: uri.path === "/exports/huge.json" ? 40_000_000 : 0,
+    });
+    await importFile("{}", "/exports/huge.json");
+    assert.equal(last().imported, undefined);
+    assert.match(last().message, /too large/);
+    mock.workspace.fs.stat = async (uri: { path: string }) => ({
+      size: files.get(uri.path)?.length ?? 0,
+    });
+
+    // A two-option snapshot reopens as two read-only panels.
+    const pairSide = (
+      over: Partial<PairSideInput>,
+    ): PairSideInput => ({
+      side: "A",
+      name: "Copilot",
+      options: defaults,
+      rows,
+      recommendation: { modelIds: ["a1"], explanation: "best" },
+      scenario: { status: "off" },
+      costNormalization: { status: "off" },
+      availabilityNote: "available",
+      pricingNote: "priced",
+      discoveryError: "",
+      ...over,
+    });
+    await importFile(
+      exportPairSnapshot(
+        [
+          pairSide({ side: "A" }),
+          pairSide({ side: "B", name: "Codex" }),
+        ],
+        {
+          catalogDate: "2026-02-01",
+          staticRegistryDate: "2026-02-02",
+          planRegistryDate: "2026-02-03",
+          version: "4.1",
+          fetchedAt: 6,
+          normalize: false,
+          usdCostDelta: null,
+        },
+      ),
+      "/exports/pair.json",
+    );
+    assert.equal(last().imported.kind, "comparison");
+    assert.deepEqual(last().imported.options, ["A: Copilot", "B: Codex"]);
+    assert.equal(last().comparison.sides.B.name, "Codex");
+    assert.equal(last().comparison.sides.A.rows.length, 2);
+    assert.equal(last().comparison.delta.direction, "B minus A");
+
+    // Reopening the panel re-reads the stored path, so the historical view
+    // survives closing it.
+    disposePanel?.();
+    await open();
+    await receiver({ type: "ready" });
+    assert.equal(last().imported.kind, "comparison");
+    assert.equal(last().imported.fileName, "pair.json");
+
+    // A file that moved or changed falls back to live data with the reason,
+    // and the stale path is forgotten.
+    files.delete("/exports/pair.json");
+    disposePanel?.();
+    await open();
+    await receiver({ type: "ready" });
+    assert.equal(last().imported, undefined);
+    assert.equal(state.get("importedSnapshot"), undefined);
+    // The explanation reaches a host notification too: the refresh that
+    // follows opening a panel replaces the panel status line.
+    assert.ok(infos.some((i) => /not reopened/.test(i)));
+    assert.equal(last().rows[0].name, "GPT-5 mini");
+  } finally {
+    delete (globalThis as any).__paretoVscodeMock;
+  }
 });

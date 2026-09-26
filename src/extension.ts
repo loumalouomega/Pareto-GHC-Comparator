@@ -66,9 +66,17 @@ import {
 } from "./usage";
 import { readFile as readLocalFile } from "node:fs/promises";
 import { basename, extname, sep } from "node:path";
+import {
+  allowedWhileImported,
+  importedFileName,
+  importedViewState,
+  parseImportedSnapshot,
+  type ImportedView,
+} from "./snapshotImport";
 import type {
   AvailableModel,
   ByokStore,
+  HostMessage,
   Snapshot,
   Source,
   UsageSummary,
@@ -77,6 +85,9 @@ import type {
 import { costUnit } from "./types";
 import { summarizeWatchChanges, watchlistChanges } from "./watchlist";
 const secretName = "artificialAnalysis.apiKey";
+/** Refuse to read an implausibly large "snapshot" before loading it into
+ * memory; real ones are a few hundred KB of rows. */
+const maxSnapshotBytes = 20_000_000;
 export function activate(context: vscode.ExtensionContext) {
   const cacheUri = vscode.Uri.joinPath(
     context.globalStorageUri,
@@ -533,6 +544,13 @@ export function activate(context: vscode.ExtensionContext) {
   let watchlistAlerts = Boolean(
     context.globalState.get("watchlistAlerts", false),
   );
+  /**
+   * A previously exported snapshot reopened read-only. Only the parsed file and
+   * view-only drafts live here: the file's path is what gets persisted
+   * (`importedSnapshot`), so a reopened panel can reload it, and nothing in
+   * this view ever reaches options, pins, mappings, exclusions, or profiles.
+   */
+  let imported: (ImportedView & { path: string }) | undefined;
   let profileStore = loadProfiles(context.globalState.get("profiles"));
   let optionsRevision = 0;
   let comparison = loadComparison(context.globalState.get("comparison"));
@@ -589,7 +607,21 @@ export function activate(context: vscode.ExtensionContext) {
     }
     return usedCounts;
   };
+  /** The historical view, or a no-op when the live comparison is showing. */
+  const renderImported = () => {
+    if (!imported) return;
+    const state: ViewState = importedViewState(imported, {
+      options,
+      hasKey,
+      watchlistAlerts,
+      fileName: importedFileName(imported.path),
+    });
+    state.message = message;
+    void panel?.webview.postMessage({ type: "state", state });
+    updateUsageStatus();
+  };
   const render = () => {
+    if (imported) return renderImported();
     const available = availableBySource[options.source];
     const benchmarks = snapshot?.models ?? [];
     const usedCounts = usedCountsFor();
@@ -821,9 +853,12 @@ export function activate(context: vscode.ExtensionContext) {
           : "Benchmark data ready.";
       // Opt-in watchlist alerts: compare pinned rows between the previous
       // and the new snapshot (same availability and options), then notify
-      // once. First loads, unchanged snapshots, and failures stay silent.
+      // once. First loads, unchanged snapshots, failures, and a panel showing
+      // an imported snapshot (where "Open comparison" would reveal historical
+      // data) stay silent.
       if (
         watchlistAlerts &&
+        !imported &&
         previous &&
         snapshot.fetchedAt !== previous.fetchedAt
       ) {
@@ -974,6 +1009,93 @@ export function activate(context: vscode.ExtensionContext) {
     if (panel) panel.reveal();
     else void vscode.commands.executeCommand("paretoGhc.open");
   };
+  /** Reads, validates, and shows one snapshot file. Never throws: a rejected
+   * file leaves whatever was on screen untouched and explains why. */
+  const loadImported = async (
+    uri: vscode.Uri,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    let raw: string;
+    try {
+      // Bounded read: a snapshot is a few hundred KB of rows, so an enormous
+      // file is not one, and refusing early keeps a stray pick from
+      // exhausting the host.
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (stat.size > maxSnapshotBytes)
+        return {
+          ok: false,
+          message: `That file is ${Math.round(stat.size / 1e6)} MB, too large to be a comparison snapshot.`,
+        };
+      raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString();
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Could not read that file. Choose a snapshot JSON exported by this extension.",
+      };
+    }
+    const parsed = parseImportedSnapshot(raw);
+    if (!parsed.ok) return { ok: false, message: parsed.failure.message };
+    const path = uri.toString();
+    imported = {
+      path,
+      snapshot: parsed.snapshot,
+      selected: {},
+      filter: "",
+      display: options.display,
+    };
+    await context.globalState.update("importedSnapshot", path);
+    const kind =
+      parsed.snapshot.kind === "comparison"
+        ? "Two-option snapshot"
+        : "Single-option snapshot";
+    message = `Showing ${importedFileName(uri.path)} (read-only): ${kind} exported ${parsed.snapshot.exportedAt}. Historical data, not live results.`;
+    render();
+    return { ok: true };
+  };
+  const openSnapshotImport = async () => {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: "Import snapshot",
+      filters: { "Snapshot JSON": ["json"] },
+    });
+    // `canSelectMany: false` yields a single-item array; older hosts and
+    // mocks may hand back the Uri itself.
+    const uri = Array.isArray(picked) ? picked[0] : picked;
+    if (!uri) {
+      message = "Snapshot import cancelled.";
+      render();
+      return;
+    }
+    const result = await loadImported(uri);
+    if (!result.ok) message = result.message;
+    render();
+  };
+  const exitImported = async () => {
+    if (!imported) return;
+    imported = undefined;
+    await context.globalState.update("importedSnapshot", undefined);
+    message = "Back to the live comparison.";
+    render();
+  };
+  /** Reopens the stored snapshot whenever a panel is created, so the
+   * historical view survives closing the panel. A file that moved, changed, or
+   * stopped being a readable snapshot falls back to live data, with the
+   * reason shown and the stale path forgotten. */
+  const reopenStoredSnapshot = async () => {
+    const stored = context.globalState.get<string>("importedSnapshot");
+    if (typeof stored !== "string" || !stored) return;
+    const result = await loadImported(vscode.Uri.parse(stored));
+    if (result.ok) return;
+    imported = undefined;
+    await context.globalState.update("importedSnapshot", undefined);
+    const note = `Imported snapshot not reopened: ${result.message} Showing the live comparison.`;
+    message = note;
+    // Also a host notification: the refresh that follows opening a panel
+    // replaces the panel status line, and the file may be gone while the
+    // panel was closed.
+    if (typeof vscode.window.showWarningMessage === "function")
+      void vscode.window.showWarningMessage(note);
+  };
   // Last settings-derived values applied, so configuration events — including
   // the echo of our own retention mirror above — never rescan, restop, or
   // re-apply an unchanged value. Panel chart edits are preserved until the
@@ -1042,6 +1164,10 @@ export function activate(context: vscode.ExtensionContext) {
       }),
     );
   context.subscriptions.push(
+    vscode.commands.registerCommand("paretoGhc.importSnapshot", async () => {
+      openPanel();
+      await openSnapshotImport();
+    }),
     vscode.commands.registerCommand("paretoGhc.setApiKey", setKey),
     vscode.commands.registerCommand("paretoGhc.clearApiKey", async () => {
       await context.secrets.delete(secretName);
@@ -1069,7 +1195,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("paretoGhc.showUsageData", async () => {
       await showStoredUsageData();
     }),
-    vscode.commands.registerCommand("paretoGhc.open", () => {
+    vscode.commands.registerCommand("paretoGhc.open", async () => {
       if (panel) {
         panel.reveal();
         return;
@@ -1105,6 +1231,58 @@ export function activate(context: vscode.ExtensionContext) {
         messageQueue = messageQueue.then(async () => {
           try {
             let m = parseMessage(raw);
+            // An imported snapshot is read-only. Only navigation, leaving the
+            // view, and the display-only drafts that redraw the same
+            // historical rows are honoured; every other message would change
+            // live state behind a historical view, so it is refused with an
+            // explanation instead of being silently dropped.
+            if (imported && !allowedWhileImported(m)) {
+              message =
+                "An imported snapshot is read-only. Choose “Back to live comparison” to change the live view.";
+              render();
+              return;
+            }
+            if (imported && m.type === "importExit") {
+              await exitImported();
+              return;
+            }
+            if (imported && m.type === "importSnapshot") {
+              await openSnapshotImport();
+              return;
+            }
+            if (imported && m.type === "options") {
+              // View-only draft: the text filter and chart display toggles
+              // redraw the exported rows. The cost basis stays the file's, and
+              // nothing here is written to saved options.
+              imported = {
+                ...imported,
+                filter: m.options.filter,
+                display: m.options.display,
+              };
+              render();
+              return;
+            }
+            if (imported && m.type === "select" && typeof m.id === "string") {
+              imported = {
+                ...imported,
+                selected: { ...imported.selected, A: m.id },
+              };
+              render();
+              return;
+            }
+            if (
+              imported &&
+              m.type === "target" &&
+              m.action.type === "select" &&
+              typeof m.action.id === "string"
+            ) {
+              imported = {
+                ...imported,
+                selected: { ...imported.selected, [m.side]: m.action.id },
+              };
+              render();
+              return;
+            }
             if (m.type === "comparison") {
               captureActive();
               if (m.enabled === true && !comparison?.enabled) {
@@ -1629,6 +1807,10 @@ export function activate(context: vscode.ExtensionContext) {
         undefined,
         context.subscriptions,
       );
+      // Reopen the stored snapshot for this panel, after the live view has
+      // been wired up: a panel opened again shows the same historical view
+      // until the user returns to live data.
+      await reopenStoredSnapshot();
     }),
     vscode.lm.onDidChangeChatModels(() => {
       if (

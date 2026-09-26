@@ -7,10 +7,17 @@ export function html(
   // Emoji glyphs below are placeholders for future ad-hoc icons. They sit
   // in aria-hidden spans so accessible tab/heading/button names stay clean.
   return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${source}; img-src ${source} data:; font-src ${source};"><link rel="stylesheet" href="${css}"><title>Pareto GHC Comparator</title></head><body>
-  <header><div class="eyebrow" id="eyebrow">PARETO / GITHUB COPILOT</div><h1><span class="emoji" aria-hidden="true">📊</span> Find your model’s sweet spot.</h1><p id="subtitle">Compare benchmark quality with estimated Copilot usage. Better value is toward the upper left.</p><div class="actions"><button id="refresh">🔄 Refresh data</button><button id="key" class="secondary">🔑 Set API key</button></div>
+  <header><div class="eyebrow" id="eyebrow">PARETO / GITHUB COPILOT</div><h1><span class="emoji" aria-hidden="true">📊</span> Find your model’s sweet spot.</h1><p id="subtitle">Compare benchmark quality with estimated Copilot usage. Better value is toward the upper left.</p><div class="actions" id="header-actions"><button id="refresh">🔄 Refresh data</button><button id="key" class="secondary">🔑 Set API key</button></div>
   <nav class="tabs" role="tablist" aria-label="Sections"><button id="tab-compare" class="tab" role="tab" aria-selected="true" aria-controls="panel-compare"><span class="emoji" aria-hidden="true">📊</span>Tool analysis</button><button id="tab-tools" class="tab" role="tab" aria-selected="false" aria-controls="panel-tools" tabindex="-1"><span class="emoji" aria-hidden="true">⚖️</span>Compare tools</button><button id="tab-plan" class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" tabindex="-1"><span class="emoji" aria-hidden="true">💰</span>Plan &amp; budget</button><button id="tab-usage" class="tab" role="tab" aria-selected="false" aria-controls="panel-usage" tabindex="-1"><span class="emoji" aria-hidden="true">📈</span>Usage</button><button id="tab-settings" class="tab" role="tab" aria-selected="false" aria-controls="panel-settings" tabindex="-1"><span class="emoji" aria-hidden="true">⚙️</span>Settings</button></nav></header>
  <main>
   <p id="status" role="status" aria-live="polite"></p>
+ <section id="snapshot-banner" class="card snapshot-banner" aria-labelledby="snapshot-title" role="status" hidden>
+  <h2 id="snapshot-title"><span class="emoji" aria-hidden="true">🧾</span> Historical snapshot — read-only</h2>
+  <p id="snapshot-detail"></p>
+  <p id="snapshot-basis" class="hint"></p>
+  <p id="snapshot-limits" class="hint"></p>
+  <div class="controls"><button id="snapshot-back" class="secondary">↩︎ Back to live comparison</button></div>
+ </section>
  <div id="panel-tools" class="tab-panel" role="tabpanel" aria-labelledby="tab-tools" hidden>
  <section class="card comparison-controls" aria-labelledby="comparison-title">
   <h2 id="comparison-title"><span class="emoji" aria-hidden="true">⚖️</span> Compare tools</h2>
@@ -123,14 +130,16 @@ export function html(
   <div id="checklist"></div>
   </section>
   <section class="card" aria-labelledby="exports-title">
-   <h2 id="exports-title"><span class="emoji" aria-hidden="true">📤</span> Export</h2>
+   <h2 id="exports-title"><span class="emoji" aria-hidden="true">📤</span> Export &amp; import</h2>
    <div class="controls">
    <button id="export-csv" class="secondary">📄 Export CSV</button>
    <button id="export-snapshot" class="secondary">🧾 Export snapshot JSON</button>
    <button id="export-badge" class="secondary">🏷️ Export badge JSON</button>
    <button id="export-png" class="secondary">📸 Export chart PNG</button>
+   <button id="import-snapshot" class="secondary">📂 Import snapshot JSON (read-only)</button>
   <span id="export-note" role="status"></span>
   </div>
+  <p class="hint">Importing reopens a snapshot JSON exported earlier as historical, read-only data. It never changes the live comparison, your saved workloads, or your exclusions.</p>
   </section>
  </div>
   <footer>Benchmarks by <a href="https://artificialanalysis.ai/">Artificial Analysis</a> · <span id="provenance">Not loaded</span><br><span id="pricing-line">Copilot pricing: <a id="pricing-link" href="https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing">GitHub Docs</a></span> · <span id="catalog"></span><p id="pricing-note">Benchmark results describe the tested variant, not guaranteed performance in Copilot. Pricing updates ship with extension releases.</p></footer>
