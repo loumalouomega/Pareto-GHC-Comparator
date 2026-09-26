@@ -90,7 +90,7 @@ export function html(
  </div>
  <div id="panel-usage" class="tab-panel" role="tabpanel" aria-labelledby="tab-usage" hidden>
   <section class="card" aria-labelledby="usage-title" id="usage-card">
-   <h2 id="usage-title"><span class="emoji" aria-hidden="true">📈</span> Local Copilot usage</h2><div class="controls">
+   <h2 id="usage-title"><span class="emoji" aria-hidden="true">📈</span> Local usage</h2><div class="controls">
    <button id="usage-scan" class="secondary">🔍 Scan local usage</button>
    <button id="usage-pause" class="secondary" hidden>⏸️ Pause watching</button>
    <button id="usage-clear" class="secondary">🧹 Erase local usage</button>
@@ -98,7 +98,17 @@ export function html(
   <label>Keep history (days)<input id="usage-retention" type="number" min="0" max="3650" step="1" placeholder="Unlimited"></label>
   <label class="checkbox-label"><input id="usage-full-paths" type="checkbox">Show full paths</label>
   <span id="usage-watching" role="status"></span>
-  </div><div class="usage-sources-block"><h3>Editors</h3><div id="usage-sources"></div></div><p id="usage-editors-note" class="hint"></p><div id="usage-editors"></div><p id="usage-diagnostics" role="status"></p><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
+  </div><div class="usage-sources-block"><h3>Sources</h3><div id="usage-sources"></div></div><p id="usage-editors-note" class="hint"></p><div id="usage-editors"></div><p id="usage-diagnostics" role="status"></p><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">GitHub Copilot chat sessions: local estimates only, not measured billing and not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
+  <section class="card" aria-labelledby="claude-usage-title" id="claude-usage-card" hidden>
+   <h2 id="claude-usage-title"><span class="emoji" aria-hidden="true">🧠</span> Claude Code usage</h2>
+   <p class="hint">A separate ledger in tokens, read from Claude Code transcripts you included above. It is never added to the Copilot figures: Copilot counts premium requests or AI credits, and Claude Code counts tokens under a different billing model. No price is shown, because the client's own cost figure is not a rate we can verify.</p>
+   <p id="claude-usage-diagnostics" role="status"></p>
+   <p id="claude-usage-summary" role="status" aria-live="polite"></p>
+   <div id="claude-usage-models"></div>
+   <div id="claude-usage-days"></div>
+   <div id="claude-usage-workspaces"></div>
+   <p id="claude-usage-exclusions" class="hint"></p>
+  </section>
   <section class="card" aria-labelledby="byok-title" id="byok-card" hidden>
    <h2 id="byok-title"><span class="emoji" aria-hidden="true">💳</span> Provider-billed (BYOK) rates</h2>
    <div class="controls"><button id="byok-save" class="secondary">💾 Save BYOK rates</button><button id="byok-clear" class="secondary">🧹 Clear fields</button></div>

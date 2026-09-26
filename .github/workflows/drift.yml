@@ -1,0 +1,144 @@
+# Weekly upstream schema-drift lane for the OpenCode CLI.
+#
+# A client that changes its output shape is otherwise discovered by users. This
+# lane runs the real, credential-free smoke script against the *pinned* release
+# (the version our fixtures encode) and the *latest* release, and files or
+# updates a single tracked issue when — and only when — the pinned one lists
+# models and the latest one does not.
+#
+# Deliberately a separate workflow file, not a `schedule:` on extension.yml: it
+# is non-gating by construction (a separate workflow can be in nobody's `needs`
+# and no release can depend on it), and it keeps the release pipeline from
+# running weekly. It depends on external downloads and the OpenCode catalog, so
+# it must never be a release gate, and it never blocks a publish.
+name: OpenCode schema drift
+
+on:
+  schedule:
+    # Weekly, Monday, deliberately off the hour: scheduled workflows queued at
+    # :00 compete for the runner pool and are the last to start.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opencode-schema-drift
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Drift smoke (${{ matrix.method }})
+    runs-on: ubuntu-latest
+    # External service: a download or catalog failure must not fail the run.
+    continue-on-error: true
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # npm is the pinned contract version; script is whatever ships today.
+        method: [npm, script]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Install OpenCode (pinned, npm)
+        if: matrix.method == 'npm'
+        id: install-npm
+        run: npm install -g opencode-ai@1.18.30
+      - name: Install OpenCode (latest, install script)
+        if: matrix.method == 'script'
+        id: install-script
+        run: |
+          # opencode.ai's install script occasionally fails to reach its own
+          # version endpoint. Retry, then record the failure rather than
+          # failing: a download outage is "no evidence", not a shape change.
+          ok=false
+          for attempt in 1 2 3; do
+            if curl -fsSL https://opencode.ai/install | bash; then
+              ok=true
+              break
+            fi
+            if [ "$attempt" != 3 ]; then
+              echo "Install script failed (attempt $attempt/3); retrying in 10s..."
+              sleep 10
+            fi
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          if [ "$ok" != true ]; then
+            echo "::warning::opencode.ai looks unreachable; the latest lane has no evidence this week."
+          fi
+      - name: Discovery smoke (credential-free home)
+        id: smoke
+        if: ${{ matrix.method == 'npm' || steps.install-script.outputs.ok == 'true' }}
+        env:
+          HOME: ${{ runner.temp }}/oc-home
+          USERPROFILE: ${{ runner.temp }}/oc-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/oc-home/config
+          XDG_DATA_HOME: ${{ runner.temp }}/oc-home/data
+          XDG_CACHE_HOME: ${{ runner.temp }}/oc-home/cache
+          XDG_STATE_HOME: ${{ runner.temp }}/oc-home/state
+        run: |
+          mkdir -p "$HOME"
+          mkdir -p smoke-result
+          # The script prints exactly one sanitized JSON object on stdout; it
+          # is the only thing the evaluate job ever reads from this lane.
+          npx tsx scripts/opencode-smoke.ts --method ${{ matrix.method }} --expect-free \
+            > smoke-result/result.json || true
+          cat smoke-result/result.json
+      - name: Record a missing report
+        # A skipped install, a crash, or an empty file all mean the same thing
+        # to the classifier: no evidence. Written as a report with no `ok`, so
+        # it is never mistaken for a pass.
+        if: ${{ steps.smoke.outcome != 'success' }}
+        run: |
+          mkdir -p smoke-result
+          printf '{"method":"%s"}\n' '${{ matrix.method }}' > smoke-result/result.json
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: drift-${{ matrix.method }}
+          path: smoke-result/result.json
+          if-no-files-found: error
+          retention-days: 30
+
+  evaluate:
+    name: Classify and report
+    needs: [smoke]
+    # Runs even when a smoke job failed: an unreadable lane is an outcome the
+    # classifier has to reason about, not a reason to skip the comparison.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only step in the repository that can write to issues, and it never
+    # runs the downloaded binary — it reads content-free JSON only.
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v8
+        with:
+          name: drift-npm
+          path: reports/npm
+      - uses: actions/download-artifact@v8
+        with:
+          name: drift-script
+          path: reports/script
+      - name: File or update the tracked drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npx tsx scripts/opencode-drift-report.ts --pinned reports/npm/result.json --latest reports/script/result.json

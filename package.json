@@ -71,7 +71,7 @@
       },
       {
         "command": "paretoGhc.clearUsage",
-        "title": "🧹 Pareto GHC: Erase Local Copilot Usage"
+        "title": "🧹 Pareto GHC: Erase Local Usage"
       },
       {
         "command": "paretoGhc.pauseUsage",

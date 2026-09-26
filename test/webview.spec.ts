@@ -211,6 +211,61 @@ const usageFixture = {
     })),
   ],
 };
+/** Claude Code's ledger: tokens only, in its own tables, never a price. */
+const claudeUsageFixture = {
+  scannedAt: 1,
+  fileCount: 2,
+  requestCount: 3,
+  totals: {
+    requests: 3,
+    inputTokens: 1200,
+    outputTokens: 340,
+    cacheReadTokens: 8000,
+    cacheWriteTokens: 1500,
+  },
+  exclusions: { sidechain: 2, missingTokens: 0 },
+  diagnostics: {
+    malformed: 0,
+    unsupported: 0,
+    unreadable: 0,
+    stale: 0,
+    missingTokens: 0,
+    estimatedTokens: 0,
+  },
+  unknownModels: [],
+  dateRange: null,
+  models: [
+    {
+      modelId: "claude-sonnet-4-5-20250929",
+      requests: 3,
+      inputTokens: 1200,
+      outputTokens: 340,
+      cacheReadTokens: 8000,
+      cacheWriteTokens: 1500,
+    },
+  ],
+  days: [
+    {
+      date: "2026-09-04",
+      requests: 3,
+      inputTokens: 1200,
+      outputTokens: 340,
+      cacheReadTokens: 8000,
+      cacheWriteTokens: 1500,
+    },
+  ],
+  workspaces: [
+    {
+      id: "proj-a",
+      path: "/home/user/code/api",
+      requests: 3,
+      inputTokens: 1200,
+      outputTokens: 340,
+      cacheReadTokens: 8000,
+      cacheWriteTokens: 1500,
+    },
+  ],
+};
 const opencodeAvailable = [
   {
     id: "opencode:opencode-go/kimi-k2.7-code",
@@ -475,10 +530,12 @@ for (const theme of ["light", "dark", "high-contrast"])
       }
       if (m.type === "scanUsage") {
         state.usage = structuredClone(usageFixture);
+        state.claudeUsage = structuredClone(claudeUsageFixture);
         state.usageWatching = true;
       }
       if (m.type === "clearUsage") {
         state.usage = null;
+        state.claudeUsage = null;
         state.usageWatching = false;
         state.usagePaused = false;
       }
@@ -1166,6 +1223,9 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-summary")).toHaveText(
       /No local scan yet/,
     );
+    // Before any scan there is no Claude ledger, so its card stays hidden
+    // rather than rendering an empty table.
+    await expect(page.locator("#claude-usage-card")).toBeHidden();
     await openTab("Usage");
     await page.locator("#usage-scan").click();
     expect(messages.some((m) => m.type === "scanUsage")).toBeTruthy();
@@ -1178,6 +1238,30 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-workspaces")).not.toContainText(
       "/home/user/myrepo",
     );
+    // Claude Code is a separate ledger in its own card, hidden until a Claude
+    // summary exists, and its figures are never folded into the Copilot tables.
+    await expect(page.locator("#claude-usage-card")).toBeVisible();
+    await expect(page.locator("#claude-usage-summary")).toContainText(
+      "3 turns across 2 Claude Code transcripts",
+    );
+    await expect(page.locator("#claude-usage-summary")).toContainText(
+      "8,000 cache read",
+    );
+    await expect(page.locator("#claude-usage-models")).toContainText(
+      "claude-sonnet-4-5-20250929",
+    );
+    await expect(page.locator("#claude-usage-days")).toContainText("2026-09-04");
+    // A workspace with no cwd names its own reason, not Copilot's.
+    await expect(page.locator("#claude-usage-workspaces")).toContainText("api");
+    // Subagent turns are stated, not silently dropped.
+    await expect(page.locator("#claude-usage-exclusions")).toContainText(
+      "2 subagent turns held out",
+    );
+    // No price column anywhere in the Claude tables.
+    await expect(page.locator("#claude-usage-models")).not.toContainText("Premium");
+    // The Copilot tables are unchanged by any of this.
+    await expect(page.locator("#usage-summary")).toContainText("3 requests");
+    await expect(page.locator("#usage-models")).not.toContainText("claude-");
     await expect(page.locator("#usage-workspaces")).toContainText(
       "deadbeef · unmapped workspace",
     );

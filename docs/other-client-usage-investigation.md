@@ -1,6 +1,6 @@
 # Local usage from other assistant clients — feasibility investigation
 
-Status: **Decided — Claude Code feasible with delivery recommended; OpenCode not supported.** No reads are implemented; see `docs/roadmap.md` for the scheduled follow-up.
+Status: **Decided — Claude Code feasible with delivery recommended; OpenCode not supported.** The Claude Code source has since shipped (`src/usageClaude.ts`); OpenCode remains unsupported and no read of its store is implemented.
 
 Date checked: 2026-09-26. Versions: Claude Code 2.1.280, OpenCode 2.0.16, documentation pages fetched 2026-09-26. Extension version at time of writing: 1.2.0.
 
@@ -79,7 +79,7 @@ Not applicable — no new runtime behavior is introduced by this investigation. 
 
 ## Open blockers
 
-- **The Claude transcript schema is undocumented.** Observed shapes are evidence, not a contract; a vendor release could change any field. This is the same class of risk as Copilot's unversioned sessions, and it is why delivery is gated on fingerprinting rather than scheduled as a straightforward reader.
+- **The Claude transcript schema is undocumented.** Observed shapes are evidence, not a contract; a vendor release could change any field. This is the same class of risk as Copilot's unversioned sessions, and it is why delivery is gated on fingerprinting rather than scheduled as a straightforward reader. **Delivered 2026-09-26** in `src/usageClaude.ts` with exactly that machinery; the schema remains unverified, so a change is reported as a fingerprint rather than absorbed.
 - **Only Linux was inspected.** macOS (`~/.claude`) and Windows (`%USERPROFILE%\.claude`) paths follow from the platform's home conventions but were not verified, and no Windows or macOS transcript shape was sampled. Record as unperformed validation.
 - **One Claude version was inspected (2.1.280).** No older or newer version was compared, so the schema's stability across releases is unmeasured.
 - **`opencode session list --format json` returned no rows here**, so its field set is unknown; it was not retried against a running server.

@@ -60,21 +60,45 @@ sign-in on a user-owned machine.
 
 ## OpenCode CLI (`src/opencode.ts`)
 
-Boundary: `opencode models --verbose`, parsed by `parseModels`; the CLI
-version is probed best-effort via `opencode --version` (`parseOpenCodeVersion` /
-`getOpenCodeVersion`) and attached to every discovery-failure diagnostic, so a
-tier-shape change reads as "OpenCode CLI 1.18.30: …" rather than an
-unexplained count. Parse failures carry a content-free fingerprint
-(`blocks`, `jsonFailures`, `missingId/Provider/Name`, `invalidProvider`) plus
-"please file an issue with the fingerprint and your OpenCode CLI version".
+**Two listing surfaces, because 1.x and 2.x share none.** 1.x exposes
+`opencode models --verbose`, parsed by `parseModels`. 2.x removed that flag but
+exposes `opencode api model.list`, an OpenAPI client whose `Model.Info` carries
+the same identity, limits, per-million rates, long-context tiers, and variants;
+`parseModelList` reads it. `cost` and `variants` are arrays on 2.x where 1.x
+nests them, and 2.x composes `id` as `providerID/modelID` with the bare id in
+`modelID`. The CLI version is probed best-effort via `opencode --version`
+(`parseOpenCodeVersion` / `getOpenCodeVersion`) and attached to every
+discovery-failure diagnostic, so a tier-shape change reads as "OpenCode CLI
+2.0.16: …" rather than an unexplained count — 2.x prefixes that output with the
+binary name, so the parser matches a version-shaped token rather than assuming
+the first one. Parse failures carry a content-free fingerprint
+(`blocks`/`records`, `jsonFailures`, `missingId/Provider/Name`,
+`invalidProvider`, plus `envelope` for the 2.x shape) plus "please file an issue
+with the fingerprint and your OpenCode CLI version".
 
-**OpenCode 2.x is not supported by this boundary.** v2.0.16 rejects the
-`--verbose` flag outright, so discovery fails with a `command` error rather
-than reaching `parseModels` at all; the v2 replacement surface is not yet
-established. Tracked as a Tier 1 task in `docs/roadmap.md`, with the evidence in
-`docs/schema-drift-investigation.md`. The failure is invisible to CI today: the
-`opencode-smoke` npm lane pins 1.18.30, the `script` lane installs latest under
-`continue-on-error: true`, and the workflow has no `schedule:` trigger.
+`discoverOpenCode` tries the 1.x surface first, so every currently-working
+install stays on exactly the path it uses today, and falls back to the 2.x one
+when the first yields nothing — a dispatch by fallback rather than a version
+table, so a future release that keeps either surface keeps working. A missing
+binary or a timeout is an environment failure rather than a shape change and
+never falls back, since a second attempt could only double a 20-second wait.
+When neither surface lists anything, the 1.x failure is reported (it is the
+preferred surface) with the 2.x attempt named alongside it. A 2.x background
+service that has not finished starting answers with an error envelope rather
+than a listing, which is indistinguishable from real drift, so `discoverOpenCode`
+retries that surface once (`retryDelayMs`, set by the extension host and the
+smoke script, disabled by default so tests stay timer-free).
+
+CI cannot see a 2.x regression on its own: the `opencode-smoke` npm lane pins
+1.18.30, the `script` lane installs latest under `continue-on-error: true`, and
+the release workflow has no `schedule:` trigger. No 2.x release exists on npm at
+all (`latest` is 1.18.32), so the install-script lane is structurally the only
+one that can ever exercise v2. **Early warning is now the weekly
+`drift.yml` lane** (see `AGENTS.md`): it runs both lanes on Linux, classifies
+the pair with `src/opencodeDrift.ts`, and files or updates one tracked issue
+only when the pinned release lists models and the latest one does not. Its
+evidence is in `docs/testing.md`; the underlying investigation is
+`docs/schema-drift-investigation.md`.
 
 | Client version | OS | Install method | Verified scope | Date | Evidence | Fixture |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -82,18 +106,69 @@ established. Tracked as a Tier 1 task in `docs/roadmap.md`, with the evidence in
 | 1.18.30 | Linux | npm global | PATH, path with spaces; 17 free-tier rows | 2026-09-14 | CI run 34817372006 (`OpenCode smoke (ubuntu-latest, npm)`), `docs/testing.md` | Same representative fixture |
 | 1.18.30 | macOS | install script + npm global | PATH, path with spaces; 17 free-tier rows | 2026-09-14 | CI run 34817372006 (both macOS smoke jobs), `docs/testing.md` | Same representative fixture |
 | 1.18.30 | Windows | npm global | npm-layout candidate (`node_modules\opencode-ai\bin\opencode.exe`), path with spaces; 17 free-tier rows | 2026-09-14 | CI runs 34817141985 (gap) → 34817372006 (fixed), `docs/testing.md` | Same representative fixture |
-| 2.0.16 | Linux | install script (`~/.opencode/bin`) | **Boundary broken.** `models --verbose` exits 1 with `Unrecognized flag: --verbose`; `--help` lists neither `--verbose` nor `--refresh`. Bare `models` succeeds (exit 0) but prints one `provider/model` id per line — no cost, no variant, not JSON. `stats --cost` works but is human-formatted with no format flag; `session list --format json` returned no rows; `db`/`db path` are not commands | 2026-09-26 | `docs/schema-drift-investigation.md` | None — no known-good v2 shape exists yet, so no fixture can be pinned |
+| 1.18.32 | Linux | npm global (postinstall binary) | 1.x surface unchanged after the 2.x work: 204 rows / 189 variants / 22 free, `--expect-free` satisfied, `cliVersion` 1.18.32 | 2026-09-26 | local run of `scripts/opencode-smoke.ts` against a real 1.18.32 install | `test/fixtures/opencode/verbose-1.18.30.txt` (the 1.x contract fixture) |
+| 2.0.16 | Linux | install script (`~/.opencode/bin`) | `models --verbose` exits 1 (`Unrecognized flag: --verbose`), but `api model.list` returns the full listing: 143 rows / 124 variants / 76 priced / 22 free / 24 long-context tiers, `--expect-free` satisfied, `cliVersion` 2.0.16. `api` is absent on 1.x and `--verbose` on 2.x, so neither surface serves both. `--version` prints `opencode v2.0.16`. Still absent in 2.0.16: `--refresh`, `db` | 2026-09-26 | local run of `scripts/opencode-smoke.ts` against a real 2.0.16 install; surface established from `opencode api GET /openapi.json` (`Model.Info`, `Model.Cost`, `Model.Variant`) | `test/fixtures/opencode/model-list-2.0.16.json` (sanitized representative of the observed shape, not a raw capture) |
 
-Drift case: `test/fixtures/opencode/drifted.txt` is a hypothetical future
+## Claude Code transcripts (`src/usageClaude.ts`)
+
+Boundary: `~/.claude/projects/<projectSlug>/<sessionId>.jsonl`, registered as a
+`UsageRoot` with `layout: "claude-transcripts"` and its own id, so it shares the
+one consent set and the one source list while never being walked as a Copilot
+`workspaceStorage` tree. Only `*.jsonl` directly inside a project directory is
+read, because the same tree holds Claude Code's auto memory (`memory/MEMORY.md`),
+which is user content rather than usage. Parsing keys on `type` and reads only
+`assistant` records, whose `usage` carries the same four disjoint buckets
+`src/usage.ts` already models; `isSidechain` marks subagent turns.
+
+| Requirement for a per-request ledger | Available in the transcript? | Notes |
+| --- | --- | --- |
+| Model identity | Yes — `message.model` | Client-reported string, shown verbatim; never prefix-matched to a registry id, which would be inferring from a similar name |
+| Input/output tokens | Yes — `usage.input_tokens`, `usage.output_tokens` | |
+| Cache buckets | Yes — `usage.cache_read_input_tokens`, `usage.cache_creation_input_tokens` | The disjoint buckets `estimate` already models |
+| Timestamp | Yes — envelope `timestamp` (ISO string) | A bare number is accepted only when it is plainly epoch milliseconds |
+| Workspace attribution | Yes — `cwd` | Same sensitivity as `UsageWorkspaceStat.editor`; full paths stay in tooltips |
+| Subagent turns | Yes — `isSidechain` | Held out of the headline totals and counted, never dropped silently |
+| Billing tier signal | Yes — `usage.service_tier` | **Never adopted as a rate.** The client computes its own cost; a client-reported price is not a catalog rate |
+| Schema version | Envelope `version` | Better than Copilot, which exposes no version at all |
+| Vendor-documented record schema | **No** | The directory reference documents `projects/` for auto memory and the CLI reference acknowledges transcripts are purgeable, but no field list or stability promise is published |
+
+| Client version | OS | Verified scope | Date | Evidence | Fixture |
+| --- | --- | --- | --- | --- | --- |
+| 2.1.280 | Linux | **Shape only.** Key names, record-type names, and row counts read from 8 transcripts; no token, model, path, or content value was recorded. The source has not been run against a real installation | 2026-09-26 | `docs/other-client-usage-investigation.md` | `test/fixtures/usage/claude/*.jsonl` (synthetic representatives written for these tests, not captures) |
+
+Drift case: `test/fixtures/usage/claude/session-drifted.jsonl` is a synthetic
+future shape — `assistant` records whose `usage` carries renamed buckets, plus
+two unknown record `type` values. `parseClaudeTranscript` reports it
+`unsupported` with a `claude-jsonl v1 client=… no-usage.input_tokens …`
+fingerprint rather than as a silent zero, and a file that already contributed
+keeps its data and is marked stale. The other 13 known record types are
+**ignored, not counted malformed**: in the observed sample they outnumber
+`assistant` records roughly two to one.
+
+**Unverified:** every platform and version other than the single Linux 2.1.280
+observation — macOS and Windows paths follow each platform's home convention but
+were never sampled, no real transcript has been parsed end to end, real
+multi-root or relocated `cwd` attribution is untested, and how often
+`isSidechain` is set in real traffic is unknown. A release that changes any of
+these fields is expected to surface as a fingerprint, not a wrong total.
+
+Drift cases: `test/fixtures/opencode/drifted.txt` is a hypothetical future 1.x
 shape (a single top-level JSON document with no `provider/model` header
 lines). `parseModels` rejects it with a `parse` error carrying
 `schema v1 blocks=0 …` and the file-an-issue guidance; `discoverOpenCode`
 additionally attaches the probed CLI version. Covered by a drifted-schema
-regression test.
+regression test. On the 2.x surface the equivalent failure is a response
+without a `data` array — which is also what a 1.x binary and a cold background
+service both return — so `parseModelList` reports `list schema v1 envelope=true
+…` rather than a silent zero-model listing.
 
 **Unverified:** provider-billed pricing and native resolution with a real
 signed-in account on macOS and Windows (CI is credential-free by design);
-install-script layout on Windows (POSIX-shell target, not exercised); any
-OpenCode 2.x listing surface on any platform (only Linux 2.0.16 was inspected,
-and its `--verbose` boundary is broken there), and whether the `--verbose`
-removal also holds on macOS and Windows.
+install-script layout on Windows (POSIX-shell target, not exercised); the 2.x
+listing surface on macOS and Windows, and whether the `--verbose` removal also
+holds there (the flag's absence is version-level, so a platform difference is
+unlikely, but it is unmeasured — the `script` smoke lane and the `drift.yml`
+lane both exclude `windows-latest`); how long a 2.x background service takes to
+become ready, so whether the single retry is always sufficient on a cold
+machine; any 2.x release after 2.0.16; and whether a scheduled workflow is
+permitted to open issues in this repository.

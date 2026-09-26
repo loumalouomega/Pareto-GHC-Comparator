@@ -1769,6 +1769,7 @@ const usageRoot = (path: string) => ({
   editor: "Test editor",
   label: "Test editor",
   path,
+  layout: "copilot-chat" as const,
   purpose: "test",
 });
 
@@ -1839,8 +1840,22 @@ test("a file is attributed to the longest matching root, or to no editor", () =>
   // With nested roots the deepest match wins, so a file is never attributed to
   // a parent root that merely contains another one.
   const nested = [
-    { id: "outer", editor: "Outer", label: "Outer", path: "/r", purpose: "" },
-    { id: "inner", editor: "Inner", label: "Inner", path: "/r/code", purpose: "" },
+    {
+      id: "outer",
+      editor: "Outer",
+      label: "Outer",
+      path: "/r",
+      purpose: "",
+      layout: "copilot-chat" as const,
+    },
+    {
+      id: "inner",
+      editor: "Inner",
+      label: "Inner",
+      path: "/r/code",
+      purpose: "",
+      layout: "copilot-chat" as const,
+    },
   ];
   assert.equal(editorForPath("/r/code/w/chatSessions/s.jsonl", nested)?.id, "inner");
   assert.equal(editorForPath("/r/other/chatSessions/s.jsonl", nested)?.id, "outer");
@@ -1889,8 +1904,22 @@ test("consent migrates to the two VS Code roots and never adds a source", () => 
 
 test("totals are split per editor and workspaces never merge across editors", () => {
   const roots = [
-    { id: "code", editor: "VS Code", label: "VS Code", path: "/r/code", purpose: "" },
-    { id: "cursor", editor: "Cursor", label: "Cursor", path: "/r/cursor", purpose: "" },
+    {
+      id: "code",
+      editor: "VS Code",
+      label: "VS Code",
+      path: "/r/code",
+      purpose: "",
+      layout: "copilot-chat" as const,
+    },
+    {
+      id: "cursor",
+      editor: "Cursor",
+      label: "Cursor",
+      path: "/r/cursor",
+      purpose: "",
+      layout: "copilot-chat" as const,
+    },
   ];
   const request = (over: Record<string, unknown> = {}) => ({
     sessionId: "s",

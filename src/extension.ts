@@ -25,6 +25,16 @@ import {
   sortRowsByEfficiency,
 } from "./compare";
 import { discoverOpenCode, OpenCodeError } from "./opencode";
+import {
+  aggregateClaudeUsage,
+  claudeParserVersion,
+  discoverClaudeFiles,
+  parseClaudeTranscript,
+  purgeClaudeRetention,
+  validClaudeUsageFile,
+  type ClaudeStoredFile,
+  type ClaudeStoredUsageFile,
+} from "./usageClaude";
 import { staticModels, staticRegistryDate } from "./staticSources";
 import { historyScenarioPrefill, planRegistryDate } from "./plans";
 import { buildGroups } from "./groups";
@@ -85,6 +95,7 @@ import type {
   Snapshot,
   Source,
   UsageSourceView,
+  ClaudeUsageSummary,
   UsageSummary,
   ViewState,
 } from "./types";
@@ -168,7 +179,15 @@ export function activate(context: vscode.ExtensionContext) {
     context.globalStorageUri,
     "usage.json",
   );
+  // Claude Code's ledger lives in its own file so the Copilot store's schema is
+  // untouched: no migration, and erasing or removing one source cannot affect
+  // the other.
+  const claudeUsageUri = vscode.Uri.joinPath(
+    context.globalStorageUri,
+    "usage-claude.json",
+  );
   let usage: UsageSummary | null = null,
+    claudeUsage: ClaudeUsageSummary | null = null,
     usageScanning = false,
     usageGeneration = 0,
     usagePending: Promise<void> | undefined,
@@ -216,6 +235,22 @@ export function activate(context: vscode.ExtensionContext) {
     const included = new Set(consented().map((root) => root.id));
     const byRoot = new Map((usage?.editors ?? []).map((e) => [e.rootId, e]));
     return usageRoots().map((root) => {
+      // Each client's totals come from its own ledger, so a root's counts are
+      // never read out of the other client's summary.
+      if (root.layout === "claude-transcripts")
+        return {
+          id: root.id,
+          label: root.label,
+          purpose: root.purpose,
+          detected: detectedRootIds.has(root.id),
+          included: included.has(root.id),
+          ...(claudeUsage
+            ? {
+                fileCount: claudeUsage.fileCount,
+                requests: claudeUsage.requestCount,
+              }
+            : {}),
+        };
       const stat = byRoot.get(root.id);
       return {
         id: root.id,
@@ -299,17 +334,19 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     if (isUsagePaused()) {
-      usageStatusItem.text = "$(debug-pause) Copilot usage paused";
+      usageStatusItem.text = "$(debug-pause) Usage paused";
       usageStatusItem.tooltip =
-        "Local Copilot usage watching is paused. Select to resume watching.";
+        "Local usage watching is paused. Select to resume watching.";
       usageStatusItem.command = "paretoGhc.resumeUsage";
       usageStatusItem.show();
       return;
     }
     if (usageWatchers.length > 0) {
-      usageStatusItem.text = "$(eye) Copilot usage watching";
+      // Client-neutral: the consented set can hold Copilot editors and Claude
+      // Code at once, so naming only one of them would misreport what is watched.
+      usageStatusItem.text = "$(eye) Usage watching";
       usageStatusItem.tooltip =
-        "Watching local Copilot chat sessions for usage. Select to pause watching.";
+        "Watching included local usage sources for new sessions. Select to pause watching.";
       usageStatusItem.command = "paretoGhc.pauseUsage";
       usageStatusItem.show();
       return;
@@ -328,12 +365,33 @@ export function activate(context: vscode.ExtensionContext) {
       return undefined;
     }
   };
+  const readStoredClaudeUsage = async (): Promise<
+    ClaudeStoredUsageFile | undefined
+  > => {
+    try {
+      const raw = JSON.parse(
+        Buffer.from(
+          await vscode.workspace.fs.readFile(claudeUsageUri),
+        ).toString(),
+      );
+      return validClaudeUsageFile(raw) ? raw : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   if (
     typeof vscode.workspace.registerTextDocumentContentProvider === "function"
   ) {
     context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider("pareto-usage", {
-        provideTextDocumentContent: async () => {
+        provideTextDocumentContent: async (uri) => {
+          // Both stored ledgers are inspectable, each from its own file.
+          if (uri.path.endsWith("claude.json")) {
+            const claude = await readStoredClaudeUsage();
+            if (!claude)
+              return "No stored Claude Code usage data on this machine.";
+            return JSON.stringify(claude, null, 2);
+          }
           const stored = await readStoredUsage();
           if (!stored) return "No stored Copilot usage data on this machine.";
           return JSON.stringify(stored, null, 2);
@@ -351,12 +409,12 @@ export function activate(context: vscode.ExtensionContext) {
       typeof vscode.RelativePattern !== "function"
     )
       return;
-    // Only roots the user included are ever watched.
-    for (const { path: root } of roots) {
-      for (const pattern of [
-        "**/chatSessions/*.jsonl",
-        "**/chatSessions/*.json",
-      ]) {
+    // Only roots the user included are ever watched, and each root is watched
+    // for the shape it actually holds.
+    for (const { path: root, layout } of roots) {
+      for (const pattern of layout === "claude-transcripts"
+        ? ["*/*.jsonl"]
+        : ["**/chatSessions/*.jsonl", "**/chatSessions/*.json"]) {
         try {
           const watcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(root, pattern),
@@ -391,6 +449,142 @@ export function activate(context: vscode.ExtensionContext) {
     // covered before other editors could be included.
     await setConsented([...legacyUsageRootIds]);
     return true;
+  };
+  /**
+   * Scan the consented Claude Code roots into their own store.
+   *
+   * Only roots already in the consented set are read, so this cannot reach a
+   * transcript the user has not included, and nothing here touches the Copilot
+   * store. Returns a short note for the status line, or "" when the source is
+   * not included.
+   */
+  const scanClaudeUsage = async (
+    roots: UsageRoot[],
+    scannedAt: number,
+  ): Promise<string> => {
+    const claudeRoots = roots.filter((r) => r.layout === "claude-transcripts");
+    if (!claudeRoots.length) {
+      claudeUsage = null;
+      return "";
+    }
+    const unreadable: string[] = [];
+    const candidates = await discoverClaudeFiles(claudeRoots, unreadable);
+    const stored = await readStoredClaudeUsage();
+    const index = stored?.index ?? blankUsageIndex();
+    const files: Record<string, ClaudeStoredFile> = { ...(stored?.files ?? {}) };
+    const seen = new Set(candidates.map((c) => c.filePath));
+    // A deleted transcript drops its data; an unreadable one keeps what it had,
+    // marked stale, so an outage never looks like a user's history.
+    for (const gone of Object.keys(files)) {
+      if (seen.has(gone)) continue;
+      if (unreadable.some((p) => gone === p || gone.startsWith(p + sep))) {
+        files[gone] = {
+          ...files[gone],
+          diagnostics: {
+            ...emptyUsageDiagnostics(),
+            unreadable: 1,
+            stale: 1,
+          },
+        };
+      } else {
+        delete files[gone];
+        delete index.files[gone];
+      }
+    }
+    for (const path of unreadable) {
+      if (!Object.keys(files).some((p) => p === path || p.startsWith(path + sep)))
+        files[path] = {
+          projectSlug: "unreadable",
+          workspacePath: "",
+          requests: [],
+          diagnostics: { ...emptyUsageDiagnostics(), unreadable: 1 },
+        };
+    }
+    for (const candidate of candidates) {
+      const entry = index.files[candidate.filePath];
+      // Unchanged files keep their parsed requests; only a size/mtime change or
+      // a parser bump re-reads them.
+      if (
+        entry &&
+        entry.size === candidate.size &&
+        entry.mtime === candidate.mtime &&
+        entry.parser === claudeParserVersion
+      )
+        continue;
+      try {
+        const text = await readLocalFile(candidate.filePath, "utf8");
+        const parsed = parseClaudeTranscript(text, candidate.projectSlug);
+        // An unsupported transcript keeps its previous usable contribution and
+        // is retried on the next change, never silently replaced with a zero.
+        if (
+          parsed.diagnostics.unsupported &&
+          files[candidate.filePath]?.requests.length
+        ) {
+          files[candidate.filePath] = {
+            ...files[candidate.filePath],
+            diagnostics: { ...parsed.diagnostics, stale: 1 },
+            fingerprint: parsed.fingerprint,
+          };
+          delete index.files[candidate.filePath];
+          continue;
+        }
+        files[candidate.filePath] = {
+          projectSlug: candidate.projectSlug,
+          workspacePath: parsed.workspacePath,
+          requests: parsed.requests,
+          diagnostics: parsed.diagnostics,
+          ...(parsed.fingerprint ? { fingerprint: parsed.fingerprint } : {}),
+        };
+        index.files[candidate.filePath] = {
+          size: candidate.size,
+          mtime: candidate.mtime,
+          parser: claudeParserVersion,
+        };
+        if (parsed.diagnostics.unsupported || parsed.diagnostics.malformed)
+          delete index.files[candidate.filePath];
+      } catch {
+        const previous = files[candidate.filePath];
+        files[candidate.filePath] = {
+          projectSlug: candidate.projectSlug,
+          workspacePath: previous?.workspacePath ?? "",
+          requests: previous?.requests ?? [],
+          diagnostics: {
+            ...emptyUsageDiagnostics(),
+            unreadable: 1,
+            stale: previous?.requests.length ? 1 : 0,
+          },
+        };
+        delete index.files[candidate.filePath];
+      }
+    }
+    // The same retention window as Copilot: one setting, both sources.
+    const retention = retentionDays();
+    let storedFiles = files;
+    if (retention !== undefined) {
+      const purged = purgeClaudeRetention(files, retention, scannedAt);
+      storedFiles = purged.files;
+      for (const path of Object.keys(index.files))
+        if (!storedFiles[path]) delete index.files[path];
+    }
+    const payload: ClaudeStoredUsageFile = {
+      version: 1,
+      scannedAt,
+      index,
+      files: storedFiles,
+    };
+    await writeSnapshotFile(claudeUsageUri, payload);
+    claudeUsage = aggregateClaudeUsage(
+      Object.entries(storedFiles).map(([path, file]) => ({ path, ...file })),
+      scannedAt,
+    );
+    const unsupported = (claudeUsage.schemaFingerprints ?? []).reduce(
+      (n: number, f: { files: number }) => n + f.files,
+      0,
+    );
+    const note = unsupported
+      ? ` ${unsupported} Claude Code transcript(s) don't match a known schema — see the fingerprint note.`
+      : "";
+    return note;
   };
   const runUsageScan = async () => {
     if (usageScanning || !hasUsageConsent())
@@ -540,11 +734,25 @@ export function activate(context: vscode.ExtensionContext) {
           index: storedIndex,
           files: storedFiles,
         });
+        // Claude Code is a separate source with its own store, its own unit, and
+        // its own aggregation. It runs after the Copilot store is written and is
+        // guarded by the same consent generation, and a failure here leaves the
+        // Copilot summary above intact.
+        let claudeNote = "";
+        try {
+          claudeNote = await scanClaudeUsage(roots, scannedAt);
+        } catch {
+          claudeNote = "";
+        }
         if (!current()) return;
         if (shouldAutoWatch()) setupUsageWatchers();
         message =
           `Local usage ready: ${usage.requestCount} requests from ${usage.fileCount} files. ` +
           "Local estimates only, not a bill." +
+          (claudeUsage
+            ? ` Claude Code: ${claudeUsage.requestCount} turns across ${claudeUsage.fileCount} transcripts (tokens, counted separately).`
+            : "") +
+          (claudeNote ? ` ${claudeNote}` : "") +
           (retention !== undefined
             ? ` Retention (${retention} days): purged ${purgedRequests} requests from ${purgedFiles} sessions.`
             : "");
@@ -571,12 +779,36 @@ export function activate(context: vscode.ExtensionContext) {
       await runUsageScan();
       return;
     }
+    // The same parser-version rule applies to the Claude store, independently:
+    // a bumped parser forces one consented rescan of that source only.
+    const claudeStored = await readStoredClaudeUsage();
+    if (
+      claudeStored &&
+      Object.values(claudeStored.index.files).some(
+        (v) => v.parser !== claudeParserVersion,
+      )
+    ) {
+      await runUsageScan();
+      return;
+    }
     if (
       stored &&
       generation === usageGeneration &&
       hasUsageConsent()
     ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
+      // Claude Code's store is independent: a missing or unreadable one leaves
+      // `claudeUsage` null and never invalidates the Copilot summary.
+      const claudeStored = await readStoredClaudeUsage();
+      claudeUsage = claudeStored
+        ? aggregateClaudeUsage(
+            Object.entries(claudeStored.files).map(([path, file]) => ({
+              path,
+              ...file,
+            })),
+            claudeStored.scannedAt,
+          )
+        : null;
       if (
         hasUsageConsent() &&
         shouldAutoWatch()
@@ -775,6 +1007,7 @@ export function activate(context: vscode.ExtensionContext) {
       drift: driftOf(prevSnapshot, snapshot?.models ?? [], options.preset),
       byok,
       usage,
+      claudeUsage,
       usageWatching: usageWatchers.length > 0,
       usagePaused: isUsagePaused(),
       usageSources: usageSourceViews(),
@@ -861,7 +1094,11 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const discoverOpencode = async (gen: number) => {
     try {
-      const models = await discoverOpenCode();
+      const models = await discoverOpenCode(undefined, {
+        // A 2.x background service that is still starting answers with an
+        // error envelope; one short retry keeps that from reading as drift.
+        retryDelayMs: 1500,
+      });
       if (gen !== discoveryGen.opencode) return;
       availableBySource.opencode = models;
       discoveryErrors.opencode = "";
@@ -1022,23 +1259,31 @@ export function activate(context: vscode.ExtensionContext) {
     for (const watcher of usageWatchers) watcher.dispose();
     usageWatchers = [];
     usage = null;
+    claudeUsage = null;
     await setConsented([]);
     await context.globalState.update("usagePaused", false);
     await usagePending;
-    try {
-      await vscode.workspace.fs.delete(usageSummaryUri);
-    } catch (error) {
-      if (!(
-        error &&
-        typeof error === "object" &&
-        "code" in error &&
-        error.code === "FileNotFound"
-      )) {
-        message =
-          "Local usage watching stopped, but stored data could not be erased. Retry Erase Local Copilot Usage.";
-        render();
-        return;
+    let failed = false;
+    for (const uri of [usageSummaryUri, claudeUsageUri]) {
+      try {
+        await vscode.workspace.fs.delete(uri);
+      } catch (error) {
+        if (
+          !(
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "FileNotFound"
+          )
+        )
+          failed = true;
       }
+    }
+    if (failed) {
+      message =
+        "Local usage watching stopped, but stored data could not be erased. Retry Erase Local Usage.";
+      render();
+      return;
     }
     message = "Local usage data erased. Rescanning will ask for consent again.";
     render();
@@ -1076,7 +1321,7 @@ export function activate(context: vscode.ExtensionContext) {
   const addUsageRoot = async (id: string) => {
     const root = usageRoots().find((r) => r.id === id);
     if (!root) {
-      message = "That is not a known Copilot chat-session source.";
+      message = "That is not a known local usage source.";
       render();
       return;
     }
@@ -1094,10 +1339,17 @@ export function activate(context: vscode.ExtensionContext) {
     const choice = await vscode.window.showInformationMessage(
       `${root.purpose}`,
       { modal: true },
-      "Include this editor",
+      root.layout === "claude-transcripts"
+        ? "Include Claude Code"
+        : "Include this editor",
       "Not now",
     );
-    if (choice !== "Include this editor") {
+    if (
+      choice !==
+      (root.layout === "claude-transcripts"
+        ? "Include Claude Code"
+        : "Include this editor")
+    ) {
       message = `${root.label} not included.`;
       render();
       return;
@@ -1116,7 +1368,7 @@ export function activate(context: vscode.ExtensionContext) {
   const removeUsageRoot = async (id: string) => {
     const root = usageRoots().find((r) => r.id === id);
     if (!root) {
-      message = "That is not a known Copilot chat-session source.";
+      message = "That is not a known local usage source.";
       render();
       return;
     }
@@ -1126,7 +1378,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     const choice = await vscode.window.showInformationMessage(
-      `Stop reading ${root.label} and delete its stored usage data? Other included editors keep their data.`,
+      `Stop reading ${root.label} and delete its stored usage data? Other included sources keep their data.`,
       { modal: true },
       "Stop and remove",
       "Keep it",
@@ -1141,6 +1393,21 @@ export function activate(context: vscode.ExtensionContext) {
       .filter((r) => r !== id);
     await setConsented(ids);
     stopUsageWatchers();
+    // Claude Code's ledger lives in its own store, so removing that source drops
+    // that file outright and leaves the Copilot store untouched — and vice
+    // versa, which the Copilot branch below already does.
+    if (root.layout === "claude-transcripts") {
+      try {
+        await vscode.workspace.fs.delete(claudeUsageUri);
+      } catch {
+        // Nothing stored for this source yet.
+      }
+      claudeUsage = null;
+      message = `Stopped reading ${root.label} and deleted its stored transcripts.`;
+      if (ids.length) setupUsageWatchers();
+      render();
+      return;
+    }
     const stored = await readStoredUsage();
     if (stored) {
       const files: StoredUsageFile["files"] = {};

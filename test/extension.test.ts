@@ -1907,9 +1907,10 @@ test("each usage source is read only after its own opt-in, and removable on its 
     await receiver({ type: "usageAddRoot", id: "trae" });
     assert.match(last().message, /No Trae storage directory found/);
     assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
-    // An id outside the registry is refused by name.
+    // An id outside the registry is refused by name. The registry holds more
+    // than Copilot editors now, so the refusal is client-neutral.
     await receiver({ type: "usageAddRoot", id: "/etc" });
-    assert.match(last().message, /not a known Copilot chat-session source/);
+    assert.match(last().message, /not a known local usage source/);
     assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
 
     // Including Cursor reads it, labels it, and leaves VS Code untouched.
@@ -1967,6 +1968,320 @@ test("each usage source is read only after its own opt-in, and removable on its 
     await receiver({ type: "clearUsage" });
     assert.deepEqual(state.get("usageRoots"), []);
     assert.equal(last().usage, null);
+  } finally {
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+    if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = xdg;
+    if (appdata === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = appdata;
+    delete (globalThis as any).__paretoVscodeMock;
+  }
+});
+
+test("Claude Code is a separate consented source with its own store and unit", async () => {
+  const commands = new Map<string, () => unknown>();
+  const messages: unknown[] = [];
+  const disposable = { dispose() {} };
+  const state = new Map<string, unknown>();
+  const storageFiles = new Map<string, Uint8Array>();
+  const cache = {
+    version: "4.4",
+    fetchedAt: Date.now(),
+    models: [
+      {
+        id: "aa",
+        slug: "gpt-5-mini",
+        name: "GPT-5 mini",
+        provider: "OpenAI",
+        scores: { general: 30, coding: 40, agentic: 20 },
+      },
+    ],
+  };
+  storageFiles.set("/cache/benchmarks.json", Buffer.from(JSON.stringify(cache)));
+  let receiver: (m: unknown) => Promise<void> = async () => {};
+  let modal: string | undefined = "Scan locally";
+  const mock = {
+    commands: {
+      registerCommand: (id: string, fn: () => unknown) => {
+        commands.set(id, fn);
+        return disposable;
+      },
+      executeCommand: async (id: string) => commands.get(id)?.(),
+    },
+    Uri: {
+      joinPath: (root: { path: string }, ...parts: string[]) => ({
+        path: [root.path, ...parts].join("/"),
+        toString() {
+          return this.path;
+        },
+      }),
+      parse: (value: string) => ({
+        path: value,
+        toString() {
+          return value;
+        },
+      }),
+    },
+    ViewColumn: { One: 1 },
+    StatusBarAlignment: { Left: 1, Right: 100 },
+    RelativePattern: class {
+      constructor(
+        public base: unknown,
+        public pattern: string,
+      ) {}
+    },
+    window: {
+      createWebviewPanel: () => ({
+        webview: {
+          html: "",
+          cspSource: "vscode-webview:",
+          asWebviewUri: (u: { toString(): string }) => u,
+          postMessage: async (m: unknown) => {
+            messages.push(m);
+            return true;
+          },
+          onDidReceiveMessage: (fn: (m: unknown) => Promise<void>) => {
+            receiver = fn;
+            return disposable;
+          },
+        },
+        onDidDispose: () => disposable,
+        reveal() {},
+      }),
+      showInformationMessage: async () => modal,
+      createStatusBarItem: () => ({
+        text: "",
+        tooltip: "",
+        command: "",
+        shown: false,
+        show() {},
+        hide() {},
+        dispose() {},
+      }),
+    },
+    workspace: {
+      getConfiguration: () => ({
+        get: () => undefined,
+        inspect: () => ({ key: "paretoGhc", globalValue: undefined }),
+        update: async () => {},
+      }),
+      onDidChangeConfiguration: () => disposable,
+      registerTextDocumentContentProvider: () => disposable,
+      createFileSystemWatcher: () => ({
+        onDidChange() {},
+        onDidCreate() {},
+        onDidDelete() {},
+        dispose() {},
+      }),
+      fs: {
+        readFile: async (uri: { path: string }) => {
+          const found = storageFiles.get(uri.path);
+          if (found === undefined) throw new Error("missing");
+          return found;
+        },
+        writeFile: async (uri: { path: string }, data: Uint8Array) => {
+          storageFiles.set(uri.path, data);
+        },
+        createDirectory: async () => {},
+        delete: async (uri: { path: string }) => {
+          if (!storageFiles.has(uri.path)) {
+            throw Object.assign(new Error("missing"), { code: "FileNotFound" });
+          }
+          storageFiles.delete(uri.path);
+        },
+        rename: async (from: { path: string }, to: { path: string }) => {
+          storageFiles.set(to.path, storageFiles.get(from.path)!);
+          storageFiles.delete(from.path);
+        },
+      },
+    },
+    lm: {
+      selectChatModels: async () => [
+        {
+          id: "gpt-5-mini",
+          name: "GPT-5 mini",
+          family: "gpt-5-mini",
+          maxInputTokens: 1000000,
+        },
+      ],
+      onDidChangeChatModels: () => disposable,
+    },
+    env: { clipboard: { writeText: async () => {} } },
+  };
+  (globalThis as any).__paretoVscodeMock = mock;
+  const bundle = await build({
+    entryPoints: ["src/extension.ts"],
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "esm",
+    plugins: [
+      {
+        name: "mock-vscode",
+        setup(b) {
+          b.onResolve({ filter: /^vscode$/ }, () => ({
+            path: "vscode",
+            namespace: "mock",
+          }));
+          b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
+            contents:
+              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern,StatusBarAlignment}=mock;",
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+  const extension = await import(
+    `data:text/javascript;base64,${Buffer.from(`${bundle.outputFiles[0].text}\n// pareto-claude-usage-host-test`).toString("base64")}`
+  );
+  const home = process.env.HOME;
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const appdata = process.env.APPDATA;
+  const empty = mkdtempSync(join(tmpdir(), "pareto-claude-"));
+  process.env.HOME = empty;
+  process.env.XDG_CONFIG_HOME = join(empty, "xdg");
+  process.env.APPDATA = join(empty, "appdata");
+  // One Copilot session and one Claude Code transcript, so the two ledgers can
+  // be shown side by side without ever being added together.
+  const sessionDir = join(
+    empty,
+    "xdg",
+    "Code",
+    "User",
+    "workspaceStorage",
+    "ws",
+    "chatSessions",
+  );
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(
+    join(sessionDir, "a.jsonl"),
+    JSON.stringify({
+      kind: 1,
+      k: ["requests", 0, "result"],
+      v: {
+        metadata: {
+          modelId: "copilot/gpt-5-mini",
+          promptTokens: 100,
+          outputTokens: 10,
+        },
+      },
+    }),
+  );
+  const claudeDir = join(empty, ".claude", "projects", "proj-a");
+  mkdirSync(join(claudeDir, "memory"), { recursive: true });
+  writeFileSync(join(claudeDir, "memory", "MEMORY.md"), "stored user memory");
+  writeFileSync(
+    join(claudeDir, "s1.jsonl"),
+    [
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "synthetic" },
+        sessionId: "s1",
+        cwd: join(empty, "code", "api"),
+        version: "2.1.280",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-5-20250929",
+          usage: {
+            input_tokens: 1200,
+            output_tokens: 340,
+            cache_read_input_tokens: 8000,
+            cache_creation_input_tokens: 1500,
+          },
+        },
+        sessionId: "s1",
+        cwd: join(empty, "code", "api"),
+        isSidechain: false,
+        version: "2.1.280",
+      }),
+      "",
+    ].join("\n"),
+  );
+  extension.activate({
+    extensionUri: { path: "/extension" },
+    globalStorageUri: { path: "/cache" },
+    subscriptions: [],
+    globalState: {
+      get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+      update: async (key: string, value: unknown) => {
+        if (value === undefined) state.delete(key);
+        else state.set(key, value);
+      },
+    },
+    secrets: { get: async () => "", store: async () => {}, delete: async () => {} },
+  });
+  const last = () => (messages.at(-1) as any).state;
+  try {
+    await (commands.get("paretoGhc.open")!() as Promise<void>);
+    await receiver({ type: "ready" });
+    await receiver({ type: "scanUsage" });
+    // The first-run consent covers only the two VS Code roots, exactly as
+    // before: upgrading never adds a data source on the user's behalf.
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
+    // Claude Code is detected and offered, with its own stated purpose.
+    const claude = last().usageSources.find(
+      (s: { id: string }) => s.id === "claude-code",
+    );
+    assert.equal(claude.detected, true);
+    assert.equal(claude.included, false);
+    assert.match(claude.purpose, /never message content/);
+    // Nothing about Claude has been read: no store, no summary, and the Copilot
+    // ledger is untouched by the transcript sitting on disk.
+    assert.equal(storageFiles.has("/cache/usage-claude.json"), false);
+    assert.equal(last().claudeUsage, null);
+    assert.equal(last().usage.requestCount, 1);
+
+    // Including it reads only the transcript, never the memory file beside it.
+    modal = "Include Claude Code";
+    await receiver({ type: "usageAddRoot", id: "claude-code" });
+    assert.ok((state.get("usageRoots") as string[]).includes("claude-code"));
+    assert.ok(storageFiles.has("/cache/usage-claude.json"));
+    const claudeStore = JSON.parse(
+      Buffer.from(storageFiles.get("/cache/usage-claude.json")!).toString(),
+    );
+    assert.equal(Object.keys(claudeStore.files).length, 1);
+    assert.ok(
+      !Buffer.from(storageFiles.get("/cache/usage-claude.json")!).toString().includes(
+        "stored user memory",
+      ),
+      "the memory file is never read",
+    );
+    // Its own ledger, in tokens, with the four disjoint buckets.
+    const cu = last().claudeUsage;
+    assert.equal(cu.requestCount, 1);
+    assert.deepEqual(cu.totals, {
+      requests: 1,
+      inputTokens: 1200,
+      outputTokens: 340,
+      cacheReadTokens: 8000,
+      cacheWriteTokens: 1500,
+    });
+    assert.deepEqual(
+      cu.models.map((m: { modelId: string }) => m.modelId),
+      ["claude-sonnet-4-5-20250929"],
+    );
+    assert.deepEqual(cu.exclusions, { sidechain: 0, missingTokens: 0 });
+    // The two ledgers are never added: the Copilot summary is still one request,
+    // and the budget suggestion still speaks only in Copilot's own unit.
+    assert.equal(last().usage.requestCount, 1);
+    assert.equal(last().usage.promptTokens, 100);
+    assert.equal("premiumEstimate" in cu, false);
+    assert.equal("premiumP90" in cu, false);
+    assert.ok(storageFiles.has("/cache/usage.json"));
+
+    // Removing Claude Code drops only its own store.
+    modal = "Stop and remove";
+    await receiver({ type: "usageRemoveRoot", id: "claude-code" });
+    assert.equal(storageFiles.has("/cache/usage-claude.json"), false);
+    assert.ok(storageFiles.has("/cache/usage.json"), "the Copilot store survives");
+    assert.equal(last().claudeUsage, null);
+    assert.equal(last().usage.requestCount, 1);
+    assert.ok(!(state.get("usageRoots") as string[]).includes("claude-code"));
   } finally {
     if (home === undefined) delete process.env.HOME;
     else process.env.HOME = home;

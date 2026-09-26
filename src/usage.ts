@@ -50,7 +50,16 @@ export interface UsageRoot {
   path: string;
   /** Stated before consent, per the consent requirement. */
   purpose: string;
+  /**
+   * Which on-disk shape this root holds. Roots share one consent set and one
+   * source list, but each scanner only ever walks the layout it understands, so
+   * a Claude transcript root is never probed for `chatSessions/` and a VS Code
+   * root is never walked as a project tree.
+   */
+  layout: UsageRootLayout;
 }
+/** `copilot-chat`: `workspaceStorage/<id>/chatSessions/*.jsonl`. */
+export type UsageRootLayout = "copilot-chat" | "claude-transcripts";
 
 /** The two VS Code roots every existing consent already covered. */
 export const legacyUsageRootIds = ["code", "code-insiders"] as const;
@@ -86,12 +95,13 @@ export function usageRoots(
   else if (platform === "darwin")
     base = join(home, "Library", "Application Support");
   else base = env.XDG_CONFIG_HOME || join(home, ".config");
-  const roots = desktopRoots.map(({ dir, id, editor }) => ({
+  const roots: UsageRoot[] = desktopRoots.map(({ dir, id, editor }) => ({
     id,
     editor,
     label: `GitHub Copilot in ${editor}`,
     path: join(base, dir, "User", "workspaceStorage"),
     purpose: `Reads Copilot chat sessions ${editor} stored on this machine, to report your own request and token totals. Files stay here; nothing is uploaded.`,
+    layout: "copilot-chat",
   }));
   if (platform !== "win32")
     for (const [dir, id, editor] of [
@@ -108,8 +118,32 @@ export function usageRoots(
         label: `GitHub Copilot in ${editor}`,
         path: join(home, dir, "data", "User", "workspaceStorage"),
         purpose: `Reads Copilot chat sessions stored by VS Code Server for ${editor}, on this machine. Files stay here; nothing is uploaded.`,
+        layout: "copilot-chat",
       });
+  roots.push(claudeCodeRoot(platform, home));
   return uniqueRoots(roots);
+}
+
+/**
+ * Claude Code's own transcript root: `~/.claude/projects/<slug>/<id>.jsonl` on
+ * every platform, following each one's home convention. It is a separate source
+ * with its own consent record, not another Copilot editor: the transcripts carry
+ * Anthropic-side token counts under a different billing model, so the two
+ * ledgers are never summed.
+ */
+export function claudeCodeRoot(
+  platform = process.platform,
+  home = homedir(),
+): UsageRoot {
+  return {
+    id: "claude-code",
+    editor: "Claude Code",
+    label: "Claude Code",
+    path: join(home, ".claude", "projects"),
+    purpose:
+      "Reads Claude Code transcripts on this machine to report your own token totals per model, day, and workspace. It reads token counts, the model name, timestamps, and workspace paths only — never message content, and never the memory files this folder also holds. Files stay here; nothing is uploaded. Claude Code's own `claude project purge` deletes them.",
+    layout: "claude-transcripts",
+  };
 }
 
 /**
@@ -257,7 +291,10 @@ export async function discoverUsageFiles(
 ): Promise<UsageCandidate[]> {
   const out: UsageCandidate[] = [];
   const seen = new Set<string>();
-  for (const { path: root } of roots) {
+  for (const { path: root, layout } of roots) {
+    // Roots share one consent set but not one on-disk shape; never probe a
+    // Claude transcript tree for `chatSessions/`.
+    if (layout !== "copilot-chat") continue;
     let dirs: string[];
     try {
       dirs = await readdir(root);
