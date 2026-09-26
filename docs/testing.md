@@ -59,7 +59,14 @@ grep -c 'from "vscode"' /tmp/cli-spike-bundle.mjs   # must be 0
 
 The measured-evaluations investigation (`docs/measured-evaluations-investigation.md`) proposes a test plan (mocked-provider request/spend caps, cancellation, consent, erase, and strict separation from benchmark/history data) for when that feature is scheduled; none of it is implemented, and no test in this repo sends a real inference request — the existing host-test guard's `sendRequest` throws "Inference must never be called" precisely to keep it that way.
 
-## What automation does not prove
+### Claude Code source: unperformed validation
+
+**No real Claude Code installation was read.** Every transcript in `test/fixtures/usage/claude/` is synthetic, written for these tests, and the mocked host test builds its own temporary `$HOME`. The shape the parser targets was established in `docs/other-client-usage-investigation.md` by reading only key names and row counts, so the following are **unverified** and must not be read as proven:
+
+- **Only Linux was inspected, and only one version (2.1.280).** macOS and Windows paths follow each platform's home convention but were not sampled, and no transcript was read on either. Cross-version stability of the schema is unmeasured.
+- **No real session has been parsed end to end.** A real transcript may carry record types, `usage` shapes, or envelope fields the observation did not cover; the first such file is expected to produce either a counted exclusion or a fingerprint, not a wrong total.
+- **Real workspace attribution is unverified.** `cwd` was observed as a real absolute path, but no real multi-root or relocated project directory was exercised.
+- **The subagent split is unverified against real traffic.** `isSidechain` was observed in the sample; how often it is set, and whether every subagent turn sets it, is unknown — which is why excluded turns are counted and shown rather than assumed away.
 
 Automated tests use fixtures, synthetic model data, and a mocked host. They do not prove real-account model discovery or real API access: a real smoke test requires Copilot sign-in and a user-provided Artificial Analysis key. Record missing prerequisites as unperformed validation, never as passing checks.
 
@@ -92,6 +99,7 @@ The earlier completion audit covered the then-completed roadmap. It does not cer
 - `test/settings.test.ts`: settings precedence (explicit defaults, invalid fallbacks, stored-chart detection) for the pure `src/settings.ts` resolver.
 - `.github/workflows/extension.yml` `Native discovery` job: the platform-discovery test file above, run remotely on Linux, macOS, and Windows and gating the release jobs. Confirmed green remotely: run [34816368954](https://github.com/loumalouomega/Pareto-GHC-Comparator/actions/runs/34816368954) (2026-09-14, commit `16e1af1`), all three OSes.
 - `scripts/opencode-smoke.ts` and the non-gating `opencode-smoke` CI job: real (unmocked) discovery through `discoverOpenCode` — `opencode models --verbose` on 1.x, falling back to `opencode api model.list` on 2.x — against an isolated credential-free home, plus a real-executable path-with-spaces rerun. Output is sanitized to counts only (see `AGENTS.md`).
+- `test/usage-claude.test.ts` and the Claude half of `test/extension.test.ts`: the Claude Code source end to end against synthetic transcripts. The mocked host test drives a real scan over a temporary `$HOME` containing a real `~/.claude/projects` tree, so consent gating, the memory-file exclusion, the two independent stores, and per-source removal are exercised through the host rather than asserted in isolation.
 - `scripts/opencode-drift-report.ts` and the weekly non-gating `drift.yml` lane: classifies a pinned-vs-latest smoke pair with `assessDrift` and files or updates one tracked issue. `test/opencode-drift.test.ts` covers the verdicts, the outage exclusions, degraded reports, and the issue body; the `gh` calls and the schedule itself are not covered by tests.
 
 ### Local drift-lane checks (2026-09-26)

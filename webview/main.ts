@@ -14,14 +14,14 @@ import type {
 } from "../src/types";
 import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
-import { costUnit, formatSchemaFingerprint } from "../src/types";
+import { costUnit, formatClaudeSchemaFingerprint, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
 import {
   compressBreakpoints,
   sensitivityFallbackTotal,
   sweepMix,
 } from "../src/sensitivity";
-import { workspaceLabel } from "../src/workspaceLabel";
+import { claudeUnmappedWorkspace, workspaceLabel } from "../src/workspaceLabel";
 import {
   assignPointColors,
   chartDescription,
@@ -2177,6 +2177,147 @@ function renderUsage() {
         ? ` (+${u.unknownModels.length - 10} more)`
         : "") +
       ".";
+  renderClaudeUsage();
+}
+
+/**
+ * Claude Code's ledger, in tokens, in its own tables. Deliberately separate from
+ * the Copilot tables above: the two are different clients under different
+ * billing models, so no total, column, or note here is combined with those.
+ */
+function renderClaudeUsage() {
+  if (!state) return;
+  const card = el("claude-usage-card");
+  const c = state.claudeUsage;
+  const num = (n: number) =>
+    new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
+  if (!c) {
+    // Only hide the card when the source is genuinely not in play; a consent
+    // that includes Claude Code with no transcripts yet still shows the card.
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  el("claude-usage-summary").textContent =
+    `${c.requestCount} turns across ${c.fileCount} Claude Code transcript${c.fileCount === 1 ? "" : "s"} · ` +
+    `${num(c.totals.inputTokens)} input · ${num(c.totals.outputTokens)} output · ` +
+    `${num(c.totals.cacheReadTokens)} cache read · ${num(c.totals.cacheWriteTokens)} cache write tokens.`;
+  const prints = (c.schemaFingerprints ?? []).slice(0, 5);
+  el("claude-usage-diagnostics").textContent =
+    (prints.length
+      ? " Transcripts don't match any known Claude Code schema — please file an issue with the fingerprint(s): " +
+        prints
+          .map(
+            ({ fingerprint, files }) =>
+              `${files} file(s): ${formatClaudeSchemaFingerprint(fingerprint)}`,
+          )
+          .join("; ")
+      : "") +
+    (c.diagnostics.malformed || c.diagnostics.unreadable
+      ? ` ${c.diagnostics.malformed} malformed records · ${c.diagnostics.unreadable} unreadable files.`
+      : "");
+  const table = (
+    caption: string,
+    head: string[],
+    rows: string[][],
+  ): HTMLElement => {
+    const wrap = document.createElement("div");
+    const tbl = document.createElement("table");
+    const cap = document.createElement("caption");
+    cap.textContent = caption;
+    tbl.append(cap);
+    const headRow = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const h of head) {
+      const th = document.createElement("th");
+      th.textContent = h;
+      hr.append(th);
+    }
+    headRow.append(hr);
+    tbl.append(headRow);
+    const body = document.createElement("tbody");
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      for (const cell of row) {
+        const td = document.createElement("td");
+        td.textContent = cell;
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+    tbl.append(body);
+    wrap.append(tbl);
+    return wrap;
+  };
+  const modelsEl = el("claude-usage-models");
+  const daysEl = el("claude-usage-days");
+  const wsEl = el("claude-usage-workspaces");
+  modelsEl.replaceChildren();
+  daysEl.replaceChildren();
+  wsEl.replaceChildren();
+  if (c.models.length)
+    modelsEl.append(
+      table(
+        "By model",
+        ["Model", "Turns", "Input", "Output", "Cache read", "Cache write"],
+        c.models.map((m) => [
+          m.modelId,
+          String(m.requests),
+          num(m.inputTokens),
+          num(m.outputTokens),
+          num(m.cacheReadTokens),
+          num(m.cacheWriteTokens),
+        ]),
+      ),
+    );
+  if (c.days.length)
+    daysEl.append(
+      table(
+        "By day",
+        ["Date", "Turns", "Input", "Output", "Cache read", "Cache write"],
+        c.days.map((d) => [
+          d.date,
+          String(d.requests),
+          num(d.inputTokens),
+          num(d.outputTokens),
+          num(d.cacheReadTokens),
+          num(d.cacheWriteTokens),
+        ]),
+      ),
+    );
+  if (c.workspaces.length) {
+    const shown = c.workspaces;
+    const wrap = table(
+      "By workspace",
+      ["Workspace", "Turns", "Input", "Output", "Cache read", "Cache write"],
+      shown.map((w) => [
+        workspaceLabel(w.path, w.id, usageFullPaths, claudeUnmappedWorkspace),
+        String(w.requests),
+        num(w.inputTokens),
+        num(w.outputTokens),
+        num(w.cacheReadTokens),
+        num(w.cacheWriteTokens),
+      ]),
+    );
+    // Full paths stay in a tooltip and never leave the machine.
+    wrap.querySelectorAll("tbody tr").forEach((tr, i) => {
+      const cell = tr.querySelector("td");
+      if (cell && shown[i].path) cell.title = shown[i].path;
+    });
+    wsEl.append(wrap);
+  }
+  const held: string[] = [];
+  if (c.exclusions.sidechain)
+    held.push(
+      `${c.exclusions.sidechain} subagent turn${c.exclusions.sidechain === 1 ? "" : "s"} held out of these totals, because a subagent's work is its parent's seen twice`,
+    );
+  if (c.exclusions.missingTokens)
+    held.push(
+      `${c.exclusions.missingTokens} turn${c.exclusions.missingTokens === 1 ? "" : "s"} with no readable token count`,
+    );
+  el("claude-usage-exclusions").textContent = held.length
+    ? `${held.join(" · ")}. Model names are reported by Claude Code and shown as they appear.`
+    : "Model names are reported by Claude Code and shown as they appear.";
 }
 const comparisonCharts: Chart<"scatter">[] = [];
 const overlaySidePointStyle: Record<Side, "circle" | "rectRot"> = {

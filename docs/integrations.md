@@ -109,6 +109,49 @@ evidence is in `docs/testing.md`; the underlying investigation is
 | 1.18.32 | Linux | npm global (postinstall binary) | 1.x surface unchanged after the 2.x work: 204 rows / 189 variants / 22 free, `--expect-free` satisfied, `cliVersion` 1.18.32 | 2026-09-26 | local run of `scripts/opencode-smoke.ts` against a real 1.18.32 install | `test/fixtures/opencode/verbose-1.18.30.txt` (the 1.x contract fixture) |
 | 2.0.16 | Linux | install script (`~/.opencode/bin`) | `models --verbose` exits 1 (`Unrecognized flag: --verbose`), but `api model.list` returns the full listing: 143 rows / 124 variants / 76 priced / 22 free / 24 long-context tiers, `--expect-free` satisfied, `cliVersion` 2.0.16. `api` is absent on 1.x and `--verbose` on 2.x, so neither surface serves both. `--version` prints `opencode v2.0.16`. Still absent in 2.0.16: `--refresh`, `db` | 2026-09-26 | local run of `scripts/opencode-smoke.ts` against a real 2.0.16 install; surface established from `opencode api GET /openapi.json` (`Model.Info`, `Model.Cost`, `Model.Variant`) | `test/fixtures/opencode/model-list-2.0.16.json` (sanitized representative of the observed shape, not a raw capture) |
 
+## Claude Code transcripts (`src/usageClaude.ts`)
+
+Boundary: `~/.claude/projects/<projectSlug>/<sessionId>.jsonl`, registered as a
+`UsageRoot` with `layout: "claude-transcripts"` and its own id, so it shares the
+one consent set and the one source list while never being walked as a Copilot
+`workspaceStorage` tree. Only `*.jsonl` directly inside a project directory is
+read, because the same tree holds Claude Code's auto memory (`memory/MEMORY.md`),
+which is user content rather than usage. Parsing keys on `type` and reads only
+`assistant` records, whose `usage` carries the same four disjoint buckets
+`src/usage.ts` already models; `isSidechain` marks subagent turns.
+
+| Requirement for a per-request ledger | Available in the transcript? | Notes |
+| --- | --- | --- |
+| Model identity | Yes — `message.model` | Client-reported string, shown verbatim; never prefix-matched to a registry id, which would be inferring from a similar name |
+| Input/output tokens | Yes — `usage.input_tokens`, `usage.output_tokens` | |
+| Cache buckets | Yes — `usage.cache_read_input_tokens`, `usage.cache_creation_input_tokens` | The disjoint buckets `estimate` already models |
+| Timestamp | Yes — envelope `timestamp` (ISO string) | A bare number is accepted only when it is plainly epoch milliseconds |
+| Workspace attribution | Yes — `cwd` | Same sensitivity as `UsageWorkspaceStat.editor`; full paths stay in tooltips |
+| Subagent turns | Yes — `isSidechain` | Held out of the headline totals and counted, never dropped silently |
+| Billing tier signal | Yes — `usage.service_tier` | **Never adopted as a rate.** The client computes its own cost; a client-reported price is not a catalog rate |
+| Schema version | Envelope `version` | Better than Copilot, which exposes no version at all |
+| Vendor-documented record schema | **No** | The directory reference documents `projects/` for auto memory and the CLI reference acknowledges transcripts are purgeable, but no field list or stability promise is published |
+
+| Client version | OS | Verified scope | Date | Evidence | Fixture |
+| --- | --- | --- | --- | --- | --- |
+| 2.1.280 | Linux | **Shape only.** Key names, record-type names, and row counts read from 8 transcripts; no token, model, path, or content value was recorded. The source has not been run against a real installation | 2026-09-26 | `docs/other-client-usage-investigation.md` | `test/fixtures/usage/claude/*.jsonl` (synthetic representatives written for these tests, not captures) |
+
+Drift case: `test/fixtures/usage/claude/session-drifted.jsonl` is a synthetic
+future shape — `assistant` records whose `usage` carries renamed buckets, plus
+two unknown record `type` values. `parseClaudeTranscript` reports it
+`unsupported` with a `claude-jsonl v1 client=… no-usage.input_tokens …`
+fingerprint rather than as a silent zero, and a file that already contributed
+keeps its data and is marked stale. The other 13 known record types are
+**ignored, not counted malformed**: in the observed sample they outnumber
+`assistant` records roughly two to one.
+
+**Unverified:** every platform and version other than the single Linux 2.1.280
+observation — macOS and Windows paths follow each platform's home convention but
+were never sampled, no real transcript has been parsed end to end, real
+multi-root or relocated `cwd` attribution is untested, and how often
+`isSidechain` is set in real traffic is unknown. A release that changes any of
+these fields is expected to surface as a fingerprint, not a wrong total.
+
 Drift cases: `test/fixtures/opencode/drifted.txt` is a hypothetical future 1.x
 shape (a single top-level JSON document with no `provider/model` header
 lines). `parseModels` rejects it with a `parse` error carrying

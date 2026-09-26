@@ -212,6 +212,122 @@ export interface UsageLegacyFingerprint {
 export type UsageSchemaFingerprint =
   | UsageJsonlFingerprint
   | UsageLegacyFingerprint;
+
+/**
+ * Content-free fingerprint of a Claude Code transcript. `clientVersion` is the
+ * one value carried verbatim: the client's own version string is the single most
+ * useful thing a drift report can name, and it identifies a build rather than
+ * the user. Everything else is field presence and bounded counts — never model
+ * ids, token values, paths, or message content.
+ */
+export interface ClaudeSchemaFingerprint {
+  version: 1;
+  format: "claude-jsonl";
+  /** The envelope `version` field when it is a short dotted token, else null. */
+  clientVersion: string | null;
+  lines: number;
+  /** Distinct record `type` values seen, sorted and capped. */
+  kinds: string[];
+  /** An `assistant` record was found. */
+  assistant: boolean;
+  envelopeCwd: boolean;
+  envelopeTimestamp: boolean;
+  envelopeIsSidechain: boolean;
+  envelopeSessionId: boolean;
+  messageModel: boolean;
+  messageUsage: boolean;
+  usageInput: boolean;
+  usageOutput: boolean;
+  usageCacheRead: boolean;
+  usageCacheWrite: boolean;
+  /** Lines whose `type` matched no known value. */
+  unknownLines: number;
+}
+/** One-line, content-free rendering of a Claude transcript fingerprint. */
+export const formatClaudeSchemaFingerprint = (
+  fp: ClaudeSchemaFingerprint,
+): string => {
+  const kinds = fp.kinds.length ? fp.kinds.join(",") : "none";
+  const flag = (v: boolean) => (v ? "" : "no-");
+  return (
+    `claude-jsonl v1 client=${fp.clientVersion ?? "unknown"} lines=${fp.lines} ` +
+    `kinds=[${kinds}] unknownLines=${fp.unknownLines} ` +
+    `${flag(fp.assistant)}assistant ${flag(fp.envelopeCwd)}cwd ` +
+    `${flag(fp.envelopeTimestamp)}timestamp ${flag(fp.envelopeIsSidechain)}isSidechain ` +
+    `${flag(fp.envelopeSessionId)}sessionId ${flag(fp.messageModel)}message.model ` +
+    `${flag(fp.messageUsage)}message.usage ${flag(fp.usageInput)}usage.input_tokens ` +
+    `${flag(fp.usageOutput)}usage.output_tokens ${flag(fp.usageCacheRead)}usage.cache_read_input_tokens ` +
+    `${flag(fp.usageCacheWrite)}usage.cache_creation_input_tokens`
+  );
+};
+
+/**
+ * One Claude Code assistant turn. Token buckets are the four disjoint ones
+ * `estimate` already models. There is deliberately no cost, premium-request, or
+ * credit field: the client computes its own cost, and a client-reported price is
+ * never adopted as a rate (see docs/other-client-usage-investigation.md).
+ */
+export interface ClaudeUsageRequest {
+  sessionId: string;
+  requestIndex: number;
+  /** Client-reported model string, shown verbatim; never mapped to a rate. */
+  modelId: string | null;
+  timestampMs: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** A subagent turn: excluded from headline totals, counted separately. */
+  sidechain: boolean;
+}
+export interface ClaudeUsageTotals {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+export interface ClaudeUsageModelStat extends ClaudeUsageTotals {
+  modelId: string;
+}
+export interface ClaudeUsageDayStat extends ClaudeUsageTotals {
+  date: string;
+}
+export interface ClaudeUsageWorkspaceStat extends ClaudeUsageTotals {
+  id: string;
+  path: string;
+}
+/** How many turns were held back for each stated reason, so nothing is silent. */
+export interface ClaudeUsageExclusions {
+  /** Subagent turns held out of the headline totals. */
+  sidechain: number;
+  /** Assistant records with no usable token bucket at all. */
+  missingTokens: number;
+}
+/**
+ * Claude Code's own ledger, in tokens. Deliberately a separate type from
+ * `UsageSummary`: Copilot bills in premium requests or AI credits and this bills
+ * as a subscription or API usage, so the two are never summed, never share a
+ * percentile, and never feed the same budget or scenario projection.
+ */
+export interface ClaudeUsageSummary {
+  scannedAt: number;
+  fileCount: number;
+  requestCount: number;
+  totals: ClaudeUsageTotals;
+  exclusions: ClaudeUsageExclusions;
+  diagnostics: UsageDiagnostics;
+  unknownModels: string[];
+  dateRange: { from: number; to: number } | null;
+  models: ClaudeUsageModelStat[];
+  days: ClaudeUsageDayStat[];
+  workspaces: ClaudeUsageWorkspaceStat[];
+  /** Distinct fingerprints of unsupported transcripts, with file counts. */
+  schemaFingerprints?: {
+    fingerprint: ClaudeSchemaFingerprint;
+    files: number;
+  }[];
+}
 /** One-line, content-free rendering of a schema fingerprint for UI/issues. */
 export const formatSchemaFingerprint = (
   fp: UsageSchemaFingerprint,
@@ -678,6 +794,9 @@ export interface ViewState {
   drift: Record<string, ScoreDrift>;
   byok: ByokStore;
   usage: UsageSummary | null;
+  /** Claude Code's own token ledger, when that source is included. Never
+   * merged into `usage`: different client, different billing unit. */
+  claudeUsage?: ClaudeUsageSummary | null;
   usageWatching: boolean;
   usagePaused: boolean;
   /** Every known chat-session root, whether it exists here and is included.
