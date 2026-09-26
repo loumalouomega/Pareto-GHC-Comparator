@@ -2,7 +2,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   baseModelIdOf,
   compare,
@@ -39,7 +39,13 @@ import {
   parseUsageLegacyJson,
   premiumForRequest,
   selectChangedFiles,
-  storageCandidates,
+  consentedUsageRoots,
+  detectUsageRoots,
+  editorForPath,
+  legacyUsageRootIds,
+  uniqueRoots,
+  unknownEditorLabel,
+  usageRoots,
   suggestBudget,
   uriToPath,
   usageParserVersion,
@@ -433,6 +439,22 @@ test("workload excludes display settings but keeps source and freeOnly", () => {
   assert.ok(!("display" in w));
   assert.equal(w.source, "copilot");
   assert.equal(w.freeOnly, true);
+});
+
+test("usage source messages carry only a root id the host can resolve", () => {
+  for (const type of ["usageAddRoot", "usageRemoveRoot"] as const) {
+    assert.deepEqual(parseMessage({ type, id: "cursor" }), { type, id: "cursor" });
+    assert.deepEqual(parseMessage({ type, id: "/etc/passwd" }), {
+      type,
+      id: "/etc/passwd",
+    });
+    // A missing or non-string id is refused here.
+    for (const bad of [{}, { id: 7 }, { id: ["cursor"] }])
+      assert.throws(() => parseMessage({ type, ...bad }), /Invalid action/);
+    // An id the registry does not know still crosses this layer: identity is
+    // the host's call, and it refuses with an explanation rather than reading
+    // anything (see the per-source host test).
+  }
 });
 
 test("host messages validate pins, exclusions, and exports", () => {
@@ -1721,12 +1743,217 @@ test("usage file index selects changed files and reports deletions", () => {
 });
 
 test("usage storage roots and URIs resolve per platform", () => {
-  assert.ok(storageCandidates("linux", {}).some((p) => p.endsWith("Code/User/workspaceStorage")));
-  assert.ok(storageCandidates("darwin", {}).some((p) => p.includes("Application Support")));
-  assert.ok(storageCandidates("win32", { APPDATA: "C:/A" }).some((p) => p.startsWith("C:/A")));
+  const linux = usageRoots("linux", {}, "/home/u");
+  assert.ok(linux.some((r) => r.path.endsWith("Code/User/workspaceStorage")));
+  assert.ok(usageRoots("darwin", {}, "/Users/u").some((r) => r.path.includes("Application Support")));
+  assert.ok(usageRoots("win32", { APPDATA: "C:/A" }, "C:/u").some((r) => r.path.startsWith("C:/A")));
   assert.equal(uriToPath("file:///c%3A/repo", "/root"), "c:/repo");
   assert.equal(uriToPath("plain/path", "/root"), "plain/path");
   assert.ok(uriToPath("vscode-userdata:///Code/settings.json", "/a/b/Code/User/workspaceStorage").endsWith("Code/settings.json"));
+});
+
+/** Wrap a bare path in the registry shape the discovery helpers take. */
+const usageRoot = (path: string) => ({
+  id: path,
+  editor: "Test editor",
+  label: "Test editor",
+  path,
+  purpose: "test",
+});
+
+test("every known chat-session root carries a label, a path, and a stated purpose", () => {
+  const linux = usageRoots("linux", {}, "/home/u");
+  assert.deepEqual(
+    linux.map((r) => r.id).slice(0, 2),
+    ["code", "code-insiders"],
+  );
+  // Remote-SSH / WSL / dev container hosts, reachable because the extension
+  // host runs on the remote side.
+  assert.ok(
+    linux.some(
+      (r) =>
+        r.path === "/home/u/.vscode-server/data/User/workspaceStorage" &&
+        /Remote-SSH/.test(r.purpose),
+    ),
+  );
+  assert.ok(
+    linux.some((r) => r.id === "vscode-server-insiders"),
+  );
+  // VS Code Server never runs on a Windows host, so no server root is offered.
+  assert.ok(
+    !usageRoots("win32", { APPDATA: "C:/A" }, "C:/u").some((r) =>
+      r.id.startsWith("vscode-server"),
+    ),
+  );
+  // Forks are named, never asserted to support Copilot.
+  assert.ok(linux.some((r) => r.id === "cursor"));
+  assert.ok(linux.some((r) => r.id === "vscodium"));
+  for (const root of linux) {
+    assert.ok(root.label.length > 0, root.id);
+    assert.ok(root.purpose.includes("nothing is uploaded"), root.id);
+    assert.equal(root.editor.length > 0, true);
+  }
+  // A duplicated path is listed once, so its data is never counted twice.
+  const stable = usageRoots("linux", {}, "/home/u");
+  const code = stable.find((r) => r.id === "code")!;
+  assert.deepEqual(
+    uniqueRoots([code, { ...code, id: "code-again" }]).map((r) => r.id),
+    ["code"],
+  );
+  assert.equal(
+    new Set(
+      usageRoots("linux", { XDG_CONFIG_HOME: "/home/u/.config" }, "/home/u").map(
+        (r) => r.path,
+      ),
+    ).size,
+    usageRoots("linux", { XDG_CONFIG_HOME: "/home/u/.config" }, "/home/u").length,
+  );
+});
+
+test("a file is attributed to the longest matching root, or to no editor", () => {
+  const roots = usageRoots("linux", {}, "/home/u");
+  const code = roots.find((r) => r.id === "code")!;
+  assert.equal(
+    editorForPath(`${code.path}/abc/chatSessions/s.jsonl`, roots)?.id,
+    "code",
+  );
+  // A path that merely starts with the same characters is not inside the root.
+  assert.equal(
+    editorForPath(`${code.path}-backup/abc/chatSessions/s.jsonl`, roots),
+    undefined,
+  );
+  // The root directory itself belongs to that root.
+  assert.equal(editorForPath(code.path, roots)?.id, "code");
+  assert.equal(editorForPath("/elsewhere/Code/x.jsonl", roots), undefined);
+  // With nested roots the deepest match wins, so a file is never attributed to
+  // a parent root that merely contains another one.
+  const nested = [
+    { id: "outer", editor: "Outer", label: "Outer", path: "/r", purpose: "" },
+    { id: "inner", editor: "Inner", label: "Inner", path: "/r/code", purpose: "" },
+  ];
+  assert.equal(editorForPath("/r/code/w/chatSessions/s.jsonl", nested)?.id, "inner");
+  assert.equal(editorForPath("/r/other/chatSessions/s.jsonl", nested)?.id, "outer");
+});
+
+test("roots are detected by existence, never by reading inside them", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pareto-roots-"));
+  const present = join(dir, "Code", "User", "workspaceStorage");
+  mkdirSync(present, { recursive: true });
+  // A chatSessions directory that no root points at must stay unread.
+  const file = join(dir, "Code", "User", "workspaceStorage", "ws", "chatSessions", "s.jsonl");
+  mkdirSync(join(dirname(file)), { recursive: true });
+  writeFileSync(file, "{}\n");
+  const roots = [
+    usageRoot(present),
+    usageRoot(join(dir, "Cursor", "User", "workspaceStorage")),
+  ];
+  const found = await detectUsageRoots(roots);
+  assert.deepEqual(found.map((r) => r.path), [present]);
+});
+
+test("consent migrates to the two VS Code roots and never adds a source", () => {
+  const known = usageRoots("linux", {}, "/home/u");
+  // A pre-registry consent covered exactly VS Code stable and Insiders.
+  assert.deepEqual(
+    consentedUsageRoots({ usageConsent: true }, known).map((r) => r.id),
+    [...legacyUsageRootIds],
+  );
+  assert.deepEqual(consentedUsageRoots({}, known), []);
+  assert.deepEqual(consentedUsageRoots({ usageConsent: false }, known), []);
+  // A stored list wins, and unknown or malformed ids are dropped, not trusted.
+  assert.deepEqual(
+    consentedUsageRoots(
+      { usageRoots: ["cursor", "not-a-root", 7, "code"], usageConsent: true },
+      known,
+    ).map((r) => r.id),
+    ["code", "cursor"],
+  );
+  assert.deepEqual(consentedUsageRoots({ usageRoots: "cursor" }, known), []);
+  // A stored list means no migration back to the legacy flag's meaning.
+  assert.deepEqual(
+    consentedUsageRoots({ usageRoots: [] }, known).map((r) => r.id),
+    [],
+  );
+});
+
+test("totals are split per editor and workspaces never merge across editors", () => {
+  const roots = [
+    { id: "code", editor: "VS Code", label: "VS Code", path: "/r/code", purpose: "" },
+    { id: "cursor", editor: "Cursor", label: "Cursor", path: "/r/cursor", purpose: "" },
+  ];
+  const request = (over: Record<string, unknown> = {}) => ({
+    sessionId: "s",
+    workspaceId: "w",
+    requestIndex: 0,
+    modelId: "copilot/gpt-5-mini",
+    timestampMs: Date.parse("2026-09-01T10:00:00Z"),
+    promptTokens: 100,
+    outputTokens: 50,
+    toolCallRounds: 0,
+    tokensEstimated: false,
+    promptProvenance: "observed" as const,
+    outputProvenance: "observed" as const,
+    ...over,
+  });
+  const summary = aggregateUsage(
+    [
+      {
+        path: "/r/code/w/chatSessions/a.jsonl",
+        workspaceId: "w",
+        workspacePath: "/repo",
+        requests: [request()],
+      },
+      {
+        path: "/r/cursor/w/chatSessions/b.jsonl",
+        workspaceId: "w",
+        workspacePath: "/other",
+        requests: [request({ requestIndex: 1 })],
+      },
+      {
+        path: "/somewhere-else/w/chatSessions/c.jsonl",
+        workspaceId: "w",
+        workspacePath: "/unknown",
+        requests: [request({ requestIndex: 2 })],
+      },
+    ],
+    Date.now(),
+    undefined,
+    roots,
+  );
+  assert.equal(summary.requestCount, 3);
+  assert.equal(summary.editors?.length, 3);
+  const vscode = summary.editors?.find((e) => e.editor === "VS Code");
+  assert.equal(vscode?.requests, 1);
+  assert.equal(vscode?.fileCount, 1);
+  assert.equal(vscode?.rootId, "code");
+  // A file under no known root is reported as unknown, never folded into a
+  // neighbour's editor.
+  const unknown = summary.editors?.find((e) => e.editor === unknownEditorLabel);
+  assert.equal(unknown?.requests, 1);
+  assert.equal(unknown?.rootId, null);
+  // The same workspace id in two editors stays two rows, each with its path.
+  assert.equal(summary.workspaces.length, 3);
+  // Equal request counts, so the editor label breaks the tie; the unattributed
+  // row has no label and sorts first.
+  assert.deepEqual(
+    summary.workspaces.map((w) => w.editor),
+    [undefined, "Cursor", "VS Code"],
+  );
+  assert.deepEqual(
+    summary.workspaces.map((w) => w.path),
+    ["/unknown", "/other", "/repo"],
+  );
+  // Per-editor sums add up to the overall totals.
+  assert.equal(
+    summary.editors?.reduce((sum, e) => sum + e.requests, 0),
+    summary.requestCount,
+  );
+  // Without a path there is nothing to attribute, and nothing is invented.
+  const anonymous = aggregateUsage([
+    { workspaceId: "w", workspacePath: "", requests: [request()] },
+  ]);
+  assert.equal(anonymous.editors?.[0].editor, unknownEditorLabel);
+  assert.equal(anonymous.workspaces[0].editor, undefined);
 });
 
 test("usage aggregation totals requests with per-event premium eras", () => {
@@ -1915,7 +2142,9 @@ test("usage discovery resolves workspaces across storage roots", async () => {
   );
   writeFileSync(join(root, "ws1", "chatSessions", "notes.txt"), "ignore me");
   writeFileSync(join(root, "ws2", "chatSessions", "c.jsonl"), "\n");
-  const found = await discoverUsageFiles([root, join(root, "missing")]);
+  const found = await discoverUsageFiles(
+    [root, join(root, "missing")].map((path) => usageRoot(path)),
+  );
   assert.equal(found.length, 3);
   const byFile = new Map(found.map((c) => [c.filePath.split("/").pop(), c]));
   assert.equal(byFile.get("a.jsonl")?.workspacePath, repo);
@@ -1962,10 +2191,10 @@ test("usage resolution tolerates malformed workspace metadata", async () => {
   assert.ok(fallback.path.endsWith("flat.code-workspace"));
   mkdirSync(join(root, "plain", "chatSessions", "d.jsonl"), { recursive: true });
   mkdirSync(join(root, "nochats"));
-  const found = await discoverUsageFiles([root, root]);
+  const found = await discoverUsageFiles([usageRoot(root), usageRoot(root)]);
   const names = found.map((c) => c.filePath.split("/").pop());
   assert.ok(!names.includes("d.jsonl"));
-  assert.ok(storageCandidates("win32", {}).some((p) => p.includes("AppData")));
+  assert.ok(usageRoots("win32", {}, "C:/u").some((r) => r.path.includes("AppData")));
   assert.ok(uriToPath("vscode-userdata:///Code/x", "").startsWith("/"));
   assert.ok(!validUsageFile({ version: 1, scannedAt: NaN, index: blankUsageIndex(), files: {} }));
   assert.ok(!validUsageFile({
@@ -2349,4 +2578,35 @@ test("a benchmark override on an unpriced model never establishes a price", () =
   assert.equal(overridden.cost, null);
   assert.equal(overridden.mappingStatus, "user");
   assert.deepEqual(overridden.pricing, automatic.pricing);
+});
+
+test("non-record lines and non-record appends count as malformed, not as data", () => {
+  const result = JSON.stringify({
+    kind: 1,
+    k: ["requests", 0, "result"],
+    v: {
+      metadata: {
+        modelId: "copilot/gpt-5-mini",
+        promptTokens: 10,
+        outputTokens: 5,
+      },
+    },
+  });
+  // A line that parses but is not an object, and an append array holding one.
+  const parsed = parseUsageJsonl(
+    [
+      "42",
+      JSON.stringify({ kind: 2, k: ["requests"], v: ["nope", { modelId: "copilot/gpt-5-mini" }] }),
+      result,
+    ].join("\n"),
+    "ws",
+    "session",
+  );
+  assert.equal(parsed.diagnostics.malformed, 2);
+  // A recognized result still makes the file supported, not unsupported.
+  assert.equal(parsed.diagnostics.unsupported, 0);
+  assert.equal(parsed.requests.length, 1);
+  assert.equal(parsed.requests[0].modelId, "copilot/gpt-5-mini");
+  assert.equal(parsed.requests[0].promptTokens, 10);
+  assert.equal(parsed.requests[0].outputTokens, 5);
 });

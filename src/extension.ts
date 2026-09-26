@@ -50,19 +50,24 @@ import {
 import {
   aggregateUsage,
   blankUsageIndex,
+  consentedUsageRoots,
+  detectUsageRoots,
   discoverUsageFiles,
+  editorForPath,
+  legacyUsageRootIds,
   normalizeUsageModelId,
   parseUsageJsonl,
   parseUsageLegacyJson,
   parseUsageRetentionDays,
   purgeUsageRetention,
   selectChangedFiles,
-  storageCandidates,
   suggestBudget,
+  usageRoots,
   validUsageFile,
   usageParserVersion,
   emptyUsageDiagnostics,
   type StoredUsageFile,
+  type UsageRoot,
 } from "./usage";
 import { readFile as readLocalFile } from "node:fs/promises";
 import { basename, extname, sep } from "node:path";
@@ -79,6 +84,7 @@ import type {
   HostMessage,
   Snapshot,
   Source,
+  UsageSourceView,
   UsageSummary,
   ViewState,
 } from "./types";
@@ -171,6 +177,56 @@ export function activate(context: vscode.ExtensionContext) {
   let usageStatusItem: vscode.StatusBarItem | undefined;
   const isUsagePaused = () =>
     context.globalState.get("usagePaused", false);
+  /**
+   * Roots the user has opted into. Reads migrate the pre-registry
+   * `usageConsent` flag to exactly the two VS Code roots it used to cover, so
+   * upgrading never adds a data source on the user's behalf, and the legacy
+   * flag is cleared once the list exists.
+   */
+  const hasUsageConsent = (): boolean => consented().length > 0;
+  let consentMigrated = false;
+  const consented = (): UsageRoot[] => {
+    const roots = consentedUsageRoots({
+      usageRoots: context.globalState.get("usageRoots"),
+      usageConsent: context.globalState.get("usageConsent"),
+    });
+    if (!consentMigrated && roots.length) {
+      consentMigrated = true;
+      void context.globalState.update("usageConsent", undefined);
+      void context.globalState.update(
+        "usageRoots",
+        roots.map((root) => root.id),
+      );
+    }
+    return roots;
+  };
+  const setConsented = async (ids: string[]) => {
+    await context.globalState.update("usageRoots", ids);
+    await context.globalState.update("usageConsent", undefined);
+  };
+  /** Every known root as the Usage tab presents it: existence is detected
+   * without reading inside a root, so an un-included editor is only named. */
+  let detectedRootIds = new Set<string>();
+  const refreshDetectedRoots = async () => {
+    detectedRootIds = new Set(
+      (await detectUsageRoots(usageRoots())).map((root) => root.id),
+    );
+  };
+  const usageSourceViews = (): UsageSourceView[] => {
+    const included = new Set(consented().map((root) => root.id));
+    const byRoot = new Map((usage?.editors ?? []).map((e) => [e.rootId, e]));
+    return usageRoots().map((root) => {
+      const stat = byRoot.get(root.id);
+      return {
+        id: root.id,
+        label: root.label,
+        purpose: root.purpose,
+        detected: detectedRootIds.has(root.id),
+        included: included.has(root.id),
+        ...(stat ? { fileCount: stat.fileCount, requests: stat.requests } : {}),
+      };
+    });
+  };
   /** Read `paretoGhc.*` settings; unconfigured values leave stored state in
    * charge, so existing users keep their behavior until they touch a setting.
    * Falls back to all-unconfigured when the host offers no configuration API
@@ -238,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
   const updateUsageStatus = () => {
     if (!usageStatusItem) return;
-    if (!context.globalState.get("usageConsent", false)) {
+    if (!hasUsageConsent()) {
       usageStatusItem.hide();
       return;
     }
@@ -286,15 +342,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
   const setupUsageWatchers = () => {
+    const roots = consented();
     if (
-      !context.globalState.get("usageConsent", false) ||
+      !roots.length ||
       isUsagePaused() ||
       usageWatchers.length ||
       typeof vscode.workspace.createFileSystemWatcher !== "function" ||
       typeof vscode.RelativePattern !== "function"
     )
       return;
-    for (const root of storageCandidates()) {
+    // Only roots the user included are ever watched.
+    for (const { path: root } of roots) {
       for (const pattern of [
         "**/chatSessions/*.jsonl",
         "**/chatSessions/*.json",
@@ -319,7 +377,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
   const ensureUsageConsent = async (): Promise<boolean> => {
-    if (context.globalState.get("usageConsent", false)) return true;
+    if (hasUsageConsent()) return true;
     const generation = usageGeneration;
     const choice = await vscode.window.showInformationMessage(
       "Scan local Copilot chat sessions for usage totals? Files stay on this machine; nothing is uploaded.",
@@ -329,16 +387,24 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Scan locally" || generation !== usageGeneration)
       return false;
-    await context.globalState.update("usageConsent", true);
+    // The first consent covers the two VS Code roots, which is exactly what it
+    // covered before other editors could be included.
+    await setConsented([...legacyUsageRootIds]);
     return true;
   };
   const runUsageScan = async () => {
-    if (usageScanning || !context.globalState.get("usageConsent", false))
+    if (usageScanning || !hasUsageConsent())
       return;
     const generation = usageGeneration;
+    // Read exactly the roots consented at this moment, and abort if that set
+    // changes mid-scan: a root removed while scanning is never read further.
+    const roots = consented();
+    const rootIds = roots.map((root) => root.id).join(",");
     const current = () =>
       generation === usageGeneration &&
-      context.globalState.get("usageConsent", false);
+      consented()
+        .map((root) => root.id)
+        .join(",") === rootIds;
     usagePending = scan();
     await usagePending;
     async function scan() {
@@ -347,7 +413,7 @@ export function activate(context: vscode.ExtensionContext) {
       render();
       try {
         const unreadable: string[] = [];
-        const candidates = await discoverUsageFiles(undefined, unreadable);
+        const candidates = await discoverUsageFiles(roots, unreadable);
         if (!current()) return;
         const stored = await readStoredUsage();
         if (!current()) return;
@@ -460,7 +526,14 @@ export function activate(context: vscode.ExtensionContext) {
           purgedRequests = purged.purgedRequests;
           purgedFiles = purged.purgedFiles;
         }
-        usage = aggregateUsage(Object.values(storedFiles), scannedAt);
+        // File paths carry the root they were read from, so each editor's share
+        // is attributed from the registry rather than guessed.
+        usage = aggregateUsage(
+          Object.entries(storedFiles).map(([path, file]) => ({ path, ...file })),
+          scannedAt,
+          undefined,
+          usageRoots(),
+        );
         await writeSnapshotFile(usageSummaryUri, {
           version: 2,
           scannedAt,
@@ -487,7 +560,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const loadUsage = async () => {
     const generation = usageGeneration;
-    if (!context.globalState.get("usageConsent", false)) return;
+    if (!hasUsageConsent()) return;
     const stored = await readStoredUsage();
     if (
       stored &&
@@ -501,11 +574,11 @@ export function activate(context: vscode.ExtensionContext) {
     if (
       stored &&
       generation === usageGeneration &&
-      context.globalState.get("usageConsent", false)
+      hasUsageConsent()
     ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
       if (
-        context.globalState.get("usageConsent", false) &&
+        hasUsageConsent() &&
         shouldAutoWatch()
       )
         setupUsageWatchers();
@@ -704,6 +777,7 @@ export function activate(context: vscode.ExtensionContext) {
       usage,
       usageWatching: usageWatchers.length > 0,
       usagePaused: isUsagePaused(),
+      usageSources: usageSourceViews(),
       usageRetentionDays: retentionDays(),
       budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
@@ -939,7 +1013,8 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(usageStatusItem);
   }
-  if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+  if (hasUsageConsent()) setupUsageWatchers();
+  void refreshDetectedRoots().then(render);
   updateUsageStatus();
   const clearUsageData = async () => {
     usageGeneration++;
@@ -947,7 +1022,7 @@ export function activate(context: vscode.ExtensionContext) {
     for (const watcher of usageWatchers) watcher.dispose();
     usageWatchers = [];
     usage = null;
-    await context.globalState.update("usageConsent", false);
+    await setConsented([]);
     await context.globalState.update("usagePaused", false);
     await usagePending;
     try {
@@ -974,7 +1049,7 @@ export function activate(context: vscode.ExtensionContext) {
     usageWatchers = [];
   };
   const pauseUsageWatching = async () => {
-    if (!context.globalState.get("usageConsent", false)) {
+    if (!hasUsageConsent()) {
       render();
       return;
     }
@@ -984,13 +1059,120 @@ export function activate(context: vscode.ExtensionContext) {
     render();
   };
   const resumeUsageWatching = async () => {
-    if (!context.globalState.get("usageConsent", false)) {
+    if (!hasUsageConsent()) {
       render();
       return;
     }
     await context.globalState.update("usagePaused", false);
     setupUsageWatchers();
     message = "Watching for new sessions.";
+    render();
+  };
+  /**
+   * Includes one storage root after its own confirmation, then rescans. The
+   * id is resolved against the registry here, never taken from the message as
+   * a path, and a root that does not exist is refused rather than created.
+   */
+  const addUsageRoot = async (id: string) => {
+    const root = usageRoots().find((r) => r.id === id);
+    if (!root) {
+      message = "That is not a known Copilot chat-session source.";
+      render();
+      return;
+    }
+    if (consented().some((r) => r.id === id)) {
+      message = `${root.label} is already included.`;
+      render();
+      return;
+    }
+    await refreshDetectedRoots();
+    if (!detectedRootIds.has(id)) {
+      message = `No ${root.editor} storage directory found on this machine, so nothing would be read.`;
+      render();
+      return;
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `${root.purpose}`,
+      { modal: true },
+      "Include this editor",
+      "Not now",
+    );
+    if (choice !== "Include this editor") {
+      message = `${root.label} not included.`;
+      render();
+      return;
+    }
+    await setConsented([...consented().map((r) => r.id), id]);
+    stopUsageWatchers();
+    setupUsageWatchers();
+    message = `Included ${root.label}. Rescanning local usage…`;
+    render();
+    await runUsageScan();
+  };
+  /**
+   * Drops one root's consent, stored files, and watchers, leaving every other
+   * source untouched — the per-source counterpart to the global erase.
+   */
+  const removeUsageRoot = async (id: string) => {
+    const root = usageRoots().find((r) => r.id === id);
+    if (!root) {
+      message = "That is not a known Copilot chat-session source.";
+      render();
+      return;
+    }
+    if (!consented().some((r) => r.id === id)) {
+      message = `${root.label} is not included.`;
+      render();
+      return;
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `Stop reading ${root.label} and delete its stored usage data? Other included editors keep their data.`,
+      { modal: true },
+      "Stop and remove",
+      "Keep it",
+    );
+    if (choice !== "Stop and remove") {
+      message = `${root.label} unchanged.`;
+      render();
+      return;
+    }
+    const ids = consented()
+      .map((r) => r.id)
+      .filter((r) => r !== id);
+    await setConsented(ids);
+    stopUsageWatchers();
+    const stored = await readStoredUsage();
+    if (stored) {
+      const files: StoredUsageFile["files"] = {};
+      const index = blankUsageIndex();
+      let removedFiles = 0;
+      for (const [path, file] of Object.entries(stored.files)) {
+        if (editorForPath(path, usageRoots())?.id === id) {
+          removedFiles++;
+          continue;
+        }
+        files[path] = file;
+      }
+      for (const [path, entry] of Object.entries(stored.index.files)) {
+        if (files[path]) index.files[path] = entry;
+      }
+      await writeSnapshotFile(usageSummaryUri, {
+        ...stored,
+        files,
+        index,
+      });
+      usage = aggregateUsage(
+        Object.entries(files).map(([path, file]) => ({ path, ...file })),
+        stored.scannedAt,
+        undefined,
+        usageRoots(),
+      );
+      message =
+        removedFiles > 0
+          ? `Stopped reading ${root.label} and deleted ${removedFiles} stored file${removedFiles === 1 ? "" : "s"}.`
+          : `Stopped reading ${root.label}.`;
+    } else message = `Stopped reading ${root.label}.`;
+    if (ids.length) setupUsageWatchers();
     render();
   };
   const showStoredUsageData = async () => {
@@ -1112,7 +1294,7 @@ export function activate(context: vscode.ExtensionContext) {
       : retentionDays();
     if (effectiveRetention !== lastAppliedRetention) {
       lastAppliedRetention = effectiveRetention;
-      if (context.globalState.get("usageConsent", false)) {
+      if (hasUsageConsent()) {
         await runUsageScan();
         scanned = true;
       }
@@ -1126,7 +1308,7 @@ export function activate(context: vscode.ExtensionContext) {
     } else if (
       shouldAutoWatch() &&
       !usageWatchers.length &&
-      context.globalState.get("usageConsent", false)
+      hasUsageConsent()
     ) {
       setupUsageWatchers();
       if (usageWatchers.length) message = "Watching for new sessions.";
@@ -1194,6 +1376,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("paretoGhc.showUsageData", async () => {
       await showStoredUsageData();
+    }),
+    vscode.commands.registerCommand("paretoGhc.manageUsageSources", async () => {
+      openPanel();
+      await refreshDetectedRoots();
+      render();
     }),
     vscode.commands.registerCommand("paretoGhc.open", async () => {
       if (panel) {
@@ -1336,6 +1523,10 @@ export function activate(context: vscode.ExtensionContext) {
               else render();
             } else if (m.type === "clearUsage") {
               await clearUsageData();
+            } else if (m.type === "usageAddRoot") {
+              await addUsageRoot(m.id);
+            } else if (m.type === "usageRemoveRoot") {
+              await removeUsageRoot(m.id);
             } else if (m.type === "pauseUsage") {
               await pauseUsageWatching();
             } else if (m.type === "resumeUsage") {
@@ -1357,7 +1548,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               }
               lastAppliedRetention = days;
-              if (context.globalState.get("usageConsent", false))
+              if (hasUsageConsent())
                 await runUsageScan();
               else render();
             } else if (m.type === "showUsageData") {
@@ -1807,9 +1998,12 @@ export function activate(context: vscode.ExtensionContext) {
         undefined,
         context.subscriptions,
       );
-      // Reopen the stored snapshot for this panel, after the live view has
-      // been wired up: a panel opened again shows the same historical view
-      // until the user returns to live data.
+      // Re-detect which known roots exist now (a panel opened later may follow
+      // an editor install), then reopen the stored snapshot for this panel: a
+      // panel opened again shows the same historical view until the user
+      // returns to live data.
+      await refreshDetectedRoots();
+      render();
       await reopenStoredSnapshot();
     }),
     vscode.lm.onDidChangeChatModels(() => {

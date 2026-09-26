@@ -368,6 +368,31 @@ a {
 .snapshot-banner h2 {
   margin-top: 0;
 }
+/* Editors block in the Usage card: one row per known chat-session root, each
+   with its own opt-in. */
+.usage-sources-block {
+  border-top: 1px solid var(--vscode-panel-border, #80808044);
+  margin: 14px 0;
+  padding-top: 12px;
+}
+.usage-sources-block h3 {
+  margin: 0 0 6px;
+}
+ul.usage-sources {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+ul.usage-sources li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.usage-source-label {
+  font-weight: 600;
+}
 .tabs {
   display: flex;
   gap: 4px;

@@ -83,6 +83,14 @@ Three actions build on a scan. **Use my average** (in the token workload fieldse
 
 The **By workspace** table lists up to 20 workspaces with request, token, and premium totals, labeled by folder basename (multi-root sessions join names with `; `); **Show full paths** reveals absolute paths, kept as tooltips otherwise. Sessions whose workspace cannot be resolved show the storage id with an unmapped-workspace note. Paths never leave the machine.
 
+### Editors and consent
+
+Local usage covers the storage roots you have included. VS Code and VS Code Insiders are covered by the first consent prompt; every other source is added on its own:
+
+- The Usage tab's **Editors** block lists what is included, and any other editor whose storage directory was found on this machine — each with a plain statement of what it reads and its own **Include this editor**, confirmed in a separate prompt. Finding an editor does not read it, and an editor that turns out to hold no Copilot sessions says so rather than showing a zero.
+- The same block has **Stop reading …** per editor, which stops watching it and deletes only that editor's stored data. **Erase Local Copilot Usage** still removes everything at once.
+- Totals are split per editor, and once more than one editor contributes, workspace rows name the editor they came from. Upgrading the extension never adds a source: an existing consent keeps covering exactly the two VS Code roots.
+
 ## Monthly spending scenario
 
 The **Monthly spending scenario** card is a separate what-if projection — fee plus expected usage against a plan's documented allowance and overage rate — kept apart from the cost estimates in the chart and table, and from local usage history. It is off by default (**Off**).

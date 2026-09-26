@@ -8,6 +8,7 @@ import type {
   Row,
   ScenarioHistory,
   ScenarioProvenance,
+  UsageSourceView,
   ViewState,
   HostMessage,
 } from "../src/types";
@@ -1691,6 +1692,76 @@ function renderScenario() {
   }
   if (s.status !== "off") notes.append(text("li", s.disclaimer, "hint"));
 }
+/**
+ * Every known chat-session root with its stated purpose and its own opt-in. A
+ * root the user has not included is only named: the host detected that its
+ * directory exists without reading anything inside it, and Include/Stop go
+ * through the host, which confirms each one separately.
+ */
+function renderUsageSources(
+  target: HTMLElement,
+  sources: UsageSourceView[],
+) {
+  target.replaceChildren();
+  if (!sources.length) return;
+  const included = sources.filter((s) => s.included);
+  const available = sources.filter((s) => s.detected && !s.included);
+  if (included.length)
+    target.append(
+      text(
+        "p",
+        `Included: ${included.map((s) => s.label).join(", ")}.`,
+        "hint",
+      ),
+    );
+  if (available.length) {
+    target.append(
+      text(
+        "p",
+        "Other editors found on this machine — each needs its own consent:",
+        "hint",
+      ),
+    );
+    const list = document.createElement("ul");
+    list.className = "usage-sources";
+    for (const source of available) {
+      const item = document.createElement("li");
+      item.append(
+        text("span", source.label, "usage-source-label"),
+        text("span", ` ${source.purpose}`, "hint"),
+      );
+      const add = text("button", "Include this editor") as HTMLButtonElement;
+      add.setAttribute("aria-label", `Include ${source.label}`);
+      add.onclick = () => send("usageAddRoot", { id: source.id });
+      item.append(add);
+      list.append(item);
+    }
+    target.append(list);
+  } else if (!included.length)
+    target.append(
+      text(
+        "p",
+        "No known Copilot chat-session directory found on this machine. Scan local usage to ask for consent.",
+        "hint",
+      ),
+    );
+  // Removal stays available for every included editor, whether or not there is
+  // anything left to add: a per-source erase must never disappear.
+  if (included.length) {
+    const stops = document.createElement("div");
+    stops.className = "controls";
+    for (const source of included) {
+      const stop = text(
+        "button",
+        `Stop reading ${source.label}`,
+        "secondary",
+      ) as HTMLButtonElement;
+      stop.onclick = () => send("usageRemoveRoot", { id: source.id });
+      stops.append(stop);
+    }
+    target.append(stops);
+  }
+}
 function renderUsage() {
   if (!state) return;
   const u = state.usage;
@@ -1717,10 +1788,14 @@ function renderUsage() {
   const summary = el("usage-summary");
   const modelsEl = el("usage-models"),
     daysEl = el("usage-days"),
-    wsEl = el("usage-workspaces");
+    wsEl = el("usage-workspaces"),
+    editorsEl = el("usage-editors"),
+    sourcesEl = el("usage-sources");
   modelsEl.replaceChildren();
   daysEl.replaceChildren();
   wsEl.replaceChildren();
+  editorsEl.replaceChildren();
+  renderUsageSources(sourcesEl, state.usageSources ?? []);
   el("usage-unknown").textContent = "";
   if (!u) {
     summary.textContent =
@@ -1729,6 +1804,10 @@ function renderUsage() {
   }
   const num = (n: number) =>
     new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
+  // More than one editor contributing makes the source of a row meaningful;
+  // with a single editor the label would be noise on every line.
+  const editorCount = (u.editors ?? []).filter((e) => e.requests > 0).length;
+  const multipleEditors = editorCount > 1;
   const completenessNote = (c: NonNullable<typeof u>["completeness"]) => c
     ? `${c.observedPairs} fully observed pairs (${c.observedZeroPairs} observed zero pairs) · ${c.missingPairs} missing-token requests · ${c.estimatedPairs} estimated requests` +
       (c.fallbackMultipliers ? ` · Unknown model — default multiplier applied (${c.fallbackMultipliers} requests)` : "")
@@ -1779,6 +1858,24 @@ function renderUsage() {
     return wrap;
   };
   if (u.models.length)
+    if (u.editors?.length) {
+      const wrap = table(
+        "By editor",
+        ["Editor", "Requests", "Prompt", "Output", "Premium ≈", "Files"],
+        u.editors.map((e) => [
+          e.editor,
+          String(e.requests),
+          num(e.promptTokens),
+          num(e.outputTokens),
+          String(e.premiumEstimate),
+          String(e.fileCount),
+        ]),
+      );
+      editorsEl.append(wrap);
+      el("usage-editors-note").textContent = multipleEditors
+        ? `Totals below span ${editorCount} editors. A row's source is named in the workspace table.`
+        : "Totals below cover every included editor.";
+    } else editorsEl.replaceChildren();
     modelsEl.append(
       table(
         "By model",
@@ -1818,7 +1915,7 @@ function renderUsage() {
       "By workspace",
       ["Workspace", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
       shown.map((w) => [
-        workspaceLabel(w.path, w.id, usageFullPaths),
+        (multipleEditors ? `${workspaceLabel(w.path, w.id, usageFullPaths)} · ${w.editor ?? "Unknown editor"}` : workspaceLabel(w.path, w.id, usageFullPaths)),
         String(w.requests),
         num(w.promptTokens),
         num(w.outputTokens),

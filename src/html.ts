@@ -98,7 +98,7 @@ export function html(
   <label>Keep history (days)<input id="usage-retention" type="number" min="0" max="3650" step="1" placeholder="Unlimited"></label>
   <label class="checkbox-label"><input id="usage-full-paths" type="checkbox">Show full paths</label>
   <span id="usage-watching" role="status"></span>
-  </div><p id="usage-diagnostics" role="status"></p><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
+  </div><div class="usage-sources-block"><h3>Editors</h3><div id="usage-sources"></div></div><p id="usage-editors-note" class="hint"></p><div id="usage-editors"></div><p id="usage-diagnostics" role="status"></p><p id="usage-summary" role="status" aria-live="polite"></p><div id="usage-models"></div><div id="usage-days"></div><div id="usage-workspaces"></div><p id="usage-unknown" class="hint"></p><p class="hint">Local estimates from VS Code chat sessions: not measured billing, not your account bill. Hidden system and context tokens are not visible locally, and tokenizers differ by model.</p></section>
   <section class="card" aria-labelledby="byok-title" id="byok-card" hidden>
    <h2 id="byok-title"><span class="emoji" aria-hidden="true">💳</span> Provider-billed (BYOK) rates</h2>
    <div class="controls"><button id="byok-save" class="secondary">💾 Save BYOK rates</button><button id="byok-clear" class="secondary">🧹 Clear fields</button></div>

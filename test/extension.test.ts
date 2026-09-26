@@ -689,7 +689,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
   process.env.APPDATA = join(empty, "appdata");
   try {
     await receiver({ type: "scanUsage" });
-    assert.equal(state.get("usageConsent"), true);
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
     assert.equal(last().usage.requestCount, 0);
     assert.equal(last().usage.fileCount, 0);
     assert.match(last().message, /Local usage ready/);
@@ -746,7 +746,7 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(state.get("usagePaused"), true);
     assert.equal(last().usagePaused, true);
     assert.equal(last().usageWatching, false);
-    assert.equal(state.get("usageConsent"), true);
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
     assert.notEqual(last().usage, null);
     assert.match(last().message, /paused/);
     assert.match(statusItems[0].text, /paused/);
@@ -884,14 +884,14 @@ test("extension discovers Copilot models, serves cached data, validates messages
     assert.equal(deleted, true);
     assert.equal(last().usageWatching, false);
     assert.equal(last().usage, null);
-    assert.equal(state.get("usageConsent"), false);
+    assert.deepEqual(state.get("usageRoots"), []);
     assert.equal(state.get("usagePaused"), false);
     assert.equal(statusItems[0].shown, false);
     assert.match(last().message, /erased/);
     deleteError = true;
     await receiver({ type: "clearUsage" });
     assert.match(last().message, /could not be erased/);
-    assert.equal(state.get("usageConsent"), false);
+    assert.deepEqual(state.get("usageRoots"), []);
     // With no stored snapshot, the inspection view explains instead of failing.
     storageFiles.delete("/cache/usage.json");
     await (commands.get("paretoGhc.showUsageData")!() as Promise<void>);
@@ -1148,7 +1148,7 @@ test("extension settings mirror stored state and apply without reload", async ()
       () => last()?.usageWatching === true,
       "first consented scan starts watching",
     );
-    assert.equal(state.get("usageConsent"), true);
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
     // Retention applies on scans: an older request is purged.
     const sessionDir = join(
       empty,
@@ -1185,7 +1185,7 @@ test("extension settings mirror stored state and apply without reload", async ()
       () => last()?.usageWatching === false,
       "watch default off stops watching",
     );
-    assert.equal(state.get("usageConsent"), true);
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
     assert.notEqual(last().usage, null);
     configValues["usage.watchOnScan"] = true;
     fireConfig();
@@ -1667,6 +1667,313 @@ test("an imported snapshot reopens read-only, refuses live edits, and reopens wi
     assert.ok(infos.some((i) => /not reopened/.test(i)));
     assert.equal(last().rows[0].name, "GPT-5 mini");
   } finally {
+    delete (globalThis as any).__paretoVscodeMock;
+  }
+});
+
+test("each usage source is read only after its own opt-in, and removable on its own", async () => {
+  const commands = new Map<string, () => unknown>();
+  const messages: unknown[] = [];
+  const disposable = { dispose() {} };
+  const state = new Map<string, unknown>();
+  const storageFiles = new Map<string, Uint8Array>();
+  const cache = {
+    version: "4.4",
+    fetchedAt: Date.now(),
+    models: [
+      {
+        id: "aa",
+        slug: "gpt-5-mini",
+        name: "GPT-5 mini",
+        provider: "OpenAI",
+        scores: { general: 30, coding: 40, agentic: 20 },
+      },
+    ],
+  };
+  storageFiles.set("/cache/benchmarks.json", Buffer.from(JSON.stringify(cache)));
+  let receiver: (m: unknown) => Promise<void> = async () => {};
+  // Consent prompts answer differently per test step; the default keeps the
+  // first-run scan working.
+  let modal = "Scan locally";
+  const mock = {
+    commands: {
+      registerCommand: (id: string, fn: () => unknown) => {
+        commands.set(id, fn);
+        return disposable;
+      },
+      executeCommand: async (id: string) => commands.get(id)?.(),
+    },
+    Uri: {
+      joinPath: (root: { path: string }, ...parts: string[]) => ({
+        path: [root.path, ...parts].join("/"),
+        toString() {
+          return this.path;
+        },
+      }),
+      parse: (value: string) => ({
+        path: value,
+        toString() {
+          return value;
+        },
+      }),
+    },
+    ViewColumn: { One: 1 },
+    StatusBarAlignment: { Left: 1, Right: 100 },
+    RelativePattern: class {
+      constructor(
+        public base: unknown,
+        public pattern: string,
+      ) {}
+    },
+    window: {
+      createWebviewPanel: () => ({
+        webview: {
+          cspSource: "https://resources.test",
+          asWebviewUri: (u: unknown) => u,
+          html: "",
+          postMessage: (m: unknown) => messages.push(m),
+          onDidReceiveMessage: (fn: typeof receiver) => {
+            receiver = fn;
+            return disposable;
+          },
+        },
+        onDidDispose: () => disposable,
+        reveal() {},
+      }),
+      showInformationMessage: async () => modal,
+      createStatusBarItem: () => ({
+        text: "",
+        tooltip: "",
+        command: "",
+        shown: false,
+        show() {},
+        hide() {},
+        dispose() {},
+      }),
+    },
+    workspace: {
+      getConfiguration: () => ({
+        get: () => undefined,
+        inspect: () => ({ key: "paretoGhc", globalValue: undefined }),
+        update: async () => {},
+      }),
+      onDidChangeConfiguration: () => disposable,
+      registerTextDocumentContentProvider: () => disposable,
+      createFileSystemWatcher: () => ({
+        onDidChange() {},
+        onDidCreate() {},
+        onDidDelete() {},
+        dispose() {},
+      }),
+      fs: {
+        readFile: async (uri: { path: string }) => {
+          const found = storageFiles.get(uri.path);
+          if (found === undefined) throw new Error("missing");
+          return found;
+        },
+        writeFile: async (uri: { path: string }, data: Uint8Array) => {
+          storageFiles.set(uri.path, data);
+        },
+        createDirectory: async () => {},
+        delete: async (uri: { path: string }) => {
+          storageFiles.delete(uri.path);
+        },
+        rename: async (from: { path: string }, to: { path: string }) => {
+          storageFiles.set(to.path, storageFiles.get(from.path)!);
+          storageFiles.delete(from.path);
+        },
+      },
+    },
+    lm: {
+      selectChatModels: async () => [
+        {
+          id: "gpt-5-mini",
+          name: "GPT-5 mini",
+          family: "gpt-5-mini",
+          maxInputTokens: 1000000,
+        },
+      ],
+      onDidChangeChatModels: () => disposable,
+    },
+    env: { clipboard: { writeText: async () => {} } },
+  };
+  (globalThis as any).__paretoVscodeMock = mock;
+  const bundle = await build({
+    entryPoints: ["src/extension.ts"],
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "esm",
+    plugins: [
+      {
+        name: "mock-vscode",
+        setup(b) {
+          b.onResolve({ filter: /^vscode$/ }, () => ({
+            path: "vscode",
+            namespace: "mock",
+          }));
+          b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
+            contents:
+              "const mock=globalThis.__paretoVscodeMock; export const {commands,Uri,ViewColumn,window,workspace,lm,env,RelativePattern,StatusBarAlignment}=mock;",
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+  const extension = await import(
+    // A nonce comment keeps this bundle's data URL distinct from the other
+    // extension-host bundles in this file: identical bytes would share Node's
+    // data-URL module cache and keep the other test's vscode mock.
+    `data:text/javascript;base64,${Buffer.from(`${bundle.outputFiles[0].text}\n// pareto-usage-roots-host-test`).toString("base64")}`
+  );
+  const home = process.env.HOME;
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const appdata = process.env.APPDATA;
+  const empty = mkdtempSync(join(tmpdir(), "pareto-roots-"));
+  process.env.HOME = empty;
+  process.env.XDG_CONFIG_HOME = join(empty, "xdg");
+  process.env.APPDATA = join(empty, "appdata");
+  const session = (index: number) =>
+    JSON.stringify({
+      kind: 1,
+      k: ["requests", index, "result"],
+      v: {
+        metadata: {
+          modelId: "copilot/gpt-5-mini",
+          promptTokens: 100 + index,
+          outputTokens: 10,
+        },
+      },
+    });
+  const write = (editor: string, file: string, index: number) => {
+    const dir = join(
+      empty,
+      "xdg",
+      editor,
+      "User",
+      "workspaceStorage",
+      "ws",
+      "chatSessions",
+    );
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, file), session(index));
+  };
+  extension.activate({
+    extensionUri: { path: "/extension" },
+    globalStorageUri: { path: "/cache" },
+    subscriptions: [],
+    globalState: {
+      get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+      update: async (key: string, value: unknown) => {
+        if (value === undefined) state.delete(key);
+        else state.set(key, value);
+      },
+    },
+    secrets: { get: async () => "", store: async () => {}, delete: async () => {} },
+  });
+  const last = () => (messages.at(-1) as any).state;
+  const storedFiles = () =>
+    Object.keys(
+      (JSON.parse(
+        Buffer.from(storageFiles.get("/cache/usage.json")!).toString(),
+      ) as { files: Record<string, unknown> }).files,
+    );
+  try {
+    // Two editors hold sessions, but only VS Code is consented to at first.
+    write("Code", "a.jsonl", 0);
+    write("Cursor", "b.jsonl", 1);
+    await (commands.get("paretoGhc.open")!() as Promise<void>);
+    await receiver({ type: "ready" });
+    await receiver({ type: "scanUsage" });
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
+    // Cursor is detected and offered, but never read.
+    const cursor = last().usageSources.find((s: { id: string }) => s.id === "cursor");
+    assert.equal(cursor.detected, true);
+    assert.equal(cursor.included, false);
+    assert.match(cursor.purpose, /nothing is uploaded/);
+    assert.equal(last().usage.requestCount, 1);
+    assert.deepEqual(
+      last().usage.editors.map((e: { editor: string }) => e.editor),
+      ["VS Code"],
+    );
+    assert.ok(
+      storedFiles().every((p) => p.includes("/Code/")),
+      "only the consented root is stored",
+    );
+
+    // A root that does not exist is refused rather than created.
+    modal = "Include this editor";
+    await receiver({ type: "usageAddRoot", id: "trae" });
+    assert.match(last().message, /No Trae storage directory found/);
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
+    // An id outside the registry is refused by name.
+    await receiver({ type: "usageAddRoot", id: "/etc" });
+    assert.match(last().message, /not a known Copilot chat-session source/);
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
+
+    // Including Cursor reads it, labels it, and leaves VS Code untouched.
+    modal = "Include this editor";
+    await receiver({ type: "usageAddRoot", id: "cursor" });
+    assert.deepEqual(state.get("usageRoots"), [
+      "code",
+      "code-insiders",
+      "cursor",
+    ]);
+    assert.equal(last().usage.requestCount, 2);
+    assert.deepEqual(
+      last().usage.editors.map((e: { editor: string }) => e.editor).sort(),
+      ["Cursor", "VS Code"],
+    );
+    assert.equal(last().usageSources.find((s: { id: string }) => s.id === "cursor").requests, 1);
+    // Declining the confirmation changes nothing, even for a root that exists.
+    write("Windsurf", "c.jsonl", 2);
+    modal = "Not now";
+    await receiver({ type: "usageAddRoot", id: "windsurf" });
+    assert.match(last().message, /not included/);
+    assert.deepEqual(state.get("usageRoots"), [
+      "code",
+      "code-insiders",
+      "cursor",
+    ]);
+
+    // Removing one source deletes only its data and keeps the rest.
+    modal = "Stop and remove";
+    await receiver({ type: "usageRemoveRoot", id: "cursor" });
+    assert.deepEqual(state.get("usageRoots"), ["code", "code-insiders"]);
+    assert.equal(last().usage.requestCount, 1);
+    assert.ok(
+      storedFiles().every((p) => p.includes("/Code/")),
+      "the removed root's files are gone",
+    );
+    assert.match(last().message, /Stopped reading GitHub Copilot in Cursor/);
+    // Removing a source that was never included is explained, not acted on.
+    await receiver({ type: "usageRemoveRoot", id: "windsurf" });
+    assert.match(last().message, /not included/);
+    // Keeping an included one changes nothing: re-include Windsurf, decline
+    // the removal, and its data stays.
+    modal = "Include this editor";
+    await receiver({ type: "usageAddRoot", id: "windsurf" });
+    assert.equal(last().usage.requestCount, 2);
+    modal = "Keep it";
+    await receiver({ type: "usageRemoveRoot", id: "windsurf" });
+    assert.match(last().message, /unchanged/);
+    assert.ok((state.get("usageRoots") as string[]).includes("windsurf"));
+    assert.equal(last().usage.requestCount, 2);
+    // The global erase still clears every source at once.
+    modal = "Stop and remove";
+    await receiver({ type: "usageRemoveRoot", id: "windsurf" });
+    assert.equal(last().usage.requestCount, 1);
+    await receiver({ type: "clearUsage" });
+    assert.deepEqual(state.get("usageRoots"), []);
+    assert.equal(last().usage, null);
+  } finally {
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+    if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = xdg;
+    if (appdata === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = appdata;
     delete (globalThis as any).__paretoVscodeMock;
   }
 });

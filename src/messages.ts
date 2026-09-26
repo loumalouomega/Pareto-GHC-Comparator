@@ -77,6 +77,12 @@ export function parseMessage(raw: unknown): HostMessage {
   }
   if (m.type === "scanUsage") return { type: "scanUsage" };
   if (m.type === "clearUsage") return { type: "clearUsage" };
+  // Only a root id crosses the boundary: the host resolves it against its own
+  // registry, so a webview can never name a path to read or delete.
+  if (m.type === "usageAddRoot" && string(m.id))
+    return { type: "usageAddRoot", id: m.id };
+  if (m.type === "usageRemoveRoot" && string(m.id))
+    return { type: "usageRemoveRoot", id: m.id };
   if (m.type === "pauseUsage") return { type: "pauseUsage" };
   if (m.type === "resumeUsage") return { type: "resumeUsage" };
   if (m.type === "showUsageData") return { type: "showUsageData" };

@@ -19,13 +19,6 @@ Below, Tier 1 is new delivery candidates that meet the "Requirements across futu
 
 Admission criterion: new user value that meets every "Requirements across future work" principle below, with no new default-on data collection and no inferred prices or configurations.
 
-### Additional editor storage roots — M
-
-- **Gap:** local usage scanning only looks at `Code` and `Code - Insiders` workspace storage roots (`src/usage.ts`'s storage-root resolution); VSCodium, Cursor, and Remote/WSL/devcontainer hosts running Copilot are invisible to it.
-- **Deliverables:** add discovery for additional known editor storage roots, each gated by its own explicit opt-in and a stated purpose (per the consent requirement — no root is scanned just because it was found).
-- **Dependencies:** the consent/watch flow in `src/extension.ts`.
-- **Acceptance:** no additional root is read before its own explicit consent; each root's data is labelled by its source editor in the Usage tab.
-
 ### Accessibility pass — M
 
 - **Gap:** the comparison chart is canvas-rendered with no documented keyboard or screen-reader path, and no colour-blind-safe palette check has been done.

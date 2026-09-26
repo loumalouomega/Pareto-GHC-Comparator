@@ -138,6 +138,26 @@ const usageFixture = {
   premiumP90: 2,
   creditP90: 0.5,
   creditSample: 2,
+  editors: [
+    {
+      editor: "VS Code",
+      rootId: "code",
+      requests: 2,
+      promptTokens: 200,
+      outputTokens: 100,
+      premiumEstimate: 5,
+      fileCount: 1,
+    },
+    {
+      editor: "Cursor",
+      rootId: "cursor",
+      requests: 1,
+      promptTokens: 100,
+      outputTokens: 50,
+      premiumEstimate: 1.5,
+      fileCount: 1,
+    },
+  ],
   models: [
     {
       modelId: "copilot/gpt-5-mini",
@@ -402,6 +422,56 @@ for (const theme of ["light", "dark", "high-contrast"])
         ).map((a) => a.id);
         if (m.excluded) for (const id of listedIds) excluded.add(id);
         else excluded.clear();
+      }
+      // Mirror the host: known roots with existence and consent, exactly as
+      // `usageSourceViews` reports them.
+      state.usageSources = [
+        {
+          id: "code",
+          label: "GitHub Copilot in VS Code",
+          purpose: "Reads Copilot chat sessions VS Code stored on this machine. Nothing is uploaded.",
+          detected: true,
+          included: true,
+          fileCount: 1,
+          requests: 2,
+        },
+        {
+          id: "cursor",
+          label: "GitHub Copilot in Cursor",
+          purpose: "Reads Copilot chat sessions Cursor stored on this machine. Nothing is uploaded.",
+          detected: true,
+          included: true,
+          fileCount: 1,
+          requests: 1,
+        },
+        {
+          id: "vscodium",
+          label: "GitHub Copilot in VSCodium",
+          purpose: "Reads Copilot chat sessions VSCodium stored on this machine. Nothing is uploaded.",
+          detected: true,
+          included: false,
+        },
+        {
+          id: "trae",
+          label: "GitHub Copilot in Trae",
+          purpose: "Reads Copilot chat sessions Trae stored on this machine. Nothing is uploaded.",
+          detected: false,
+          included: false,
+        },
+      ];
+      if (m.type === "usageAddRoot") {
+        const found = state.usageSources?.find((x) => x.id === m.id);
+        if (found) {
+          found.included = true;
+          state.message = `Included ${found.label}. Rescanning local usage…`;
+        }
+      }
+      if (m.type === "usageRemoveRoot") {
+        const found = state.usageSources?.find((x) => x.id === m.id);
+        if (found) {
+          found.included = false;
+          state.message = `Stopped reading ${found.label}.`;
+        }
       }
       if (m.type === "scanUsage") {
         state.usage = structuredClone(usageFixture);
@@ -1065,6 +1135,47 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#usage-unknown")).toContainText(
       "copilot/mystery",
     );
+    // Per-editor split: each included editor is named with its own totals, and
+    // the caption says the merged tables span more than one of them.
+    await expect(page.locator("#usage-editors")).toContainText("By editor");
+    await expect(page.locator("#usage-editors")).toContainText("VS Code");
+    await expect(page.locator("#usage-editors")).toContainText("Cursor");
+    await expect(page.locator("#usage-editors tbody tr")).toHaveCount(2);
+    await expect(page.locator("#usage-editors-note")).toContainText(
+      "span 2 editors",
+    );
+    // Sources: what is included, what was found but not included (with its
+    // stated purpose and its own Include control), and a per-source removal.
+    await expect(page.locator("#usage-sources")).toContainText(
+      "Included: GitHub Copilot in VS Code, GitHub Copilot in Cursor",
+    );
+    await expect(page.locator("#usage-sources")).toContainText(
+      "Other editors found on this machine",
+    );
+    await expect(page.locator("#usage-sources li")).toHaveCount(1);
+    await expect(page.locator("#usage-sources")).toContainText("VSCodium");
+    await expect(page.locator("#usage-sources")).toContainText(
+      "Nothing is uploaded",
+    );
+    // An editor that was not found is never offered.
+    await expect(page.locator("#usage-sources")).not.toContainText("Trae");
+    await page
+      .getByRole("button", { name: "Include GitHub Copilot in VSCodium" })
+      .click();
+    expect(
+      messages.some(
+        (m) => m.type === "usageAddRoot" && (m as any).id === "vscodium",
+      ),
+    ).toBeTruthy();
+    await expect(page.locator("#usage-sources li")).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Stop reading GitHub Copilot in Cursor" })
+      .click();
+    expect(
+      messages.some(
+        (m) => m.type === "usageRemoveRoot" && (m as any).id === "cursor",
+      ),
+    ).toBeTruthy();
     await expect(page.locator("#usage-watching")).toHaveText(/Watching/);
     await expect(page.locator("#usage-pause")).toContainText("Pause watching");
     await page.locator("#usage-pause").click();

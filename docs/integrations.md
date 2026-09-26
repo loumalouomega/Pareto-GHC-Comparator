@@ -30,9 +30,26 @@ the Usage card (`webview/main.ts`), with previously stored requests retained
 as stale contributions. Fingerprints record only known-field presence and
 bounded shape counters — never values, chat text, identifiers, or paths.
 
+### Session storage roots
+
+`usageRoots()` in `src/usage.ts` enumerates where those sessions can live. Only
+the root's *path* is claimed here; the session *shape* is the section above and
+is verified only against synthetic fixtures.
+
+| Root id | Editor | Path (Linux; macOS swaps the base for `~/Library/Application Support`, Windows for `%APPDATA%`) | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| `code`, `code-insiders` | VS Code, VS Code Insiders | `<base>/Code{, - Insiders}/User/workspaceStorage` | VS Code's documented user-data layout; the two roots shipped before the registry existed | In use since 1.0.0 |
+| `vscodium`, `cursor`, `windsurf`, `code-oss`, `trae` | VS Code forks | `<base>/<Editor dir>/User/workspaceStorage` | Forks keep VS Code's `User/workspaceStorage` layout; each is offered only when its directory exists, never asserted to support Copilot | Path only; no session read on this machine |
+| `vscode-server`, `vscode-server-insiders` | Remote-SSH / WSL / dev container hosts | `~/.vscode-server{,-insiders}/data/User/workspaceStorage` (non-Windows hosts only) | VS Code Server keeps remote user data under `~/.vscode-server/data/User`; the extension host runs on the remote side, so these roots are local to it | Path only; no session read on this machine |
+
+Detection is existence-only (`detectUsageRoots` stats the directory), and a root
+is read only after its own opt-in, so listing a root in the Usage card is not a
+read of its contents.
+
 **Unverified:** parsing against a real signed-in Copilot session store on any
-platform. Automated tests use synthetic fixtures only; a real smoke test
-needs Copilot sign-in on a user-owned machine.
+platform or in any fork, and that a given fork still ships Copilot Chat at all.
+Automated tests use synthetic fixtures only; a real smoke test needs Copilot
+sign-in on a user-owned machine.
 
 ## OpenCode CLI (`src/opencode.ts`)
 

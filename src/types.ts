@@ -288,11 +288,46 @@ export interface UsageWorkspaceStat {
   completeness?: UsageCompleteness;
   id: string;
   path: string;
+  /** Source editor, set once more than one root can contribute sessions. */
+  editor?: string;
   requests: number;
   promptTokens: number;
   outputTokens: number;
   premiumEstimate: number;
 }
+/**
+ * One editor's share of the local history. Attribution comes from the storage
+ * root a file was read from, never from a model id or a guess; files whose
+ * editor the registry can no longer identify are reported as "Unknown editor"
+ * instead of being folded into a neighbour.
+ */
+export interface UsageEditorStat {
+  editor: string;
+  /** Consented root id, or null for an unattributable file. */
+  rootId: string | null;
+  requests: number;
+  promptTokens: number;
+  outputTokens: number;
+  premiumEstimate: number;
+  fileCount: number;
+}
+/** One known storage root as the Usage tab presents it. Existence is detected
+ * without reading inside the root, so an un-included editor is only ever named,
+ * never scanned. */
+export interface UsageSourceView {
+  id: string;
+  label: string;
+  /** Stated before the user opts in, per the consent requirement. */
+  purpose: string;
+  /** The root directory exists on this machine. */
+  detected: boolean;
+  /** The user has opted into reading this root. */
+  included: boolean;
+  /** Files read from this root in the current summary, when attributed. */
+  fileCount?: number;
+  requests?: number;
+}
+
 export interface UsageSummary {
   completeness?: UsageCompleteness;
   diagnostics?: UsageDiagnostics;
@@ -316,6 +351,8 @@ export interface UsageSummary {
   models: UsageModelStat[];
   days: UsageDayStat[];
   workspaces: UsageWorkspaceStat[];
+  /** Per-editor split of the same totals; absent for older stored summaries. */
+  editors?: UsageEditorStat[];
 }
 export interface BudgetSuggestion {
   value: number | null;
@@ -559,6 +596,8 @@ export type HostMessage =
   | { type: "byokReset"; ids: string[] }
   | { type: "scanUsage" }
   | { type: "clearUsage" }
+  | { type: "usageAddRoot"; id: string }
+  | { type: "usageRemoveRoot"; id: string }
   | { type: "pauseUsage" }
   | { type: "resumeUsage" }
   | { type: "setUsageRetention"; days: number }
@@ -641,6 +680,9 @@ export interface ViewState {
   usage: UsageSummary | null;
   usageWatching: boolean;
   usagePaused: boolean;
+  /** Every known chat-session root, whether it exists here and is included.
+   * Optional so an imported snapshot or an older summary can omit it. */
+  usageSources?: UsageSourceView[];
   usageRetentionDays?: number;
   budgetSuggestion: BudgetSuggestion | null;
   loading: boolean;

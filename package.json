@@ -82,6 +82,10 @@
         "title": "▶️ Pareto GHC: Resume Copilot Usage Watching"
       },
       {
+        "command": "paretoGhc.manageUsageSources",
+        "title": "🗂️ Pareto GHC: Manage Copilot Usage Sources"
+      },
+      {
         "command": "paretoGhc.showUsageData",
         "title": "📄 Pareto GHC: Show Stored Copilot Usage Data"
       }

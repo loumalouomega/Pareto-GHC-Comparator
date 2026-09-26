@@ -18,12 +18,14 @@ export default defineConfig({
       // features and already failed on clean HEAD; the provenance-complete
       // exports change raises all four metrics over that baseline. Raised
       // again for the read-only snapshot import, whose validation and view
-      // builder are pure and measured end to end.)
+      // builder are pure and measured end to end, and once more for the
+      // per-source usage roots, whose registry and attribution are covered
+      // directly.)
       thresholds: {
-        lines: 97.5,
+        lines: 97.58,
         functions: 99,
-        branches: 93.7,
-        statements: 96.6,
+        branches: 93.81,
+        statements: 96.72,
       },
     },
   },
