@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 1.3.0
+
 ### Added
 
 - Feasibility decision documents closing the roadmap's second investigation tier. `docs/other-client-usage-investigation.md` reaches a per-client verdict on reading other assistants' local usage: Claude Code is feasible and recommended for delivery, because its per-project transcripts carry the model, four disjoint token buckets, timestamp, workspace, and a version field — but no vendor publishes that schema, so any future source would ship only with the same drift handling Copilot's unversioned sessions already need, and its figures would never merge with Copilot credits or premium requests; OpenCode is not supported, because every candidate surface is either aggregate-only, undocumented, or stored in the same SQLite file as the client's OAuth credentials. `docs/team-usage-investigation.md` recommends against any merged team usage figure: contributors bill in three currencies that cannot be converted to a common one, plans differ by an order of magnitude, and the only honest artifact is per-contributor, separately labelled, and explicitly not added together. `docs/schema-drift-investigation.md` finds early warning feasible for OpenCode and already half-built — while demonstrating the gap live, since OpenCode 2.0.16 rejects the `opencode models --verbose` flag the extension's discovery depends on, a break today's CI cannot see — and records that the Copilot side is not automatable at all, leaving the existing user-reported schema fingerprint as the whole signal. No behaviour changed: these are decisions, and the three resulting tasks are now Tier 1 candidates in the roadmap.
