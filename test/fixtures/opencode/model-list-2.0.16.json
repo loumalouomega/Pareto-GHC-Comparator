@@ -1,0 +1,111 @@
+{
+  "location": { "directory": "/example/project" },
+  "data": [
+    {
+      "id": "opencode-go/kimi-k2.7-code",
+      "modelID": "kimi-k2.7-code",
+      "providerID": "opencode-go",
+      "name": "Kimi K2.7 Code",
+      "family": "kimi-k2",
+      "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+      "variants": [],
+      "time": { "released": 1790121600000 },
+      "cost": [
+        {
+          "input": 0.95,
+          "output": 4,
+          "cache": { "read": 0.19, "write": 0 }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": { "context": 262144, "output": 262144 }
+    },
+    {
+      "id": "opencode-go/gpt-5.6-luna",
+      "modelID": "gpt-5.6-luna",
+      "providerID": "opencode-go",
+      "name": "GPT-5.6 Luna",
+      "family": "gpt-luna",
+      "capabilities": { "tools": true, "input": ["text", "image"], "output": ["text"] },
+      "variants": [
+        { "id": "low", "settings": { "reasoningEffort": "low" } },
+        { "id": "high", "settings": { "reasoningEffort": "high" } }
+      ],
+      "time": { "released": 1790121600000 },
+      "cost": [
+        {
+          "input": 0.1,
+          "output": 0.5,
+          "cache": { "read": 0.01, "write": 0.125 }
+        },
+        {
+          "tier": { "type": "context", "size": 272000 },
+          "input": 0.2,
+          "output": 0.75,
+          "cache": { "read": 0.02, "write": 0.25 }
+        },
+        {
+          "tier": { "type": "context", "size": 200000 },
+          "input": 0.2,
+          "output": 0.75,
+          "cache": { "read": 0.02, "write": 0.25 }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": { "context": 1050000, "input": 922000, "output": 128000 }
+    },
+    {
+      "id": "opencode/big-pickle",
+      "modelID": "big-pickle",
+      "providerID": "opencode",
+      "name": "Big Pickle",
+      "family": "big-pickle",
+      "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+      "variants": [],
+      "time": { "released": 1790121600000 },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": { "read": 0, "write": 0 }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": { "context": 200000, "input": 160000, "output": 32000 }
+    },
+    {
+      "id": "openai/gpt-5.4",
+      "modelID": "gpt-5.4",
+      "providerID": "openai",
+      "name": "GPT-5.4",
+      "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+      "variants": [{ "id": "medium" }],
+      "time": { "released": 1790121600000 },
+      "cost": [],
+      "status": "active",
+      "enabled": true,
+      "limit": { "context": 1050000, "input": 922000, "output": 128000 },
+      "settings": { "apiKey": "sk-live-secret" },
+      "headers": { "Authorization": "Bearer sk-live-secret" },
+      "package": "@ai-sdk/openai",
+      "compatibility": { "reasoningEffort": true },
+      "body": { "reasoning": { "effort": "medium" } }
+    },
+    {
+      "id": "opencode-go/no-family",
+      "modelID": "no-family",
+      "providerID": "opencode-go",
+      "name": "No Family",
+      "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+      "variants": [{ "id": "not a valid key" }, { "id": "high" }],
+      "time": { "released": 1790121600000 },
+      "cost": [{ "input": -1, "output": 1, "cache": { "read": 1, "write": 1 } }],
+      "status": "active",
+      "enabled": true,
+      "limit": { "output": 32000 }
+    }
+  ]
+}

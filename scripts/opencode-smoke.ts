@@ -9,6 +9,7 @@ import {
   discoverOpenCode,
   execOnce,
   OpenCodeError,
+  parseOpenCodeVersion,
 } from "../src/opencode";
 
 const args = process.argv.slice(2);
@@ -60,6 +61,9 @@ async function main() {
           return result;
         },
       }),
+      // A 2.x background service that is still starting answers with an error
+      // envelope; one short retry keeps a cold runner from reading as drift.
+      { retryDelayMs: 5000 },
     );
     const durationMs = Date.now() - started;
     const version = resolved ? (await execOnce(resolved, ["--version"])).stdout.trim() : "";
@@ -84,7 +88,8 @@ async function main() {
       ...base,
       ok: !failures.length,
       failures,
-      cliVersion: /^\d+\.\d+\.\d+/.test(version) ? version.match(/^\d+\.\d+\.\d+\S*/)![0] : "unknown",
+      // 1.x prints a bare version, 2.x prefixes it; the shared parser handles both.
+      cliVersion: parseOpenCodeVersion(version) ?? "unknown",
       resolution: resolved ? resolution(resolved) : "unknown",
       pathHasSpace: resolved ? resolved.includes(" ") : false,
       durationMs,

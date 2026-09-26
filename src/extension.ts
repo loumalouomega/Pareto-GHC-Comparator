@@ -861,7 +861,11 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const discoverOpencode = async (gen: number) => {
     try {
-      const models = await discoverOpenCode();
+      const models = await discoverOpenCode(undefined, {
+        // A 2.x background service that is still starting answers with an
+        // error envelope; one short retry keeps that from reading as drift.
+        retryDelayMs: 1500,
+      });
       if (gen !== discoveryGen.opencode) return;
       availableBySource.opencode = models;
       discoveryErrors.opencode = "";

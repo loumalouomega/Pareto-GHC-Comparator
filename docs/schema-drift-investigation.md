@@ -26,6 +26,13 @@ $ npx tsx scripts/opencode-smoke.ts
 
 `opencode models --help` on 2.0.16 lists neither `--verbose` nor `--refresh`. Discovery on OpenCode v2 is therefore broken today: a v2 user sees no OpenCode models at all, with a command-failure diagnostic rather than an actionable message.
 
+> **Resolved 2026-09-26.** Everything above describes the state when this
+> investigation was written. The break is fixed: v2 exposes
+> `opencode api model.list`, whose OpenAPI `Model.Info` carries the identity,
+> limits, rates, tiers, and variants that `--verbose` used to provide, and
+> `discoverOpenCode` now falls back to it. The CI blindness described next is
+> unchanged and remains **Weekly upstream schema-drift lane**.
+
 **Why CI does not catch it**, from `.github/workflows/extension.yml`:
 
 - The `opencode-smoke` matrix has two install methods. The `npm` lane pins `npm install -g opencode-ai@1.18.30` — the version the fixtures were captured against — so it is green by construction and can never observe a newer release.
@@ -71,7 +78,7 @@ So the acceptance criterion resolves cleanly: **yes for OpenCode, no for Copilot
 
 ## What this investigation surfaced, for the roadmap
 
-- **OpenCode v2 discovery compatibility is a live user-facing break, not a drift risk.** It is now a Tier 1 item in `docs/roadmap.md`, and it needs its own research: the v2 listing carries no cost or variant metadata, so a v2-compatible path may be materially degraded (unpriced rows, no variant expansion) unless another documented surface exists.
+- **OpenCode v2 discovery compatibility is a live user-facing break, not a drift risk.** It shipped as a Tier 1 item and has since been delivered: the v2 listing carries no cost or variant metadata *on the bare `models` command*, but `opencode api model.list` exposes the same metadata as JSON, so v2 support is a port rather than a degraded mode. `1.x` and `2.x` share no working surface, so dispatch is by fallback rather than a version table.
 - **The documentation/binary mismatch is itself the argument for the drift lane.** While the published OpenCode CLI page still documents a flag the shipped binary rejects, no amount of documentation reading substitutes for running the new version.
 
 ## Failure states
@@ -80,9 +87,9 @@ Not applicable — no workflow or runtime code changed. A future drift lane's ow
 
 ## Open blockers
 
-- **No alert channel was chosen.** GitHub Actions annotations are free but invisible to anyone not watching a run; opening an issue is noisy but durable. This investigation recommends issues without having checked the repository's issue volume or whether a scheduled workflow is permitted to create them.
-- **The v2 replacement for `--verbose` is unknown.** Plain `opencode models` returns bare ids with no cost or variant metadata, so "make v2 work" may mean shipping a materially poorer listing rather than a straight port. Not established here.
-- **`opencode session list --format json` returned zero rows** in this environment, so the only documented machine-readable v2 surface is unverified. If it turns out to carry token and cost fields, the OpenCode ledger question in `docs/other-client-usage-investigation.md` would need revisiting.
+- **No alert channel was chosen.** GitHub Actions annotations are free but invisible to anyone not watching a run; opening an issue is noisy but durable. This investigation recommends issues without having checked the repository's issue volume or whether a scheduled workflow is permitted to create them. Still open; owned by **Weekly upstream schema-drift lane**.
+- ~~**The v2 replacement for `--verbose` is unknown.**~~ **Resolved.** 2.x does not need a poorer listing: `opencode api model.list` returns the full `Model.Info`, including per-million rates, long-context tiers, and variants, so the 2.x path is a port rather than a downgrade. See `docs/integrations.md` and the fallback dispatch in `discoverOpenCode`.
+- **`opencode session list --format json` returned zero rows** in this environment, so the only documented machine-readable v2 surface is unverified. If it turns out to carry token and cost fields, the OpenCode ledger question in `docs/other-client-usage-investigation.md` would need revisiting. Still open — and now of lower consequence, since the model listing no longer depends on it.
 - **Windows and macOS were not probed for the `--verbose` removal.** The flag's absence is version-level, so a platform difference is unlikely, but it is unmeasured — record as unperformed validation.
-- **Only one newer version (2.0.16) was observed.** A single data point cannot distinguish "v2 removed it" from "a recent v2 build removed it", and the weekly lane is what would settle that.
+- **Only one newer version (2.0.16) was observed.** A single data point cannot distinguish "v2 removed it" from "a recent v2 build removed it", and the weekly lane is what would settle that. No 2.x release exists on npm, so an install-script CI lane is the only way to observe a successor.
 - **The Copilot half has no automation path at all.** If a real account is ever acceptable in CI, the credential and cost implications were not investigated and are not authorized by this document.

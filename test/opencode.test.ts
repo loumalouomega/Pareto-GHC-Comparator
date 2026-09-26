@@ -6,9 +6,11 @@ import path from "node:path";
 import {
   OpenCodeError,
   discoverOpenCode,
+  fingerprintModelList,
   fingerprintOpenCodeOutput,
   getOpenCodeVersion,
   opencodeBenchmarkFamilies,
+  parseModelList,
   parseModels,
   parseOpenCodeVersion,
 } from "../src/opencode";
@@ -34,6 +36,20 @@ const model = (
     variants: {},
     ...overrides,
   });
+/** A 2.x `Model.Info` record: `cost` and `variants` are arrays, `id` is composed. */
+const record = (overrides: Record<string, unknown> = {}) => ({
+  id: "opencode-go/kimi-k2.7-code",
+  modelID: "kimi-k2.7-code",
+  providerID: "opencode-go",
+  name: "Kimi K2.7 Code",
+  family: "kimi-k2",
+  variants: [],
+  cost: [{ input: 0.95, output: 4, cache: { read: 0.19, write: 0 } }],
+  limit: { context: 262144, output: 262144 },
+  ...overrides,
+});
+const list = (data: unknown[]) =>
+  JSON.stringify({ location: { directory: "/example" }, data });
 const benchmark = (id: string, name: string): Benchmark => ({
   id,
   slug: id,
@@ -212,6 +228,263 @@ test("only whitelisted fields cross the boundary", () => {
   assert.ok(!JSON.stringify(models).includes("sk-live-secret"));
 });
 
+test("2.x model.list parses into namespaced models with live rates", () => {
+  const models = parseModelList(
+    list([
+      record(),
+      record({
+        id: "opencode-go/gpt-5.6-luna",
+        modelID: "gpt-5.6-luna",
+        name: "GPT-5.6 Luna",
+        cost: [
+          { input: 0.2, output: 1.2, cache: { read: 0.02, write: 0.25 } },
+          {
+            tier: { type: "context", size: 272000 },
+            input: 0.4,
+            output: 1.8,
+            cache: { read: 0.04, write: 0.5 },
+          },
+        ],
+        limit: { context: 1050000, input: 922000, output: 128000 },
+        variants: [{ id: "low" }, { id: "high" }],
+      }),
+      record({
+        id: "openai/gpt-5.4",
+        modelID: "gpt-5.4",
+        providerID: "openai",
+        name: "GPT-5.4",
+        cost: [],
+      }),
+    ]),
+  );
+  assert.equal(models.length, 4);
+  const kimi = models[0];
+  assert.equal(kimi.id, "opencode:opencode-go/kimi-k2.7-code");
+  assert.equal(kimi.source, "opencode");
+  assert.deepEqual(kimi.rates, {
+    input: 0.95,
+    read: 0.19,
+    write: null,
+    output: 4,
+  });
+  assert.equal(kimi.maxInputTokens, 262144);
+  // The base entry carries the rates; the first context tier becomes `long`.
+  const luna = models[1];
+  assert.deepEqual(luna.rates, {
+    input: 0.2,
+    read: 0.02,
+    write: 0.25,
+    output: 1.2,
+  });
+  assert.deepEqual(luna.long, {
+    threshold: 272000,
+    rates: { input: 0.4, read: 0.04, write: 0.5, output: 1.8 },
+  });
+  assert.equal(luna.maxInputTokens, 922000);
+  assert.deepEqual(
+    models.slice(1, 3).map((m) => m.id),
+    ["opencode:opencode-go/gpt-5.6-luna#low", "opencode:opencode-go/gpt-5.6-luna#high"],
+  );
+  assert.equal(models[2].name, "GPT-5.6 Luna (high)");
+  // An empty cost array is a real "no published rates" answer, not a failure,
+  // and not a free tier: the provider bills directly.
+  const byok = models[3];
+  assert.equal(byok.id, "opencode:openai/gpt-5.4");
+  assert.equal(byok.rates, undefined);
+  assert.equal(byok.freeTier, undefined);
+  assert.deepEqual(byok.pricingNotes, [
+    "No published rates; supply a BYOK rate.",
+  ]);
+});
+
+test("2.x zero-cost Zen models are free and unusable entries are skipped", () => {
+  const models = parseModelList(
+    list([
+      record({
+        id: "opencode/big-pickle",
+        modelID: "big-pickle",
+        providerID: "opencode",
+        name: "Big Pickle",
+        cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+      }),
+      record({ providerID: "has space", name: "Bad Provider" }),
+      record({ modelID: "", name: "No Id" }),
+      { modelID: "no-name", providerID: "openai" },
+      record({ cost: "not an array", name: "Bad Cost" }),
+      { modelID: "not-an-object" },
+      "not-an-object",
+    ]),
+  );
+  assert.equal(models.length, 2);
+  assert.equal(models[0].id, "opencode:opencode/big-pickle");
+  assert.equal(models[0].freeTier, true);
+  assert.deepEqual(models[0].rates, {
+    input: 0,
+    read: 0,
+    write: null,
+    output: 0,
+  });
+  assert.equal(models[1].name, "Bad Cost");
+  assert.deepEqual(models[1].pricingNotes, [
+    "Unrecognized cost shape; pricing unavailable.",
+  ]);
+  // A zero write rate is a real observed zero, so this is still the free tier
+  // rather than a model that merely looks free on three of four buckets.
+  const zeroWrite = parseModelList(
+    list([
+      record({
+        providerID: "opencode",
+        cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+      }),
+      // …but a genuine cache-write price is not free, on any provider.
+      record({
+        id: "opencode/write-priced",
+        modelID: "write-priced",
+        providerID: "opencode",
+        name: "Write Priced",
+        cost: [{ input: 0, output: 0, cache: { read: 0, write: 0.5 } }],
+      }),
+    ]),
+  );
+  assert.equal(zeroWrite[0].freeTier, true);
+  assert.equal(zeroWrite[1].freeTier, undefined);
+  assert.deepEqual(zeroWrite[1].rates, {
+    input: 0,
+    read: 0,
+    write: 0.5,
+    output: 0,
+  });
+  // A family falls back to the bare model id; unusable variant keys are dropped.
+  const familyless = parseModelList(
+    list([record({ family: undefined, variants: [{ id: "low" }, { id: "" }, 7] })]),
+  );
+  assert.equal(familyless[0].family, "kimi-k2.7-code");
+  assert.deepEqual(
+    familyless.map((m) => m.id),
+    ["opencode:opencode-go/kimi-k2.7-code#low"],
+  );
+  // Two records resolving to one identity collapse to a single row, and an
+  // unreported context limit stays 0 rather than borrowing another model's.
+  const collapsed = parseModelList(
+    list([
+      record(),
+      record({ limit: "not an object" }),
+      record({ limit: undefined }),
+    ]),
+  );
+  assert.deepEqual(
+    collapsed.map((m) => m.id),
+    ["opencode:opencode-go/kimi-k2.7-code"],
+  );
+  assert.equal(collapsed[0].maxInputTokens, 262144);
+  // The same base model under two providers stays two rows, as on 1.x.
+  const split = parseModelList(
+    list([
+      record(),
+      record({ id: "openai/kimi-k2.7-code", providerID: "openai" }),
+    ]),
+  );
+  assert.deepEqual(
+    split.map((m) => m.id),
+    ["opencode:opencode-go/kimi-k2.7-code", "opencode:openai/kimi-k2.7-code"],
+  );
+});
+
+test("2.x listing fails closed and fingerprints unknown shapes", () => {
+  // An error envelope is a failure, never a silent zero-model listing.
+  for (const payload of [
+    JSON.stringify({ error: { type: "unknown", message: "Command cancelled" }, content: [] }),
+    JSON.stringify({ data: "not an array" }),
+    JSON.stringify({ models: [] }),
+    "{not json",
+    42,
+  ]) {
+    assert.throws(() => parseModelList(payload), /unrecognized model data/);
+  }
+  assert.deepEqual(parseModelList(list([])), []);
+  assert.deepEqual(fingerprintModelList(42), {
+    version: 1,
+    envelope: false,
+    records: 0,
+    jsonFailures: 0,
+    missingId: 0,
+    missingProvider: 0,
+    missingName: 0,
+    invalidProvider: 0,
+  });
+  // The envelope flag separates "not our shape" from a genuine empty listing.
+  assert.deepEqual(
+    fingerprintModelList(
+      JSON.stringify({ error: { message: "Command cancelled" } }),
+    ),
+    {
+      version: 1,
+      envelope: true,
+      records: 0,
+      jsonFailures: 0,
+      missingId: 0,
+      missingProvider: 0,
+      missingName: 0,
+      invalidProvider: 0,
+    },
+  );
+  assert.deepEqual(fingerprintModelList("{not json").envelope, false);
+  assert.deepEqual(
+    fingerprintModelList(
+      list([
+        { modelID: "a" },
+        { modelID: "b", providerID: "has space", name: "B" },
+        { modelID: "c", providerID: "openai" },
+        { providerID: "openai", name: "D" },
+        "scalar",
+        7,
+      ]),
+    ),
+    {
+      version: 1,
+      envelope: false,
+      records: 6,
+      jsonFailures: 2,
+      // "a" and "c" have no name, "D" has no modelID, and the second entry's
+      // provider is present but unusable.
+      missingId: 1,
+      missingProvider: 1,
+      missingName: 2,
+      invalidProvider: 1,
+    },
+  );
+  // The fingerprint is shape-only: no ids, names, or rates leak into it.
+  assert.ok(!JSON.stringify(fingerprintModelList(list([record()]))).includes("kimi"));
+  assert.throws(
+    () =>
+      parseModelList(
+        JSON.stringify({ error: { type: "unknown", message: "boom" } }),
+      ),
+    /list schema v1 envelope=true records=0/,
+  );
+  assert.throws(
+    () => parseModelList(JSON.stringify({ error: { message: "boom" } })),
+    /file an issue/,
+  );
+});
+
+test("only whitelisted fields cross the 2.x boundary", () => {
+  const models = parseModelList(
+    list([
+      record({
+        settings: { apiKey: "sk-live-secret" },
+        headers: { Authorization: "Bearer sk-live-secret" },
+        body: { reasoning: { effort: "high" } },
+        package: "@ai-sdk/openai",
+        compatibility: { reasoningEffort: true },
+        api: { key: "sk-live-secret" },
+      }),
+    ]),
+  );
+  assert.equal(models.length, 1);
+  assert.ok(!JSON.stringify(models).includes("sk-live-secret"));
+});
+
 test("discovery maps spawn, failure, and empty states to guidance", async () => {
   const fixture = model();
   assert.equal(
@@ -239,6 +512,161 @@ test("discovery maps spawn, failure, and empty states to guidance", async () => 
   await assert.rejects(
     discoverOpenCode(async () => ({ code: 0, stdout: "garbage", stderr: "" })),
     (error) => error instanceof OpenCodeError && error.kind === "parse",
+  );
+});
+
+test("discovery falls back to the 2.x surface when 1.x cannot list", async () => {
+  const verbose = model();
+  const viaV1: string[] = [];
+  const one = await discoverOpenCode(async (args) => {
+    viaV1.push(args.join(" "));
+    return { code: 0, stdout: verbose, stderr: "" };
+  });
+  // A working 1.x install never pays for a second surface.
+  assert.equal(one.length, 1);
+  assert.deepEqual(viaV1, ["models --verbose"]);
+
+  // 2.x removed the flag; its own surface supplies the same listing instead.
+  const viaV2: string[] = [];
+  const two = await discoverOpenCode(async (args) => {
+    viaV2.push(args.join(" "));
+    if (args[0] === "--version") return { code: 0, stdout: "2.0.16\n", stderr: "" };
+    if (args[0] === "models")
+      return { code: 1, stdout: "", stderr: "Unrecognized flag: --verbose" };
+    return { code: 0, stdout: list([record()]), stderr: "" };
+  });
+  assert.deepEqual(
+    two.map((m) => m.id),
+    ["opencode:opencode-go/kimi-k2.7-code"],
+  );
+  assert.ok(viaV2.includes("api model.list"));
+
+  // Neither surface listing anything keeps the "connect a provider" guidance.
+  const empty: string[] = [];
+  await assert.rejects(
+    discoverOpenCode(async (args) => {
+      empty.push(args.join(" "));
+      return args[0] === "--version"
+        ? { code: 0, stdout: "2.0.16\n", stderr: "" }
+        : { code: 0, stdout: "", stderr: "" };
+    }),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "empty" &&
+      /Connect a provider/.test(error.message) &&
+      /OpenCode CLI 2\.0\.16/.test(error.message),
+  );
+  assert.ok(empty.includes("api model.list"));
+
+  // When both fail, the 1.x failure is reported and the 2.x attempt named.
+  const both: string[] = [];
+  await assert.rejects(
+    discoverOpenCode(async (args) => {
+      both.push(args.join(" "));
+      if (args[0] === "--version") return { code: 0, stdout: "2.0.16\n", stderr: "" };
+      return { code: 1, stdout: "", stderr: "boom" };
+    }),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "command" &&
+      /exit 1/.test(error.message) &&
+      /boom/.test(error.message) &&
+      /OpenCode CLI 2\.0\.16/.test(error.message) &&
+      /2\.x listing surface also failed \(command\)/.test(error.message),
+  );
+  assert.ok(both.includes("api model.list"));
+  // The version is probed once and reused across both surfaces' diagnostics.
+  assert.equal(both.filter((a) => a === "--version").length, 1);
+});
+
+test("environment failures never fall back to the 2.x surface", async () => {
+  for (const error of [
+    Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
+    new OpenCodeError("OpenCode discovery timed out.", "timeout"),
+  ]) {
+    const calls: string[] = [];
+    await assert.rejects(
+      discoverOpenCode(async (args) => {
+        calls.push(args.join(" "));
+        throw error;
+      }),
+      (e) => e instanceof OpenCodeError,
+    );
+    // A missing binary or a timeout is not a shape change: one attempt only,
+    // so a fallback could not double a 20-second wait for nothing.
+    assert.deepEqual(calls, ["models --verbose"]);
+  }
+  // A binary that disappears between the two surfaces reports the 1.x failure
+  // it caused, with the 2.x attempt named rather than replacing the diagnosis.
+  await assert.rejects(
+    discoverOpenCode(async (args) => {
+      if (args[0] === "models")
+        return { code: 1, stdout: "", stderr: "Unrecognized flag: --verbose" };
+      throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+    }),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "command" &&
+      /Unrecognized flag/.test(error.message) &&
+      /2\.x listing surface also failed \(missing\)/.test(error.message),
+  );
+});
+
+test("a cold 2.x service is retried once, and stays a failure when not", async () => {
+  const cold = JSON.stringify({
+    error: { type: "unknown", message: "Command cancelled" },
+    content: [],
+  });
+  const cli = async (args: string[]) => {
+    if (args[0] === "--version") return { code: 0, stdout: "2.0.16\n", stderr: "" };
+    return { code: 1, stdout: "", stderr: "Unrecognized flag: --verbose" };
+  };
+  const served = async (args: string[]) => {
+    if (args[0] === "--version") return { code: 0, stdout: "2.0.16\n", stderr: "" };
+    if (args[0] === "models") return cli(args);
+    return { code: 0, stdout: list([record()]), stderr: "" };
+  };
+  // A background service that had not finished starting answers with an error
+  // envelope; one retry separates that from real drift.
+  let attempts = 0;
+  const retried = await discoverOpenCode(
+    async (args) => {
+      if (args[0] === "api") attempts++;
+      return served(args);
+    },
+    { retryDelayMs: 1 },
+  );
+  assert.equal(attempts, 1);
+
+  attempts = 0;
+  const models = await discoverOpenCode(
+    async (args) => {
+      if (args[0] === "api") {
+        attempts++;
+        return attempts === 1
+          ? { code: 0, stdout: cold, stderr: "" }
+          : { code: 0, stdout: list([record()]), stderr: "" };
+      }
+      return served(args);
+    },
+    { retryDelayMs: 1 },
+  );
+  assert.equal(attempts, 2);
+  assert.deepEqual(
+    models.map((m) => m.id),
+    ["opencode:opencode-go/kimi-k2.7-code"],
+  );
+
+  // With no opt-in there is no retry, so the envelope surfaces as a parse
+  // failure naming both surfaces rather than a silent empty listing.
+  await assert.rejects(
+    discoverOpenCode(async (args) =>
+      args[0] === "api" ? { code: 0, stdout: cold, stderr: "" } : cli(args),
+    ),
+    (error) =>
+      error instanceof OpenCodeError &&
+      error.kind === "command" &&
+      /2\.x listing surface also failed \(parse\)/.test(error.message),
   );
 });
 
@@ -461,6 +889,12 @@ test("CLI version parsing and drifted output fingerprint fail closed", async () 
   assert.equal(parseOpenCodeVersion("garbage"), undefined);
   assert.equal(parseOpenCodeVersion(""), undefined);
   assert.equal(parseOpenCodeVersion(42), undefined);
+  // 2.x prefixes the version with the binary name; a v2 diagnostic must still
+  // name the version that produced it rather than reporting it unavailable.
+  assert.equal(parseOpenCodeVersion("opencode v2.0.16\n"), "2.0.16");
+  assert.equal(parseOpenCodeVersion("opencode v2.0.16+build.7"), "2.0.16+build.7");
+  // A long or unbounded banner never yields an unbounded version string.
+  assert.equal(parseOpenCodeVersion(`${"banner ".repeat(20)}9.9.9`), undefined);
   assert.equal(
     await getOpenCodeVersion(async () => ({
       code: 0,
@@ -484,6 +918,12 @@ test("CLI version parsing and drifted output fingerprint fail closed", async () 
     "utf8",
   );
   assert.equal(parseModels(known).length, 2);
+  // The dated 2.x representative stays parseable alongside the 1.x contract.
+  const knownV2 = await readFile(
+    "test/fixtures/opencode/model-list-2.0.16.json",
+    "utf8",
+  );
+  assert.equal(parseModelList(knownV2).length, 6);
   const drifted = await readFile("test/fixtures/opencode/drifted.txt", "utf8");
   assert.deepEqual(fingerprintOpenCodeOutput(drifted), {
     version: 1,

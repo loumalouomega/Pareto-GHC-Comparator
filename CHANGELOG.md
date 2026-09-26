@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Fixed
+
+- OpenCode 2.x models are discovered again. OpenCode 2.0.16 removed `opencode models --verbose`, so anyone on the current release saw no OpenCode models at all and a generic command-failure message. The extension now also reads `opencode api model.list`, and 2.x turns out to carry everything the old flag did — per-million rates, cache read/write pricing, long-context tiers, and per-model thinking levels — so this is a full listing, not a reduced one: 143 models with 124 thinking-level variants, 76 priced, and 22 free-tier rows in a local run, with per-million USD estimates, cost breakdowns, and the Pareto frontier working as they do on 1.x. The two OpenCode versions share no working command, so the extension tries the 1.x flag first and only falls back when it cannot list, leaving every currently-working install on exactly the path it used before; a missing binary or a timeout never falls back, since that is an environment problem rather than a changed command. A 2.x background service that has not finished starting answers with an error message instead of a listing, which is indistinguishable from a genuine format change, so it is retried once before being reported. When neither command can list anything, the message now names the detected OpenCode version, both commands that were tried, and what each reported — the version was previously also read from the wrong place in the output on 2.x, which prefixes it with the binary name, so a 2.x failure could not be attributed to a version at all. Models with no published rate are labelled as such and stay available for a bring-your-own-key rate rather than being treated as free. Only model names, limits, and rates are read: the API keys, headers, and request bodies that 2.x also returns never leave the parser.
+
 ## 1.3.0
 
 ### Added
