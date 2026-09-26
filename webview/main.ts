@@ -3,10 +3,12 @@ import type { Plugin, ScatterDataPoint } from "chart.js";
 import type {
   Billing,
   ChecklistFamily,
+  ImportedMeta,
   Options,
   Row,
   ScenarioHistory,
   ScenarioProvenance,
+  UsageSourceView,
   ViewState,
   HostMessage,
 } from "../src/types";
@@ -14,8 +16,24 @@ import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
 import { costUnit, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
+import {
+  compressBreakpoints,
+  sensitivityFallbackTotal,
+  sweepMix,
+} from "../src/sensitivity";
 import { workspaceLabel } from "../src/workspaceLabel";
-import { freshnessAlert } from "../src/freshness";
+import {
+  assignPointColors,
+  chartDescription,
+  chartPointSummary,
+  hasFrontierRing,
+  inAttractiveQuadrant,
+  pointMarker,
+  pointRadius,
+  type QuadrantMedians,
+  type ThemeName,
+} from "../src/chartA11y";
+import { freshnessAlert, pricingAge } from "../src/freshness";
 import { plansFor } from "../src/plans";
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -33,7 +51,17 @@ const text = (tag: string, value: string, className?: string) => {
 };
 const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
   vscode.postMessage(
-    state?.comparison && !["ready", "comparison", "target"].includes(type)
+    state?.comparison &&
+    ![
+      "ready",
+      "comparison",
+      "target",
+      "watchlistAlerts",
+      // Leaving or replacing a historical snapshot is a view-level action,
+      // never an edit to one side of a comparison.
+      "importSnapshot",
+      "importExit",
+    ].includes(type)
       ? {
           type: "target",
           side: state.comparison.active,
@@ -41,6 +69,8 @@ const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
         }
       : { type, ...extra },
   );
+// "watchlistAlerts" stays unwrapped above for the same reason: it is global
+// state, not per-option, so it must never switch the Editing side.
 // Targets a specific side directly, regardless of which one is Editing — for
 // controls on the Compare tools tab (like the Tool A/Tool B pickers) that
 // must be able to set up both sides without switching Editing back and forth.
@@ -65,28 +95,27 @@ const colors: Record<string, string> = {
   openai: "#679fff",
   Unknown: "#9ba3b4",
 };
-function hashHue(key: string): number {
-  let h = 0;
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return h % 360;
-}
-const colorForRow = (row: Row): string => {
-  const light =
-    document.body.classList.contains("vscode-light") ||
-    document.body.classList.contains("vscode-high-contrast-light");
-  const known = light ? lightColors[row.provider] : colors[row.provider];
-  // Provider palette wins when the base model maps 1:1; collisions across
-  // different base models sharing a provider fall back to a hashed hue so two
-  // models never share an exact color in the same view.
-  void known;
-  const hue = hashHue(row.baseModelId || row.modelId || row.id);
-  const base = `hsl(${hue} 65% ${light ? "38%" : "68%"})`;
-  return base;
-};
+/** Light themes need the darker half of the palette; see `chartA11y.ts`. */
+const chartTheme = (): ThemeName =>
+  document.body.classList.contains("vscode-light") ||
+  document.body.classList.contains("vscode-high-contrast-light")
+    ? "light"
+    : "dark";
+/** Stable key a model's colour is assigned by: its base identity, not its row. */
+const colorKey = (row: Row) => row.baseModelId || row.modelId || row.id;
+/**
+ * One colour per base model for this view, from the curated colour-blind-safe
+ * palette. Two models never share an exact colour while the palette has room.
+ */
+const colorsForRows = (rows: Row[]): Map<string, string> =>
+  assignPointColors(
+    rows.map(colorKey),
+    chartTheme(),
+  );
+const colorForRow = (row: Row, palette?: Map<string, string>): string =>
+  (palette ?? colorsForRows([row])).get(colorKey(row)) ?? "#9ba3b4";
 const color = (provider: string): string => {
-  const light =
-    document.body.classList.contains("vscode-light") ||
-    document.body.classList.contains("vscode-high-contrast-light");
+  const light = chartTheme() === "light";
   return light
     ? (lightColors[provider] ?? lightColors.Unknown)
     : (colors[provider] ?? colors.Unknown);
@@ -194,6 +223,202 @@ const labels: Plugin<"scatter"> = {
     ctx.restore();
   },
 };
+/**
+ * Keyboard traversal over plotted points, shared by every scatter: the single
+ * view, both comparison panels, and the overlay. The chart is a convenience
+ * view — the same facts are in the table and in the screen-reader description,
+ * so a canvas that could not be traversed would not lose information — but
+ * traversing it is what makes the chart usable without a mouse.
+ */
+interface FocusablePoint {
+  id: string;
+  name: string;
+  score: number | null;
+  cost: number | null;
+  frontier: boolean;
+  recommended: boolean;
+  dominatedBy?: string[];
+}
+interface ChartKeyboard {
+  points: () => FocusablePoint[];
+  medians: () => QuadrantMedians | undefined;
+  unit: () => string;
+  redraw: () => void;
+}
+let focusedPointId: string | undefined;
+let focusedChart: ChartKeyboard | undefined;
+/** Per-canvas chart data, so a re-render replaces it instead of going stale. */
+const chartKeyboard = new WeakMap<HTMLCanvasElement, ChartKeyboard>();
+
+/** Draws the non-colour encodings: a ring per frontier point, and a heavier
+ * ring on the keyboard-focused point. */
+function ringPlugin(
+  datasets: () => FocusablePoint[][],
+  focused: () => string | undefined,
+): Plugin<"scatter"> {
+  return {
+    id: "paretoMarkers",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const border =
+        getComputedStyle(document.body)
+          .getPropertyValue("--vscode-panel-border")
+          .trim() || "#888888";
+      ctx.save();
+      datasets().forEach((rows, datasetIndex) => {
+        const meta = chart.getDatasetMeta(datasetIndex);
+        if (meta.hidden || meta.data.length !== rows.length) return;
+        meta.data.forEach((point, i) => {
+          const row = rows[i];
+          if (!row) return;
+          const isFocused = focused() === row.id;
+          if (!row.frontier && !isFocused) return;
+          ctx.beginPath();
+          ctx.lineWidth = isFocused ? 2 : 1.5;
+          ctx.strokeStyle = isFocused
+            ? getComputedStyle(document.body).color
+            : border;
+          ctx.arc(
+            point.x,
+            point.y,
+            (point.options.radius ?? 5) + (isFocused ? 4 : 3),
+            0,
+            Math.PI * 2,
+          );
+          ctx.stroke();
+        });
+      });
+      ctx.restore();
+    },
+  };
+}
+
+/** Announce the focused point, then redraw the chart that owns it. */
+function focusPoint(
+  chart: ChartKeyboard,
+  point: FocusablePoint | undefined,
+  index: number,
+  total: number,
+) {
+  focusedPointId = point?.id;
+  const status = el(
+    focusedChart === chart ? "chart-status" : "comparison-status",
+  );
+  status.textContent = point
+    ? chartPointSummary({
+        index,
+        total,
+        name: point.name,
+        score: point.score,
+        cost: point.cost,
+        unit: chart.unit(),
+        frontier: point.frontier,
+        recommended: point.recommended,
+        dominatedBy: point.dominatedBy,
+        medians: chart.medians(),
+      })
+    : "";
+  chart.redraw();
+}
+
+/**
+ * Arrow keys move between plotted points, Home/End jump to the ends, and
+ * Enter/Space select the focused point exactly as a click does. Tab reaches the
+ * chart and then the table, as usual.
+ */
+function wireChartKeyboard(canvas: HTMLCanvasElement, chart: ChartKeyboard) {
+  // The handler must always read the *current* render's rows, so the chart's
+  // data is looked up per canvas rather than captured by the listener; the
+  // listener itself is attached once.
+  chartKeyboard.set(canvas, chart);
+  if (canvas.dataset.keyboardWired) return;
+  canvas.dataset.keyboardWired = "1";
+  canvas.tabIndex = 0;
+  canvas.addEventListener("focus", () => {
+    const current = chartKeyboard.get(canvas);
+    if (!current) return;
+    focusedChart = current;
+    const points = current.points();
+    const at = Math.max(
+      0,
+      points.findIndex((p) => p.id === focusedPointId),
+    );
+    if (points.length) focusPoint(current, points[at], at, points.length);
+  });
+  canvas.addEventListener("blur", () => {
+    if (focusedChart === chartKeyboard.get(canvas)) focusedChart = undefined;
+  });
+  canvas.addEventListener("keydown", (event) => {
+    const current = chartKeyboard.get(canvas);
+    if (!current) return;
+    const chart = current;
+    const points = chart.points();
+    if (!points.length) return;
+    const at = Math.max(
+      0,
+      points.findIndex((p) => p.id === focusedPointId),
+    );
+    const next =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? Math.min(points.length - 1, at + 1)
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? Math.max(0, at - 1)
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? points.length - 1
+              : undefined;
+    if (next !== undefined) {
+      event.preventDefault();
+      focusPoint(chart, points[next], next, points.length);
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      const point = points[at];
+      if (!point) return;
+      event.preventDefault();
+      send("select", { id: point.id });
+    }
+  });
+}
+
+/** The single view's plotted rows in the shape the keyboard and rings use. */
+const focusableRows = (rows: Row[], recommended: (r: Row) => boolean) =>
+  rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    score: r.score,
+    cost: r.cost,
+    frontier: r.frontier,
+    recommended: recommended(r),
+    dominatedBy: r.dominatedBy,
+  }));
+
+/**
+ * The Comparison cell: everything the chart encodes about a row's standing —
+ * frontier membership, what dominates it, and the most-attractive quadrant —
+ * so no fact lives only in the drawing. The quadrant is only claimed while the
+ * shaded region is actually drawn, and dominators only when the row has them
+ * (an imported snapshot records none).
+ */
+function comparisonCell(
+  row: Row,
+  medians: QuadrantMedians | undefined,
+): string {
+  const parts = [
+    row.frontier
+      ? "Pareto frontier"
+      : row.reasons.length
+        ? row.reasons.join(" ")
+        : "Dominated",
+  ];
+  if (row.dominatedBy.length)
+    parts.push(`Dominated by ${row.dominatedBy.join(", ")}`);
+  if (inAttractiveQuadrant(row, medians))
+    parts.push("Most attractive quadrant");
+  return parts.join(" · ");
+}
+
 function plotted(): Row[] {
   return state?.rows.filter((r) => r.cost !== null && r.score !== null) ?? [];
 }
@@ -283,41 +508,76 @@ function drawChart() {
   chart?.destroy();
   const showFrontier = state.options.display.frontier;
   const showQuadrant = state.options.display.quadrant && rows.length >= 2;
+  // Same medians the shaded region uses, so the table, the spoken summary, and
+  // the drawn quadrant can never disagree about who is inside it.
+  const medians = showQuadrant
+    ? {
+        cost: median(rows.map((r) => r.cost!)),
+        score: median(rows.map((r) => r.score!)),
+      }
+    : undefined;
+  const palette = colorsForRows(rows);
+  const recommended = (r: Row) => state!.recommendation.modelIds.includes(r.id);
   const plugins: Plugin<"scatter">[] = [
     ...(state.options.display.labels ? [labels] : []),
-    ...(showQuadrant
-      ? [
-          quadrantPlug(
-            median(rows.map((r) => r.cost!)),
-            median(rows.map((r) => r.score!)),
-          ),
-        ]
-      : []),
+    ...(showQuadrant ? [quadrantPlug(medians!.cost, medians!.score)] : []),
+    // Frontier membership and keyboard focus are drawn as rings, so neither is
+    // carried by colour alone.
+    ringPlugin(() => [focusableRows(rows, recommended)], () => focusedPointId),
   ];
-  chart = new Chart(el<HTMLCanvasElement>("chart"), {
+  const canvas = el<HTMLCanvasElement>("chart");
+  canvas.setAttribute("aria-describedby", "chart-desc");
+  // One sentence per plotted point, from the same builder the keyboard
+  // announcement uses, so the screen-reader text cannot drift from the chart.
+  el("chart-desc").textContent = chartDescription(
+    `${state.options.preset} quality versus ${taskView ? `${unitCost(state.options.billing)} per task` : unitCost(state.options.billing)}, ${scale} cost scale.`,
+    rows.map((r, index) =>
+      chartPointSummary({
+        index,
+        total: rows.length,
+        name: r.name,
+        score: r.score,
+        cost: r.cost,
+        unit: `${unitNoun(state!.options.billing)}${taskView ? " per task" : ""}`,
+        frontier: r.frontier,
+        recommended: recommended(r),
+        dominatedBy: r.dominatedBy,
+        medians,
+      }),
+    ),
+  );
+  const keyboard: ChartKeyboard = {
+    points: () => focusableRows(rows, recommended),
+    medians: () => medians,
+    unit: () =>
+      `${unitNoun(state!.options.billing)}${
+        taskView ? " per task" : ""
+      }`,
+    redraw: () => chart?.update("none"),
+  };
+  wireChartKeyboard(canvas, keyboard);
+  chart = new Chart(canvas, {
     type: "scatter",
     data: {
       datasets: [
         {
           label: "Models",
           data,
-          backgroundColor: rows.map((r) => colorForRow(r)),
+          backgroundColor: rows.map((r) => colorForRow(r, palette)),
           borderColor: rows.map((r) =>
-            r.id === state!.selected ? foreground : colorForRow(r),
+            r.id === state!.selected ? foreground : colorForRow(r, palette),
           ),
           borderWidth: rows.map((r) => (r.id === state!.selected ? 3 : 1)),
           pointRadius: rows.map((r) =>
-            state!.recommendation.modelIds.includes(r.id)
-              ? 11
-              : r.frontier
-                ? 7
-                : (r.requests ?? 0) > 0
-                  ? 6
-                  : 5,
+            pointRadius({
+              frontier: r.frontier,
+              recommended: recommended(r),
+              used: (r.requests ?? 0) > 0,
+            }),
           ),
           pointHoverRadius: 11,
           pointStyle: rows.map((r) =>
-            state!.recommendation.modelIds.includes(r.id) ? "star" : "circle",
+            pointMarker({ frontier: r.frontier, recommended: recommended(r) }),
           ),
         },
         ...(showFrontier
@@ -381,6 +641,61 @@ function drawChart() {
       },
     },
   });
+}
+/** What-if workload sweep: breakpoint ranges where the recommendation and
+ * frontier stay constant as the output share varies. Pure client-side
+ * arithmetic from each row's cost breakdown — no host round trip, and the
+ * sweep never touches measured usage history. */
+function renderSensitivity() {
+  if (!state) return;
+  const body = el("sensitivity-rows");
+  const note = el("sensitivity-note");
+  body.replaceChildren();
+  if (state.imported) {
+    // The sweep reprices each row from its cost breakdown, and a snapshot
+    // records no breakdown; sweeping would be an estimate of an estimate.
+    note.textContent =
+      "Unavailable for an imported snapshot: the sweep reprices rows from their cost breakdown, which a snapshot does not record. The exported costs are shown as they were exported.";
+    return;
+  }
+  const comparable = state.rows.filter(
+    (r) => r.cost !== null && r.score !== null,
+  );
+  if (comparable.length < 2) {
+    note.textContent =
+      "Needs at least two comparable models in the current view.";
+    return;
+  }
+  const workloadTotal =
+    state.options.tokens.input + state.options.tokens.output;
+  const total =
+    workloadTotal > 0 ? workloadTotal : sensitivityFallbackTotal;
+  const ranges = compressBreakpoints(
+    sweepMix(state.rows, state.options, total),
+  );
+  note.textContent =
+    state.options.billing === "legacy"
+      ? "Legacy billing charges per interaction, so the ranking cannot move with the token mix."
+      : workloadTotal > 0
+        ? `Sweeping output share 0–100% of ${total.toLocaleString("en")} tokens (cache read/write held at the current workload).`
+        : `The current workload has no input/output tokens, so sweeping an illustrative ${sensitivityFallbackTotal.toLocaleString("en")}-token total instead.`;
+  const byId = new Map(state.rows.map((r) => [r.id, r.name]));
+  const names = (ids: string[]) =>
+    ids.length ? ids.map((id) => byId.get(id) ?? id).join(", ") : "—";
+  for (const range of ranges) {
+    const tr = document.createElement("tr");
+    tr.append(
+      text(
+        "td",
+        range.from === range.to
+          ? `${range.from}%`
+          : `${range.from}–${range.to}%`,
+      ),
+      text("td", names(range.recommendedIds)),
+      text("td", names(range.frontierIds)),
+    );
+    body.append(tr);
+  }
 }
 /** Free-tier intelligence bar below the Pareto chart: score-only ranking of
  * free-tier models (cost is zero, so no cost unit applies). Host-computed in
@@ -661,7 +976,10 @@ function renderDetails() {
       row.mapping ||
       row.pricing?.suggestion ||
       row.pricing?.byok?.stale ||
-      row.pricing?.status === "unresolved"
+      row.pricing?.status === "unresolved" ||
+      (row.pricing &&
+        pricingAge(row.pricing, state.catalogDate, state.staticRegistryDate)
+          .stale)
     )
       detailsMoreOpen = true;
   }
@@ -670,14 +988,18 @@ function renderDetails() {
   more.className = "more-details";
   more.append(text("summary", "More details"));
   target.append(text("h3", row.name), text("p", row.id, "hint"));
-  const copy = text(
-    "button",
-    row.invocable ? "Copy model ID" : "Copy model name",
-  ) as HTMLButtonElement;
-  copy.onclick = () => {
-    send("copy", { id: row.id });
-  };
-  target.append(copy);
+  // A snapshot records no verified client id, and Copy resolves against live
+  // discovery, so the control is absent rather than present and refused.
+  if (!state.imported) {
+    const copy = text(
+      "button",
+      row.invocable ? "Copy model ID" : "Copy model name",
+    ) as HTMLButtonElement;
+    copy.onclick = () => {
+      send("copy", { id: row.id });
+    };
+    target.append(copy);
+  }
   const picked = customPicks.includes(row.id);
   const pickToggle = text(
     "button",
@@ -695,10 +1017,14 @@ function renderDetails() {
     text(
       "p",
       row.frontier
-        ? "On the Pareto frontier for the displayed models."
-        : row.dominatedBy.length
-          ? `Dominated by: ${row.dominatedBy.join(", ")}.`
-          : "Not currently comparable.",
+        ? state.imported
+          ? "On the Pareto frontier when this snapshot was exported."
+          : "On the Pareto frontier for the displayed models."
+        : state.imported
+          ? "Dominated by another exported model; the dominating models are not part of a snapshot."
+          : row.dominatedBy.length
+            ? `Dominated by: ${row.dominatedBy.join(", ")}.`
+            : "Not currently comparable.",
     ),
   );
   target.append(
@@ -728,7 +1054,19 @@ function renderDetails() {
   } else if (row.cost === 0) {
     more.append(text("p", "Free tier: no usage cost.", "hint"));
   }
-  if (row.expandedBenchmarkId) {
+  if (state.imported) {
+    // Pins, mapping controls, and BYOK actions all resolve against live
+    // discovery; a snapshot shows what was recorded and nothing more.
+    if (row.benchmark)
+      more.append(
+        text(
+          "p",
+          `Benchmark at export: ${row.benchmark.name} (${row.benchmark.id})`,
+          "hint",
+        ),
+      );
+    renderImportedPricing(more, row);
+  } else if (row.expandedBenchmarkId) {
     more.append(
       text(
         "p",
@@ -752,7 +1090,7 @@ function renderDetails() {
     pinButton.disabled = !row.pinnedBenchmarkId && !row.benchmark;
     more.append(pinButton);
   }
-  renderPricingDetail(more, row);
+  if (!state.imported) renderPricingDetail(more, row);
   const skip = new Set(
     [row.mapping?.reason, row.pricing?.reason].filter((r): r is string => !!r),
   );
@@ -765,8 +1103,16 @@ function renderDetails() {
         "p",
         `Selected index score: ${format(row.score)} · version ${state.version ?? "unknown"}`,
       ),
+      text(
+        "p",
+        "Artificial Analysis publishes no per-model confidence interval for these indices — score shown as reported.",
+        "hint",
+      ),
     );
-    more.append(text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"));
+    // The export records the benchmark id and name; its slug is derived from
+    // that id, so the id is what an imported row reports.
+    if (!state.imported)
+      more.append(text("p", `Benchmark ID: ${row.benchmark.slug}`, "hint"));
     if ((row.requests ?? 0) > 0)
       target.append(
         text(
@@ -782,7 +1128,7 @@ function renderDetails() {
           "p",
           drift.delta === null
             ? `Score change unknown: previous snapshot v${state.prevVersion} has no comparable score.`
-            : `Score change since v${state.prevVersion} (retrieved ${state.prevFetchedAt ? new Date(state.prevFetchedAt).toLocaleString() : "unknown date"}): ${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)} (was ${format(drift.prevScore)}).`,
+            : `Score change since v${state.prevVersion} (retrieved ${state.prevFetchedAt ? new Date(state.prevFetchedAt).toLocaleString() : "unknown date"}): ${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)} (was ${format(drift.prevScore)}).${drift.noisy ? " Within measurement noise — a change under 1 index point does not imply a real change." : ""}`,
           "hint",
         ),
       );
@@ -846,6 +1192,17 @@ function renderDetails() {
     target.append(
       text("p", state.recommendation.explanation, "recommendation-detail"),
     );
+  if (state.imported) {
+    // Everything below edits the live benchmark mapping, which a snapshot has
+    // no list to map against and no way to apply; the read-only provenance
+    // added above is the whole story for a historical row.
+    more.open = detailsMoreOpen;
+    more.ontoggle = () => {
+      detailsMoreOpen = more.open;
+    };
+    target.append(more);
+    return;
+  }
   const searchLabel = text("label", "Search benchmark variants");
   const search = document.createElement("input");
   search.id = "variant-search";
@@ -983,7 +1340,7 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
       ? p.source === "copilot-catalog"
         ? `Copilot catalog (${state.catalogDate})`
         : p.source === "legacy-multiplier"
-          ? "Legacy plan multiplier"
+          ? `Legacy plan multiplier (${state.catalogDate})`
           : p.source === "opencode-cli"
             ? "OpenCode CLI live rate"
             : `Static registry (${state.staticRegistryDate})`
@@ -997,6 +1354,15 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
             ? "Not comparable in this billing mode"
             : "Unresolved";
   target.append(text("p", `Pricing: ${sourceText}`, "hint"));
+  const age = pricingAge(p, state.catalogDate, state.staticRegistryDate);
+  if (age.stale && age.date !== null && age.daysOld !== null)
+    target.append(
+      text(
+        "p",
+        `This row's pricing source is ${age.daysOld} days old (${age.date}) — rates may be stale (see docs/catalog.md).`,
+        "notice",
+      ),
+    );
   if (p.status === "unresolved" && p.reason)
     target.append(text("p", p.reason, "notice"));
   if (p.byok?.stale)
@@ -1060,6 +1426,61 @@ function renderPricingDetail(target: HTMLElement, row: Row) {
       target.append(applyAll);
     }
   }
+}
+/**
+ * Pricing provenance for a historical row: the status, source, issue, and
+ * BYOK provenance the export recorded, and nothing else. The interactive
+ * pieces of `renderPricingDetail` (edit/remove a rate, apply a registry
+ * suggestion) are absent, because a snapshot cannot change live pricing and
+ * says so rather than offering a control that would be refused.
+ */
+function renderImportedPricing(target: HTMLElement, row: Row) {
+  if (!state || !row.pricing) return;
+  const p = row.pricing;
+  const registryLabel = (registry: string) =>
+    sources[registry as keyof typeof sources]?.label ?? registry;
+  const status =
+    p.status === "priced"
+      ? "Priced"
+      : p.status === "free"
+        ? "Free tier"
+        : p.status === "byok"
+          ? "User BYOK rate"
+          : p.status === "not-comparable"
+            ? "Not comparable in this billing mode"
+            : "Unresolved";
+  const source =
+    p.source === "copilot-catalog"
+      ? `Copilot catalog (${state.catalogDate})`
+      : p.source === "legacy-multiplier"
+        ? `Legacy plan multiplier (${state.catalogDate})`
+        : p.source === "opencode-cli"
+          ? "OpenCode CLI rate"
+          : p.source === "static-registry"
+            ? `Static registry (${state.staticRegistryDate})`
+            : p.source === "byok"
+              ? p.byok?.provenance.kind === "registry"
+                ? `Your rate from the ${registryLabel(p.byok.provenance.registry)} registry, ${p.byok.provenance.registryDate}`
+                : "Your manually entered rate"
+              : "No pricing source";
+  target.append(
+    text("p", `Pricing at export: ${status} · ${source}`, "hint"),
+  );
+  if (p.issue)
+    target.append(
+      text("p", `Pricing issue at export: ${p.issue.replace(/-/g, " ")}.`, "notice"),
+    );
+  const age = pricingAge(p, state.catalogDate, state.staticRegistryDate);
+  if (age.date)
+    target.append(
+      text(
+        "p",
+        age.stale && age.daysOld !== null
+          ? `This row's pricing source was ${age.daysOld} days old at export (${age.date}).`
+          : `This row's pricing source date: ${age.date}.`,
+        "hint",
+      ),
+    );
 }
 function groupMatches(
   groups: ChecklistFamily[],
@@ -1512,6 +1933,76 @@ function renderScenario() {
   }
   if (s.status !== "off") notes.append(text("li", s.disclaimer, "hint"));
 }
+/**
+ * Every known chat-session root with its stated purpose and its own opt-in. A
+ * root the user has not included is only named: the host detected that its
+ * directory exists without reading anything inside it, and Include/Stop go
+ * through the host, which confirms each one separately.
+ */
+function renderUsageSources(
+  target: HTMLElement,
+  sources: UsageSourceView[],
+) {
+  target.replaceChildren();
+  if (!sources.length) return;
+  const included = sources.filter((s) => s.included);
+  const available = sources.filter((s) => s.detected && !s.included);
+  if (included.length)
+    target.append(
+      text(
+        "p",
+        `Included: ${included.map((s) => s.label).join(", ")}.`,
+        "hint",
+      ),
+    );
+  if (available.length) {
+    target.append(
+      text(
+        "p",
+        "Other editors found on this machine — each needs its own consent:",
+        "hint",
+      ),
+    );
+    const list = document.createElement("ul");
+    list.className = "usage-sources";
+    for (const source of available) {
+      const item = document.createElement("li");
+      item.append(
+        text("span", source.label, "usage-source-label"),
+        text("span", ` ${source.purpose}`, "hint"),
+      );
+      const add = text("button", "Include this editor") as HTMLButtonElement;
+      add.setAttribute("aria-label", `Include ${source.label}`);
+      add.onclick = () => send("usageAddRoot", { id: source.id });
+      item.append(add);
+      list.append(item);
+    }
+    target.append(list);
+  } else if (!included.length)
+    target.append(
+      text(
+        "p",
+        "No known Copilot chat-session directory found on this machine. Scan local usage to ask for consent.",
+        "hint",
+      ),
+    );
+  // Removal stays available for every included editor, whether or not there is
+  // anything left to add: a per-source erase must never disappear.
+  if (included.length) {
+    const stops = document.createElement("div");
+    stops.className = "controls";
+    for (const source of included) {
+      const stop = text(
+        "button",
+        `Stop reading ${source.label}`,
+        "secondary",
+      ) as HTMLButtonElement;
+      stop.onclick = () => send("usageRemoveRoot", { id: source.id });
+      stops.append(stop);
+    }
+    target.append(stops);
+  }
+}
 function renderUsage() {
   if (!state) return;
   const u = state.usage;
@@ -1538,10 +2029,14 @@ function renderUsage() {
   const summary = el("usage-summary");
   const modelsEl = el("usage-models"),
     daysEl = el("usage-days"),
-    wsEl = el("usage-workspaces");
+    wsEl = el("usage-workspaces"),
+    editorsEl = el("usage-editors"),
+    sourcesEl = el("usage-sources");
   modelsEl.replaceChildren();
   daysEl.replaceChildren();
   wsEl.replaceChildren();
+  editorsEl.replaceChildren();
+  renderUsageSources(sourcesEl, state.usageSources ?? []);
   el("usage-unknown").textContent = "";
   if (!u) {
     summary.textContent =
@@ -1550,6 +2045,10 @@ function renderUsage() {
   }
   const num = (n: number) =>
     new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(n);
+  // More than one editor contributing makes the source of a row meaningful;
+  // with a single editor the label would be noise on every line.
+  const editorCount = (u.editors ?? []).filter((e) => e.requests > 0).length;
+  const multipleEditors = editorCount > 1;
   const completenessNote = (c: NonNullable<typeof u>["completeness"]) => c
     ? `${c.observedPairs} fully observed pairs (${c.observedZeroPairs} observed zero pairs) · ${c.missingPairs} missing-token requests · ${c.estimatedPairs} estimated requests` +
       (c.fallbackMultipliers ? ` · Unknown model — default multiplier applied (${c.fallbackMultipliers} requests)` : "")
@@ -1600,6 +2099,24 @@ function renderUsage() {
     return wrap;
   };
   if (u.models.length)
+    if (u.editors?.length) {
+      const wrap = table(
+        "By editor",
+        ["Editor", "Requests", "Prompt", "Output", "Premium ≈", "Files"],
+        u.editors.map((e) => [
+          e.editor,
+          String(e.requests),
+          num(e.promptTokens),
+          num(e.outputTokens),
+          String(e.premiumEstimate),
+          String(e.fileCount),
+        ]),
+      );
+      editorsEl.append(wrap);
+      el("usage-editors-note").textContent = multipleEditors
+        ? `Totals below span ${editorCount} editors. A row's source is named in the workspace table.`
+        : "Totals below cover every included editor.";
+    } else editorsEl.replaceChildren();
     modelsEl.append(
       table(
         "By model",
@@ -1639,7 +2156,7 @@ function renderUsage() {
       "By workspace",
       ["Workspace", "Requests", "Prompt", "Output", "Premium ≈", "Completeness / multiplier"],
       shown.map((w) => [
-        workspaceLabel(w.path, w.id, usageFullPaths),
+        (multipleEditors ? `${workspaceLabel(w.path, w.id, usageFullPaths)} · ${w.editor ?? "Unknown editor"}` : workspaceLabel(w.path, w.id, usageFullPaths)),
         String(w.requests),
         num(w.promptTokens),
         num(w.outputTokens),
@@ -1671,16 +2188,13 @@ const overlaySideBorderColor: Record<Side, string> = {
   B: "#e2792e",
 };
 const overlaySideDash: Record<Side, number[]> = { A: [4, 4], B: [8, 4] };
-/** Same fill logic as colorForRow (hue hashed from the base model), so the
- * same model keeps the same hue on both sides; side is told apart instead by
+/** Same palette assignment as the single view (keyed by base model), so the
+ * same model keeps the same colour on both sides; side is told apart instead by
  * point shape and border color, since a shared model can appear on both. */
-const overlayFillColor = (row: OverlayRow): string => {
-  const light =
-    document.body.classList.contains("vscode-light") ||
-    document.body.classList.contains("vscode-high-contrast-light");
-  const hue = hashHue(row.baseModelId || row.id);
-  return `hsl(${hue} 65% ${light ? "38%" : "68%"})`;
-};
+const overlayFillColor = (
+  row: OverlayRow,
+  palette: Map<string, string>,
+): string => palette.get(row.baseModelId || row.id) ?? "#9ba3b4";
 /** Draws the single overlaid chart into `card`: both options' models, each
  * side's own Pareto frontier, and (when comparable) the combined frontier
  * across both. See overlayResult in src/comparison.ts for how rows and the
@@ -1737,21 +2251,49 @@ function drawOverlay(
         "hint",
       ),
     );
+  // One palette for both sides, so the same base model keeps the same colour.
+  const overlayPalette = assignPointColors(
+    overlay.rows.map((r) => r.baseModelId || r.id),
+    chartTheme(),
+  );
   const showLabels = a.options.display.labels || b.options.display.labels;
   const showQuadrant = a.options.display.quadrant || b.options.display.quadrant;
+  const overlayMedians =
+    showQuadrant && overlay.rows.length
+      ? {
+          cost: median(overlay.rows.map((r) => r.x)),
+          score: median(overlay.rows.map((r) => r.score)),
+        }
+      : undefined;
+  const overlayPoints = (): FocusablePoint[] =>
+    overlay.rows.map((r) => ({
+      id: r.id,
+      name: `${r.side}: ${r.name}`,
+      score: r.score,
+      cost: r.x,
+      frontier: r.sideFrontier,
+      recommended: r.selected,
+    }));
+  let overlayChart: Chart<"scatter"> | undefined;
+  canvas.setAttribute("aria-describedby", "comparison-status");
+  wireChartKeyboard(canvas, {
+    points: overlayPoints,
+    medians: () => overlayMedians,
+    unit: () => overlay.unit,
+    redraw: () => overlayChart?.update("none"),
+  });
   const hasZero = overlay.rows.some((r) => r.x === 0);
   comparisonCharts.push(
-    new Chart(canvas, {
+    (overlayChart = new Chart(canvas, {
       type: "scatter",
       plugins: [
-        ...(showQuadrant && overlay.rows.length
-          ? [
-              quadrantPlug(
-                median(overlay.rows.map((r) => r.x)),
-                median(overlay.rows.map((r) => r.score)),
-              ),
-            ]
+        ...(overlayMedians
+          ? [quadrantPlug(overlayMedians.cost, overlayMedians.score)]
           : []),
+        ringPlugin(
+          () => [overlayPoints().filter((p) => datasetRows[0].some((r) => r.id === p.id)), overlayPoints().filter((p) => datasetRows[1].some((r) => r.id === p.id))],
+          () => focusedPointId,
+        ),
         ...(showLabels
           ? [
               {
@@ -1778,7 +2320,7 @@ function drawOverlay(
           {
             label: `A · ${sources[a.options.source].label}`,
             data: aRows.map((r) => ({ x: r.x, y: r.score })),
-            backgroundColor: aRows.map(overlayFillColor),
+            backgroundColor: aRows.map((r) => overlayFillColor(r, overlayPalette)),
             borderColor: overlaySideBorderColor.A,
             pointStyle: overlaySidePointStyle.A,
             pointRadius: aRows.map((r) => (r.selected ? 8 : 4)),
@@ -1787,7 +2329,7 @@ function drawOverlay(
           {
             label: `B · ${sources[b.options.source].label}`,
             data: bRows.map((r) => ({ x: r.x, y: r.score })),
-            backgroundColor: bRows.map(overlayFillColor),
+            backgroundColor: bRows.map((r) => overlayFillColor(r, overlayPalette)),
             borderColor: overlaySideBorderColor.B,
             pointStyle: overlaySidePointStyle.B,
             pointRadius: bRows.map((r) => (r.selected ? 8 : 4)),
@@ -1862,7 +2404,7 @@ function drawOverlay(
             });
         },
       },
-    }),
+    })),
   );
 }
 function renderComparison() {
@@ -1974,18 +2516,38 @@ function renderComparison() {
     card.append(text("p", option.recommendation.explanation));
     // Overlay view draws one shared chart above the panels instead; see
     // drawOverlay. The per-side info card and table stay either way.
+    const plotted = option.rows.filter(
+      (r) => r.cost !== null && r.score !== null,
+    );
+    const palette = colorsForRows(plotted);
+    const sideRecommended = (r: Row) =>
+      option.recommendation.modelIds.includes(r.id);
+    // Same medians the shaded region uses, so this side's table, its spoken
+    // summary, and its drawn quadrant agree.
+    const sideMedians =
+      option.options.display.quadrant && plotted.length
+        ? {
+            cost: median(plotted.map((r) => r.cost!)),
+            score: median(plotted.map((r) => r.score!)),
+          }
+        : undefined;
     let canvas: HTMLCanvasElement | undefined;
+    let sideChart: Chart<"scatter"> | undefined;
     if (!showOverlay) {
       const wrap = text("div", "", "comparison-chart");
       canvas = document.createElement("canvas");
       canvas.id = `comparison-chart-${side}`;
       canvas.setAttribute("aria-label", `${side} quality and cost chart`);
+      canvas.setAttribute("aria-describedby", "comparison-status");
       wrap.append(canvas);
       card.append(wrap);
+      wireChartKeyboard(canvas, {
+        points: () => focusableRows(plotted, sideRecommended),
+        medians: () => sideMedians,
+        unit: () => unitNoun(option.options.billing),
+        redraw: () => sideChart?.update("none"),
+      });
     }
-    const plotted = option.rows.filter(
-      (r) => r.cost !== null && r.score !== null,
-    );
     const table = document.createElement("table");
     const head = document.createElement("tr");
     for (const label of ["Model", "Quality", "Cost", "Status"])
@@ -2007,7 +2569,10 @@ function renderComparison() {
         text("td", format(row.cost)),
         text(
           "td",
-          `${row.frontier ? "Frontier · " : ""}${row.tier ?? ""} ${row.reasons.join(" ")}`,
+          `${row.frontier ? "Frontier · " : ""}${row.tier ?? ""} ${row.reasons.join(" ")}` +
+            (inAttractiveQuadrant(row, sideMedians)
+              ? " · Most attractive quadrant"
+              : ""),
         ),
       );
       table.append(tr);
@@ -2030,100 +2595,99 @@ function renderComparison() {
         );
     }
     panels.append(card);
-    if (canvas)
-      comparisonCharts.push(
-        new Chart(canvas, {
-          type: "scatter",
-          plugins: [
-            ...(option.options.display.quadrant && plotted.length
-              ? [
-                  quadrantPlug(
-                    median(plotted.map((r) => r.cost!)),
-                    median(plotted.map((r) => r.score!)),
-                  ),
-                ]
-              : []),
-            ...(option.options.display.labels
-              ? [
-                  {
-                    id: "optionLabels",
-                    afterDatasetsDraw(c: Chart<"scatter">) {
-                      c.ctx.save();
-                      c.ctx.fillStyle = getComputedStyle(document.body).color;
-                      c.ctx.font = "10px sans-serif";
-                      c.getDatasetMeta(0).data.forEach((point, i) => {
-                        if (plotted[i])
-                          c.ctx.fillText(
-                            plotted[i].name,
-                            point.x + 5,
-                            point.y - 5,
-                          );
-                      });
-                      c.ctx.restore();
-                    },
+    if (canvas) {
+      sideChart = new Chart(canvas, {
+        type: "scatter",
+        plugins: [
+          ...(sideMedians
+            ? [quadrantPlug(sideMedians.cost, sideMedians.score)]
+            : []),
+          ringPlugin(
+            () => [focusableRows(plotted, sideRecommended)],
+            () => focusedPointId,
+          ),
+          ...(option.options.display.labels
+            ? [
+                {
+                  id: "optionLabels",
+                  afterDatasetsDraw(c: Chart<"scatter">) {
+                    c.ctx.save();
+                    c.ctx.fillStyle = getComputedStyle(document.body).color;
+                    c.ctx.font = "10px sans-serif";
+                    c.getDatasetMeta(0).data.forEach((point, i) => {
+                      if (plotted[i])
+                        c.ctx.fillText(
+                          plotted[i].name,
+                          point.x + 5,
+                          point.y - 5,
+                        );
+                    });
+                    c.ctx.restore();
                   },
-                ]
-              : []),
-          ],
-          data: {
-            datasets: [
-              {
-                label: "Models",
-                data: plotted.map((r) => ({ x: r.cost!, y: r.score! })),
-                backgroundColor: plotted.map(colorForRow),
-                pointRadius: plotted.map((r) =>
-                  r.id === option.selected ? 7 : 4,
-                ),
-              },
-              {
-                label: "Frontier",
-                hidden: !option.options.display.frontier,
-                data: plotted
-                  .filter((r) => r.frontier)
-                  .sort((a, b) => a.cost! - b.cost!)
-                  .map((r) => ({ x: r.cost!, y: r.score! })),
-                showLine: true,
-                borderDash: [4, 4],
-                pointRadius: 0,
-              },
-            ],
-          },
-          options: {
-            animation: false,
-            plugins: {
-              tooltip: {
-                callbacks: {
-                  label: (context) =>
-                    context.datasetIndex === 0
-                      ? `${plotted[context.dataIndex]?.name}: ${context.parsed.y} points, ${context.parsed.x} ${option.options.billing}`
-                      : "Frontier",
                 },
-              },
+              ]
+            : []),
+        ],
+        data: {
+          datasets: [
+            {
+              label: "Models",
+              data: plotted.map((r) => ({ x: r.cost!, y: r.score! })),
+              backgroundColor: plotted.map((r) => colorForRow(r, palette)),
+              pointRadius: plotted.map((r) =>
+                r.id === option.selected ? 7 : 4,
+              ),
             },
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-              x: {
-                type:
-                  option.options.display.scale === "linear" ||
-                  plotted.some((r) => r.cost === 0)
-                    ? "linear"
-                    : "logarithmic",
-                title: { display: true, text: option.options.billing },
-              },
-              y: { title: { display: true, text: option.options.preset } },
+            {
+              label: "Frontier",
+              hidden: !option.options.display.frontier,
+              data: plotted
+                .filter((r) => r.frontier)
+                .sort((a, b) => a.cost! - b.cost!)
+                .map((r) => ({ x: r.cost!, y: r.score! })),
+              showLine: true,
+              borderDash: [4, 4],
+              pointRadius: 0,
             },
-            onClick: (_event, elements) => {
-              const e = elements[0];
-              if (e?.datasetIndex === 0 && plotted[e.index])
-                send("target", {
-                  side,
-                  action: { type: "select", id: plotted[e.index].id },
-                });
+          ],
+        },
+        options: {
+          animation: false,
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: (context) =>
+                  context.datasetIndex === 0
+                    ? `${plotted[context.dataIndex]?.name}: ${context.parsed.y} points, ${context.parsed.x} ${option.options.billing}`
+                    : "Frontier",
+              },
             },
           },
-        }),
-      );
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              type:
+                option.options.display.scale === "linear" ||
+                plotted.some((r) => r.cost === 0)
+                  ? "linear"
+                  : "logarithmic",
+              title: { display: true, text: option.options.billing },
+            },
+            y: { title: { display: true, text: option.options.preset } },
+          },
+          onClick: (_event, elements) => {
+            const e = elements[0];
+            if (e?.datasetIndex === 0 && plotted[e.index])
+              send("target", {
+                side,
+                action: { type: "select", id: plotted[e.index].id },
+              });
+          },
+        },
+      });
+      comparisonCharts.push(sideChart);
+    }
   }
   if (focusSide && focusRow)
     Array.from(panels.querySelectorAll<HTMLButtonElement>("button"))
@@ -2155,6 +2719,104 @@ el<HTMLSelectElement>("comparison-view").onchange = () =>
   send("comparison", {
     view: el<HTMLSelectElement>("comparison-view").value,
   });
+/**
+ * Historical snapshot mode. While an imported snapshot is showing, the panel
+ * keeps only the tab that renders it (Tool analysis, or Compare tools for a
+ * pair), the live-only header actions disappear, and every control that would
+ * change the comparison is disabled. The display-only toggles, the text
+ * filter, row selection, and the pick tray keep working on the exported rows,
+ * because none of them changes what was exported.
+ */
+let preImportTab: SectionTab | undefined;
+/** Enabled state of the controls the read-only view locks, captured the first
+ * time it locks them and kept until it leaves, so repeated renders while a
+ * snapshot is showing never overwrite the original with the locked value, and
+ * leaving restores exactly what the renderers decided (a comparison that is
+ * off keeps its own pickers disabled, for instance). */
+type Lockable = HTMLInputElement | HTMLSelectElement | HTMLFieldSetElement;
+let lockedControls = new Map<Lockable, boolean>();
+const importedTab = (kind: "single" | "comparison"): SectionTab =>
+  kind === "comparison" ? "tools" : "compare";
+const liveOnlyControls = [
+  "source",
+  "preset",
+  "billing",
+  "plan",
+  "display-chart",
+  "recommendation-mode",
+  "budget",
+  "score-gap",
+  "comparison-enabled",
+  "comparison-source-a",
+  "comparison-source-b",
+  "comparison-active",
+  "comparison-name",
+  "comparison-normalize",
+  "comparison-view",
+  "export-csv",
+  "export-snapshot",
+  "export-badge",
+  "export-png",
+  "import-snapshot",
+];
+function renderImportedChrome(imported: ImportedMeta | undefined) {
+  el("snapshot-banner").hidden = !imported;
+  el("header-actions").hidden = !!imported;
+  for (const id of sectionTabs)
+    el<HTMLButtonElement>(`tab-${id}`).hidden =
+      !!imported && id !== importedTab(imported.kind);
+  // Switch (or restore) the open tab before disabling anything: showTab can
+  // re-render a panel, and those renderers set their own enabled state.
+  if (imported) {
+    if (preImportTab === undefined) preImportTab = currentTab;
+    if (currentTab !== importedTab(imported.kind))
+      showTab(importedTab(imported.kind));
+  } else if (preImportTab !== undefined) {
+    const restore = preImportTab;
+    preImportTab = undefined;
+    showTab(restore);
+  }
+  const lock = (control: Lockable) => {
+    if (!lockedControls.has(control))
+      lockedControls.set(control, control.disabled);
+    control.disabled = true;
+  };
+  if (imported) {
+    for (const id of liveOnlyControls) lock(el(id));
+    lock(el("tokens") as HTMLFieldSetElement);
+    // A single snapshot's rows can still be narrowed by the text filter, which
+    // only changes which recorded rows are shown; a pair snapshot's rows were
+    // already filtered per side, so that filter is locked too.
+    if (imported.kind === "comparison") lock(el<HTMLInputElement>("filter"));
+  } else {
+    for (const [control, was] of lockedControls) control.disabled = was;
+    lockedControls.clear();
+  }
+  const filter = el<HTMLInputElement>("filter");
+  filter.title = imported
+    ? imported.kind === "comparison"
+      ? "Locked: each option's rows were filtered when the snapshot was exported."
+      : "Narrows the exported rows. The snapshot itself is unchanged."
+    : "";
+  if (!imported) return;
+  const retrieved = state?.fetchedAt
+    ? new Date(state.fetchedAt).toLocaleString()
+    : "unknown date";
+  el("snapshot-detail").textContent =
+    `${imported.fileName} · ${
+      imported.kind === "comparison" ? "two-option" : "single-option"
+    } snapshot exported ${imported.exportedAt} (schema version ${imported.schemaVersion})` +
+    (imported.options?.length ? ` · ${imported.options.join(" · ")}` : "") +
+    `. Benchmarks: index v${state?.version ?? "unknown"} retrieved ${retrieved}. ` +
+    "This is historical data, not live results: nothing here refreshes, and no action here changes your saved settings.";
+  el("snapshot-basis").textContent =
+    `Costs are shown in ${imported.costBasis.unit} on the exported ${imported.costBasis.basis} basis. ${imported.costBasis.note} ` +
+    `Registry dates as of the export: catalog ${imported.catalogDate}, static registries ${imported.staticRegistryDate}, plans ${imported.planRegistryDate}. ` +
+    "The chart basis is locked to the snapshot, so a different workload or chart view is never applied to these numbers.";
+  el("snapshot-limits").textContent =
+    "Read-only: benchmark mapping, pricing, pinning, exclusions, saved workloads, and exports are unavailable here. Rows carry only what the export recorded — cost breakdowns, dominators, and local usage are not part of a snapshot. " +
+    (imported.disclaimer ? imported.disclaimer : "");
+}
 function render(next: ViewState) {
   const focused = document.activeElement as HTMLElement | null;
   const focusedModel = focused?.dataset.modelId;
@@ -2292,6 +2954,8 @@ function render(next: ViewState) {
     state.options.source !== "opencode";
   (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
   (el("only-mine") as HTMLInputElement).checked = state.options.onlyMine;
+  (el("watchlist-alerts") as HTMLInputElement).checked =
+    state.watchlistAlerts;
   const usageSummary = state.usage;
   const prefill = el("usage-prefill") as HTMLButtonElement;
   prefill.disabled = !usageSummary || usageSummary.medianSample === 0;
@@ -2317,6 +2981,15 @@ function render(next: ViewState) {
   const rows = plotted();
   el("count").textContent =
     `${rows.length} plotted / ${state.rows.length} models`;
+  // The table repeats the chart's own quadrant rule, so a row never claims
+  // membership in a region the chart is not shading.
+  const tableMedians: QuadrantMedians | undefined =
+    state.options.display.quadrant && rows.length >= 2
+      ? {
+          cost: median(rows.map((r) => r.cost!)),
+          score: median(rows.map((r) => r.score!)),
+        }
+      : undefined;
   el("empty").hidden = rows.length > 0;
   el("chart-wrap").hidden = rows.length === 0;
   el("empty").textContent = state.rows.length
@@ -2366,7 +3039,7 @@ function render(next: ViewState) {
     const scoreText =
       format(row.score) +
       (drift && drift.delta !== null
-        ? ` (${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)})`
+        ? ` (${drift.delta > 0 ? "+" : ""}${new Intl.NumberFormat("en", { maximumSignificantDigits: 3 }).format(drift.delta)}${drift.noisy ? ", noise" : ""})`
         : "");
     tr.append(
       name,
@@ -2375,11 +3048,7 @@ function render(next: ViewState) {
       text("td", format(efficiencyOf(row))),
       text(
         "td",
-        row.frontier
-          ? "Pareto frontier"
-          : row.reasons.length
-            ? row.reasons.join(" ")
-            : "Dominated",
+        comparisonCell(row, tableMedians),
         row.frontier ? "frontier" : "",
       ),
     );
@@ -2397,8 +3066,11 @@ function render(next: ViewState) {
   }
   renderDetails();
   renderCustom();
+  renderSensitivity();
   drawChart();
   drawFreeBar();
+  // Last, so it wins over the enabled state the renderers above set.
+  renderImportedChrome(state.imported);
   if (focusedModel) {
     const button = Array.from(
       document.querySelectorAll<HTMLButtonElement>(".model-button"),
@@ -2573,6 +3245,10 @@ el("source").addEventListener("change", () => {
     source: el<HTMLSelectElement>("source").value,
   });
 });
+// Snapshot import/exit carry no payload: the host owns the file dialog and
+// the validated file, so the webview never names a path or sends contents.
+el("import-snapshot").addEventListener("click", () => send("importSnapshot"));
+el("snapshot-back").addEventListener("click", () => send("importExit"));
 // Tool A/Tool B on the Compare tools tab pick each side's source directly,
 // without first switching Editing to it (targets that side explicitly).
 el("comparison-source-a").addEventListener("change", () => {
@@ -2815,6 +3491,13 @@ el("custom-clear").onclick = () => {
   renderDetails();
   renderCustom();
 };
+// Global opt-in, sent immediately (not through the debounced options flow)
+// and never wrapped to a comparison side (see send above).
+el("watchlist-alerts").addEventListener("change", () => {
+  send("watchlistAlerts", {
+    enabled: el<HTMLInputElement>("watchlist-alerts").checked,
+  });
+});
 el("export-png").onclick = () => {
   // Export lives on the Settings tab, and charts drawn while their panel is
   // hidden have no size: lay the panel that owns the exported chart(s)
@@ -2930,16 +3613,22 @@ sectionTabs.forEach((id, index) => {
   const button = el<HTMLButtonElement>(`tab-${id}`);
   button.onclick = () => showTab(id);
   button.onkeydown = (event) => {
-    const count = sectionTabs.length;
+    // Only reachable tabs take part, so arrow keys never move focus into a
+    // tab hidden by the historical snapshot view.
+    const reachable = sectionTabs.filter(
+      (t) => !el<HTMLButtonElement>(`tab-${t}`).hidden,
+    );
+    const at = reachable.indexOf(id);
+    const count = reachable.length;
     const next =
       event.key === "ArrowRight"
-        ? sectionTabs[(index + 1) % count]
+        ? reachable[(at + 1) % count]
         : event.key === "ArrowLeft"
-          ? sectionTabs[(index + count - 1) % count]
+          ? reachable[(at + count - 1) % count]
           : event.key === "Home"
-            ? sectionTabs[0]
+            ? reachable[0]
             : event.key === "End"
-              ? sectionTabs[count - 1]
+              ? reachable[count - 1]
               : undefined;
     if (!next) return;
     event.preventDefault();

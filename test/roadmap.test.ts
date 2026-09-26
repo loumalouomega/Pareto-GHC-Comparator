@@ -2,7 +2,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   baseModelIdOf,
   compare,
@@ -11,6 +11,7 @@ import {
   freeSpotlight,
   freeBar,
   loadMappings,
+  markFrontier,
   migrateOptions,
   modelThinkingOf,
   parseOptions,
@@ -23,9 +24,20 @@ import {
   variantDisplayName,
 } from "../src/compare";
 import { exportBadge, exportCsv, exportSnapshot } from "../src/export";
-import { freshnessAlert } from "../src/freshness";
-import { driftOf, selectPrevSnapshot } from "../src/drift";
+import { freshnessAlert, pricingAge } from "../src/freshness";
+import { driftOf, noiseThreshold, selectPrevSnapshot } from "../src/drift";
 import { workspaceLabel } from "../src/workspaceLabel";
+import {
+  assignPointColors,
+  chartDescription,
+  chartPointSummary,
+  cvdSafePalette,
+  hasFrontierRing,
+  hashedColor,
+  inAttractiveQuadrant,
+  pointMarker,
+  pointRadius,
+} from "../src/chartA11y";
 import { loadByokStore, mergeByokForm, parseByokFormStore, parseByokStore } from "../src/byok";
 import { usageMultiplier } from "../src/usageMultipliers";
 import {
@@ -38,7 +50,13 @@ import {
   parseUsageLegacyJson,
   premiumForRequest,
   selectChangedFiles,
-  storageCandidates,
+  consentedUsageRoots,
+  detectUsageRoots,
+  editorForPath,
+  legacyUsageRootIds,
+  uniqueRoots,
+  unknownEditorLabel,
+  usageRoots,
   suggestBudget,
   uriToPath,
   usageParserVersion,
@@ -46,7 +64,9 @@ import {
 } from "../src/usage";
 import { parseMessage } from "../src/messages";
 import { recommend } from "../src/recommend";
-import { defaults, type AvailableModel, type Benchmark } from "../src/types";
+import { defaults, type AvailableModel, type Benchmark, type PricingInfo, type PricingSource, type Row } from "../src/types";
+import { compressBreakpoints, frontierIds, mixCost, sweepMix } from "../src/sensitivity";
+import { summarizeWatchChanges, watchlistChanges } from "../src/watchlist";
 import { parseScenario, planRegistryDate, projectScenario } from "../src/plans";
 import { staticEntries, staticModels, isStaticSource, staticPricingSources, staticRegistryDate } from "../src/staticSources";
 import { sources, defaultBilling, allowedBilling, isLiveSource } from "../src/sources";
@@ -430,6 +450,22 @@ test("workload excludes display settings but keeps source and freeOnly", () => {
   assert.ok(!("display" in w));
   assert.equal(w.source, "copilot");
   assert.equal(w.freeOnly, true);
+});
+
+test("usage source messages carry only a root id the host can resolve", () => {
+  for (const type of ["usageAddRoot", "usageRemoveRoot"] as const) {
+    assert.deepEqual(parseMessage({ type, id: "cursor" }), { type, id: "cursor" });
+    assert.deepEqual(parseMessage({ type, id: "/etc/passwd" }), {
+      type,
+      id: "/etc/passwd",
+    });
+    // A missing or non-string id is refused here.
+    for (const bad of [{}, { id: 7 }, { id: ["cursor"] }])
+      assert.throws(() => parseMessage({ type, ...bad }), /Invalid action/);
+    // An id the registry does not know still crosses this layer: identity is
+    // the host's call, and it refuses with an explanation rather than reading
+    // anything (see the per-source host test).
+  }
 });
 
 test("host messages validate pins, exclusions, and exports", () => {
@@ -830,6 +866,233 @@ test("free bar ranks scored free-tier models by score descending", () => {
   );
 });
 
+test("workload sweep prices mixes from breakdowns and matches the frontier", () => {
+  const srow = (id: string, cost: number | null, score: number | null): Row => ({
+    id,
+    modelId: id,
+    baseModelId: id,
+    name: id,
+    provider: "P",
+    score,
+    cost,
+    frontier: false,
+    reasons: [],
+    dominatedBy: [],
+    mappingStatus: "exact",
+    candidateIds: [],
+  });
+  // frontierIds follows the same dominance rule as markFrontier.
+  const synthetic = [srow("a", 1, 10), srow("b", 2, 20), srow("c", 1, 20), srow("d", null, 30)];
+  assert.deepEqual(
+    [...frontierIds(synthetic)].sort(),
+    markFrontier(synthetic).filter((r) => r.frontier).map((r) => r.id).sort(),
+  );
+  assert.deepEqual(frontierIds(synthetic), ["c"]);
+  // mixCost honors disjoint buckets with write falling back to input.
+  const priced = srow("p", 0.002, 90);
+  const withRates: Row = {
+    ...priced,
+    breakdown: {
+      inputTokens: 1000,
+      readTokens: 0,
+      writeTokens: 0,
+      outputTokens: 1000,
+      rates: { input: 1, read: 2, write: null, output: 10 },
+      divisor: 1000000,
+      unit: "USD",
+    },
+  };
+  assert.equal(mixCost(withRates, { input: 1000, read: 0, write: 0, output: 1000 }, "usd"), 0.011);
+  assert.equal(mixCost(withRates, { input: 0, read: 0, write: 100, output: 0 }, "usd"), 0.0001);
+  assert.equal(mixCost({ ...priced, score: null }, { input: 1, read: 0, write: 0, output: 0 }, "usd"), null);
+  assert.equal(
+    mixCost({ ...withRates, breakdown: { ...withRates.breakdown!, divisor: 0 } }, { input: 1, read: 0, write: 0, output: 0 }, "usd"),
+    null,
+  );
+  // Legacy rows without a breakdown stay constant; anything else unpriced is null.
+  assert.equal(mixCost(priced, { input: 5, read: 5, write: 5, output: 5000 }, "legacy"), 0.002);
+  assert.equal(mixCost(priced, { input: 5, read: 0, write: 0, output: 5 }, "usd"), null);
+});
+
+test("sweep breakpoints track frontier and recommendation changes", () => {
+  const model = (
+    id: string,
+    name: string,
+    extra: Partial<AvailableModel> = {},
+  ): AvailableModel => ({
+    id,
+    name,
+    family: id,
+    maxInputTokens: 500000,
+    source: "opencode",
+    ...extra,
+  });
+  const bench = (id: string, name: string, score: number): Benchmark => ({
+    id,
+    slug: id,
+    name,
+    provider: "P",
+    scores: { general: score, coding: score, agentic: score },
+  });
+  const available = [
+    model("opencode:zen/a", "A", { freeTier: true }),
+    model("opencode:paid/b", "B", { rates: { input: 1, read: 1, write: null, output: 10 } }),
+    model("opencode:paid/c", "C", { rates: { input: 10, read: 10, write: null, output: 1 } }),
+  ];
+  const benchmarks = [bench("a", "A", 70), bench("b", "B", 95), bench("c", "C", 90)];
+  const options = {
+    ...defaults,
+    source: "opencode" as const,
+    billing: "usd" as const,
+    display: { ...defaults.display, chart: "workload" as const },
+    tokens: { input: 1000, read: 0, write: 0, output: 1000 },
+    recommendation: {
+      ...defaults.recommendation,
+      budgets: { ...defaults.recommendation.budgets, usd: 0.005 },
+    },
+  };
+  const rows = compare(available, benchmarks, options);
+  assert.equal(rows.length, 3);
+  // The mid-sweep step reuses the workload tokens, so it must agree with compare().
+  const steps = sweepMix(rows, options, 2000);
+  assert.equal(steps.length, 11);
+  const mid = steps.find((s) => s.share === 50)!;
+  assert.deepEqual(
+    [...mid.frontierIds].sort(),
+    rows.filter((r) => r.frontier).map((r) => r.id).sort(),
+  );
+  // Input-heavy mixes favour the cheap-input model; output-heavy mixes flip both frontier and recommendation.
+  const ranges = compressBreakpoints(steps);
+  assert.ok(ranges.length > 1);
+  assert.deepEqual(ranges[0].recommendedIds, [rows.find((r) => r.modelId === "opencode:paid/b")!.id]);
+  const last = ranges[ranges.length - 1];
+  assert.deepEqual(last.recommendedIds, [rows.find((r) => r.modelId === "opencode:paid/c")!.id]);
+  // A flat sweep compresses to a single range; degenerate inputs yield none.
+  assert.equal(compressBreakpoints([]).length, 0);
+  assert.equal(sweepMix(rows, options, 2000, 1).length, 0);
+  const legacyRows = [
+    { ...rows[0], cost: 2, breakdown: undefined },
+    { ...rows[1], cost: 3, breakdown: undefined },
+  ];
+  const legacySteps = sweepMix(legacyRows, { ...options, billing: "legacy" }, 2000);
+  assert.equal(legacySteps.length, 11);
+  assert.ok(legacySteps.every((s) => s.frontierIds.length === 2));
+  assert.equal(compressBreakpoints(legacySteps).length, 1);
+});
+
+test("watchlist reports pinned-model changes and stays silent otherwise", () => {
+  const wrow = (
+    id: string,
+    modelId: string,
+    name: string,
+    cost: number | null,
+    score: number | null,
+    mappingStatus: Row["mappingStatus"] = "exact",
+  ): Row => ({
+    id,
+    modelId,
+    baseModelId: modelId,
+    name,
+    provider: "P",
+    score,
+    cost,
+    frontier: false,
+    reasons: [],
+    dominatedBy: [],
+    mappingStatus,
+    candidateIds: [],
+  });
+  const prev = [
+    wrow("gpt-5-mini::aa", "gpt-5-mini", "GPT-5 mini · A", 1, 48),
+    wrow("gpt-5-mini::bb", "gpt-5-mini", "GPT-5 mini · B", 1, 50),
+    wrow("steady::cc", "steady", "Steady", 2, 60),
+    wrow("unmapped::dd", "unmapped", "Unmapped", null, null, "missing"),
+  ];
+  const curr = [
+    wrow("gpt-5-mini::aa", "gpt-5-mini", "GPT-5 mini · A", 1.5, 48.3),
+    wrow("gpt-5-mini::bb", "gpt-5-mini", "GPT-5 mini · B", 1, 52),
+    wrow("steady::cc", "steady", "Steady", 2, 60),
+    wrow("unmapped::dd", "unmapped", "Unmapped", null, null, "missing"),
+  ];
+  const base = {
+    prevRows: prev,
+    currRows: curr,
+    availableIds: ["gpt-5-mini", "steady", "unmapped"],
+    excludedIds: [] as string[],
+    source: "copilot" as const,
+    unit: "AI credits",
+  };
+  // Price change alerts; sub-threshold score drift and nulls stay silent.
+  const changes = watchlistChanges({
+    ...base,
+    pins: { "gpt-5-mini": ["aa", "bb"], steady: ["cc"], unmapped: ["dd"] },
+  });
+  assert.deepEqual(
+    changes.map((c) => [c.kind, c.name]),
+    [
+      ["price", "GPT-5 mini · A"],
+      ["score", "GPT-5 mini · B"],
+    ],
+  );
+  assert.match(changes[0].before, /1 AI credits/);
+  assert.match(changes[0].after, /1\.5 AI credits/);
+  // Mapping changes alert with labels; a pin with no rows on either side
+  // reads as not discovered when it belongs to the current source.
+  const mapped = watchlistChanges({
+    ...base,
+    prevRows: prev,
+    currRows: curr.map((r) =>
+      r.id === "steady::cc" ? { ...r, mappingStatus: "missing" as const } : r,
+    ),
+    pins: { steady: ["cc"], gone: ["ee"] },
+  });
+  assert.deepEqual(
+    mapped.map((c) => [c.kind, c.before, c.after]),
+    [
+      ["availability", "Discovered", "Not discovered"],
+      ["mapping", "Exact match", "Missing benchmark"],
+    ],
+  );
+  // Availability is stateless and source-scoped: same-source pins missing
+  // from discovery alert, cross-source pins, excluded pins, and empty pins
+  // stay silent — as does everything when no rows are comparable at all.
+  const away = watchlistChanges({
+    ...base,
+    prevRows: [],
+    currRows: [wrow("other::x", "other", "Other", 1, 10)],
+    availableIds: ["other"],
+    source: "opencode" as const,
+    pins: {
+      "opencode:zen/gone": ["z"],
+      "gpt-5-mini": ["aa"],
+      other: [],
+      "opencode:zen/hidden": ["z"],
+    },
+    excludedIds: ["opencode:zen/hidden"],
+  });
+  assert.deepEqual(
+    away.map((c) => [c.kind, c.name]),
+    [["availability", "opencode:zen/gone"]],
+  );
+  assert.deepEqual(
+    watchlistChanges({ ...base, pins: {} }),
+    [],
+  );
+  assert.deepEqual(
+    watchlistChanges({ ...base, currRows: [], pins: { steady: ["cc"] } }),
+    [],
+  );
+  // The summary cites both snapshot versions and retrieval dates.
+  const summary = summarizeWatchChanges(
+    changes,
+    { version: "4.2", fetchedAt: 1000, models: [] },
+    { version: "4.3", fetchedAt: 2000, models: [] },
+  );
+  assert.match(summary, /v4\.2 → v4\.3/);
+  assert.match(summary, /GPT-5 mini · A: price/);
+  assert.match(summary, /GPT-5 mini · B: score/);
+});
+
 test("coverage: recommendations and profiles branches", () => {  const empty = recommend([], defaults);
   assert.deepEqual(empty.modelIds, []);
   const over = recommend(
@@ -988,6 +1251,65 @@ test("freshness alert stays silent for current dates and nudges when stale", () 
   assert.match(stalePlans ?? "", /plans 2026-01-01/);
 });
 
+test("per-row pricing age flags stale sources with the shared 90-day threshold", () => {
+  const now = Date.parse("2026-09-20T00:00:00Z");
+  const priced = (source: PricingSource): PricingInfo => ({ status: "priced", source });
+  // Day-precision boundary: exactly 90 days old is fresh, 91 days is stale.
+  assert.equal(
+    pricingAge(priced("copilot-catalog"), "2026-06-22", "2026-09-11", now).stale,
+    false,
+  );
+  const stale = pricingAge(priced("copilot-catalog"), "2026-06-21", "2026-09-11", now);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.date, "2026-06-21");
+  assert.equal(stale.daysOld, 91);
+  // Legacy multipliers ride with the catalog; static rows with their registry.
+  assert.equal(
+    pricingAge(priced("legacy-multiplier"), "2026-06-21", "2026-09-11", now).stale,
+    true,
+  );
+  const registry = pricingAge(priced("static-registry"), "2026-09-10", "2026-06-21", now);
+  assert.equal(registry.date, "2026-06-21");
+  assert.equal(registry.stale, true);
+  // A fresh row under a stale catalog stays clean.
+  assert.equal(
+    pricingAge(priced("static-registry"), "2026-01-01", "2026-09-11", now).stale,
+    false,
+  );
+  // Registry-provenance BYOK uses its own date.
+  const registryByok: PricingInfo = {
+    status: "byok",
+    source: "byok",
+    byok: {
+      provenance: { kind: "registry", registry: "codex", registryId: "x", registryDate: "2026-01-01" },
+    },
+  };
+  assert.equal(
+    pricingAge(registryByok, "2026-09-10", "2026-09-11", now).stale,
+    true,
+  );
+  // Never flagged: live CLI rates, free tier, manual BYOK, unresolved, cross-unit.
+  const undated: PricingInfo[] = [
+    { status: "priced", source: "opencode-cli" },
+    { status: "free", source: "opencode-cli" },
+    { status: "byok", source: "byok", byok: { provenance: { kind: "manual" } } },
+    { status: "unresolved", source: "none" },
+    { status: "not-comparable", source: "none" },
+  ];
+  for (const p of undated)
+    assert.deepEqual(pricingAge(p, "2026-01-01", "2026-01-01", now), {
+      date: null,
+      stale: false,
+      daysOld: null,
+    });
+  // An unparseable date is reported without a flag, never as fresh.
+  assert.deepEqual(pricingAge(priced("copilot-catalog"), "not-a-date", "2026-09-11", now), {
+    date: "not-a-date",
+    stale: false,
+    daysOld: null,
+  });
+});
+
 test("snapshot and badge exports reflect displayed rows", () => {
   const rows = compare([copilotModel], benchmarks, defaults);
   assert.ok(rows.length >= 1);
@@ -1079,6 +1401,30 @@ test("drift computes per-preset deltas with unknown, not zero, for gaps", () => 
   assert.equal(coding.a.delta, 0);
   assert.equal(coding.b.delta, 1);
   assert.deepEqual(driftOf(undefined, curr, "general"), {});
+});
+
+test("drift flags sub-threshold deltas as measurement noise", () => {
+  assert.equal(noiseThreshold, 1);
+  const prev = {
+    version: "4.2",
+    fetchedAt: 1000,
+    models: [
+      { id: "tiny", slug: "tiny", name: "Tiny", provider: "P", scores: { general: 50, coding: 50, agentic: 50 } },
+    ],
+  };
+  const curr = (score: number | null) => [
+    { id: "tiny", slug: "tiny", name: "Tiny", provider: "P", scores: { general: score, coding: score, agentic: score } },
+  ];
+  // Boundary: just under 1 point is noise, exactly 1 is a real change.
+  assert.equal(driftOf(prev, curr(50.99), "general").tiny.noisy, true);
+  assert.equal(driftOf(prev, curr(51), "general").tiny.noisy, false);
+  assert.equal(driftOf(prev, curr(51.01), "general").tiny.noisy, false);
+  // Sign is irrelevant; an exact zero is noise (no claimed change).
+  assert.equal(driftOf(prev, curr(49.5), "general").tiny.noisy, true);
+  assert.equal(driftOf(prev, curr(50), "general").tiny.noisy, true);
+  // Unknown deltas are never labelled noise.
+  assert.equal(driftOf(prev, curr(null), "general").tiny.noisy, false);
+  assert.equal(driftOf(prev, curr(null), "general").tiny.delta, null);
 });
 
 test("previous snapshots validate, stay older, and never equal current", () => {
@@ -1408,12 +1754,217 @@ test("usage file index selects changed files and reports deletions", () => {
 });
 
 test("usage storage roots and URIs resolve per platform", () => {
-  assert.ok(storageCandidates("linux", {}).some((p) => p.endsWith("Code/User/workspaceStorage")));
-  assert.ok(storageCandidates("darwin", {}).some((p) => p.includes("Application Support")));
-  assert.ok(storageCandidates("win32", { APPDATA: "C:/A" }).some((p) => p.startsWith("C:/A")));
+  const linux = usageRoots("linux", {}, "/home/u");
+  assert.ok(linux.some((r) => r.path.endsWith("Code/User/workspaceStorage")));
+  assert.ok(usageRoots("darwin", {}, "/Users/u").some((r) => r.path.includes("Application Support")));
+  assert.ok(usageRoots("win32", { APPDATA: "C:/A" }, "C:/u").some((r) => r.path.startsWith("C:/A")));
   assert.equal(uriToPath("file:///c%3A/repo", "/root"), "c:/repo");
   assert.equal(uriToPath("plain/path", "/root"), "plain/path");
   assert.ok(uriToPath("vscode-userdata:///Code/settings.json", "/a/b/Code/User/workspaceStorage").endsWith("Code/settings.json"));
+});
+
+/** Wrap a bare path in the registry shape the discovery helpers take. */
+const usageRoot = (path: string) => ({
+  id: path,
+  editor: "Test editor",
+  label: "Test editor",
+  path,
+  purpose: "test",
+});
+
+test("every known chat-session root carries a label, a path, and a stated purpose", () => {
+  const linux = usageRoots("linux", {}, "/home/u");
+  assert.deepEqual(
+    linux.map((r) => r.id).slice(0, 2),
+    ["code", "code-insiders"],
+  );
+  // Remote-SSH / WSL / dev container hosts, reachable because the extension
+  // host runs on the remote side.
+  assert.ok(
+    linux.some(
+      (r) =>
+        r.path === "/home/u/.vscode-server/data/User/workspaceStorage" &&
+        /Remote-SSH/.test(r.purpose),
+    ),
+  );
+  assert.ok(
+    linux.some((r) => r.id === "vscode-server-insiders"),
+  );
+  // VS Code Server never runs on a Windows host, so no server root is offered.
+  assert.ok(
+    !usageRoots("win32", { APPDATA: "C:/A" }, "C:/u").some((r) =>
+      r.id.startsWith("vscode-server"),
+    ),
+  );
+  // Forks are named, never asserted to support Copilot.
+  assert.ok(linux.some((r) => r.id === "cursor"));
+  assert.ok(linux.some((r) => r.id === "vscodium"));
+  for (const root of linux) {
+    assert.ok(root.label.length > 0, root.id);
+    assert.ok(root.purpose.includes("nothing is uploaded"), root.id);
+    assert.equal(root.editor.length > 0, true);
+  }
+  // A duplicated path is listed once, so its data is never counted twice.
+  const stable = usageRoots("linux", {}, "/home/u");
+  const code = stable.find((r) => r.id === "code")!;
+  assert.deepEqual(
+    uniqueRoots([code, { ...code, id: "code-again" }]).map((r) => r.id),
+    ["code"],
+  );
+  assert.equal(
+    new Set(
+      usageRoots("linux", { XDG_CONFIG_HOME: "/home/u/.config" }, "/home/u").map(
+        (r) => r.path,
+      ),
+    ).size,
+    usageRoots("linux", { XDG_CONFIG_HOME: "/home/u/.config" }, "/home/u").length,
+  );
+});
+
+test("a file is attributed to the longest matching root, or to no editor", () => {
+  const roots = usageRoots("linux", {}, "/home/u");
+  const code = roots.find((r) => r.id === "code")!;
+  assert.equal(
+    editorForPath(`${code.path}/abc/chatSessions/s.jsonl`, roots)?.id,
+    "code",
+  );
+  // A path that merely starts with the same characters is not inside the root.
+  assert.equal(
+    editorForPath(`${code.path}-backup/abc/chatSessions/s.jsonl`, roots),
+    undefined,
+  );
+  // The root directory itself belongs to that root.
+  assert.equal(editorForPath(code.path, roots)?.id, "code");
+  assert.equal(editorForPath("/elsewhere/Code/x.jsonl", roots), undefined);
+  // With nested roots the deepest match wins, so a file is never attributed to
+  // a parent root that merely contains another one.
+  const nested = [
+    { id: "outer", editor: "Outer", label: "Outer", path: "/r", purpose: "" },
+    { id: "inner", editor: "Inner", label: "Inner", path: "/r/code", purpose: "" },
+  ];
+  assert.equal(editorForPath("/r/code/w/chatSessions/s.jsonl", nested)?.id, "inner");
+  assert.equal(editorForPath("/r/other/chatSessions/s.jsonl", nested)?.id, "outer");
+});
+
+test("roots are detected by existence, never by reading inside them", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pareto-roots-"));
+  const present = join(dir, "Code", "User", "workspaceStorage");
+  mkdirSync(present, { recursive: true });
+  // A chatSessions directory that no root points at must stay unread.
+  const file = join(dir, "Code", "User", "workspaceStorage", "ws", "chatSessions", "s.jsonl");
+  mkdirSync(join(dirname(file)), { recursive: true });
+  writeFileSync(file, "{}\n");
+  const roots = [
+    usageRoot(present),
+    usageRoot(join(dir, "Cursor", "User", "workspaceStorage")),
+  ];
+  const found = await detectUsageRoots(roots);
+  assert.deepEqual(found.map((r) => r.path), [present]);
+});
+
+test("consent migrates to the two VS Code roots and never adds a source", () => {
+  const known = usageRoots("linux", {}, "/home/u");
+  // A pre-registry consent covered exactly VS Code stable and Insiders.
+  assert.deepEqual(
+    consentedUsageRoots({ usageConsent: true }, known).map((r) => r.id),
+    [...legacyUsageRootIds],
+  );
+  assert.deepEqual(consentedUsageRoots({}, known), []);
+  assert.deepEqual(consentedUsageRoots({ usageConsent: false }, known), []);
+  // A stored list wins, and unknown or malformed ids are dropped, not trusted.
+  assert.deepEqual(
+    consentedUsageRoots(
+      { usageRoots: ["cursor", "not-a-root", 7, "code"], usageConsent: true },
+      known,
+    ).map((r) => r.id),
+    ["code", "cursor"],
+  );
+  assert.deepEqual(consentedUsageRoots({ usageRoots: "cursor" }, known), []);
+  // A stored list means no migration back to the legacy flag's meaning.
+  assert.deepEqual(
+    consentedUsageRoots({ usageRoots: [] }, known).map((r) => r.id),
+    [],
+  );
+});
+
+test("totals are split per editor and workspaces never merge across editors", () => {
+  const roots = [
+    { id: "code", editor: "VS Code", label: "VS Code", path: "/r/code", purpose: "" },
+    { id: "cursor", editor: "Cursor", label: "Cursor", path: "/r/cursor", purpose: "" },
+  ];
+  const request = (over: Record<string, unknown> = {}) => ({
+    sessionId: "s",
+    workspaceId: "w",
+    requestIndex: 0,
+    modelId: "copilot/gpt-5-mini",
+    timestampMs: Date.parse("2026-09-01T10:00:00Z"),
+    promptTokens: 100,
+    outputTokens: 50,
+    toolCallRounds: 0,
+    tokensEstimated: false,
+    promptProvenance: "observed" as const,
+    outputProvenance: "observed" as const,
+    ...over,
+  });
+  const summary = aggregateUsage(
+    [
+      {
+        path: "/r/code/w/chatSessions/a.jsonl",
+        workspaceId: "w",
+        workspacePath: "/repo",
+        requests: [request()],
+      },
+      {
+        path: "/r/cursor/w/chatSessions/b.jsonl",
+        workspaceId: "w",
+        workspacePath: "/other",
+        requests: [request({ requestIndex: 1 })],
+      },
+      {
+        path: "/somewhere-else/w/chatSessions/c.jsonl",
+        workspaceId: "w",
+        workspacePath: "/unknown",
+        requests: [request({ requestIndex: 2 })],
+      },
+    ],
+    Date.now(),
+    undefined,
+    roots,
+  );
+  assert.equal(summary.requestCount, 3);
+  assert.equal(summary.editors?.length, 3);
+  const vscode = summary.editors?.find((e) => e.editor === "VS Code");
+  assert.equal(vscode?.requests, 1);
+  assert.equal(vscode?.fileCount, 1);
+  assert.equal(vscode?.rootId, "code");
+  // A file under no known root is reported as unknown, never folded into a
+  // neighbour's editor.
+  const unknown = summary.editors?.find((e) => e.editor === unknownEditorLabel);
+  assert.equal(unknown?.requests, 1);
+  assert.equal(unknown?.rootId, null);
+  // The same workspace id in two editors stays two rows, each with its path.
+  assert.equal(summary.workspaces.length, 3);
+  // Equal request counts, so the editor label breaks the tie; the unattributed
+  // row has no label and sorts first.
+  assert.deepEqual(
+    summary.workspaces.map((w) => w.editor),
+    [undefined, "Cursor", "VS Code"],
+  );
+  assert.deepEqual(
+    summary.workspaces.map((w) => w.path),
+    ["/unknown", "/other", "/repo"],
+  );
+  // Per-editor sums add up to the overall totals.
+  assert.equal(
+    summary.editors?.reduce((sum, e) => sum + e.requests, 0),
+    summary.requestCount,
+  );
+  // Without a path there is nothing to attribute, and nothing is invented.
+  const anonymous = aggregateUsage([
+    { workspaceId: "w", workspacePath: "", requests: [request()] },
+  ]);
+  assert.equal(anonymous.editors?.[0].editor, unknownEditorLabel);
+  assert.equal(anonymous.workspaces[0].editor, undefined);
 });
 
 test("usage aggregation totals requests with per-event premium eras", () => {
@@ -1602,7 +2153,9 @@ test("usage discovery resolves workspaces across storage roots", async () => {
   );
   writeFileSync(join(root, "ws1", "chatSessions", "notes.txt"), "ignore me");
   writeFileSync(join(root, "ws2", "chatSessions", "c.jsonl"), "\n");
-  const found = await discoverUsageFiles([root, join(root, "missing")]);
+  const found = await discoverUsageFiles(
+    [root, join(root, "missing")].map((path) => usageRoot(path)),
+  );
   assert.equal(found.length, 3);
   const byFile = new Map(found.map((c) => [c.filePath.split("/").pop(), c]));
   assert.equal(byFile.get("a.jsonl")?.workspacePath, repo);
@@ -1649,10 +2202,10 @@ test("usage resolution tolerates malformed workspace metadata", async () => {
   assert.ok(fallback.path.endsWith("flat.code-workspace"));
   mkdirSync(join(root, "plain", "chatSessions", "d.jsonl"), { recursive: true });
   mkdirSync(join(root, "nochats"));
-  const found = await discoverUsageFiles([root, root]);
+  const found = await discoverUsageFiles([usageRoot(root), usageRoot(root)]);
   const names = found.map((c) => c.filePath.split("/").pop());
   assert.ok(!names.includes("d.jsonl"));
-  assert.ok(storageCandidates("win32", {}).some((p) => p.includes("AppData")));
+  assert.ok(usageRoots("win32", {}, "C:/u").some((r) => r.path.includes("AppData")));
   assert.ok(uriToPath("vscode-userdata:///Code/x", "").startsWith("/"));
   assert.ok(!validUsageFile({ version: 1, scannedAt: NaN, index: blankUsageIndex(), files: {} }));
   assert.ok(!validUsageFile({
@@ -1730,7 +2283,7 @@ test("workspace labels shorten paths and explain unmapped storage", () => {
 test("coverage: webview shell exposes new controls and CSP", async () => {
   const { html } = await import("../src/html");
   const out = html("https://s/webview.js", "https://s/style.css", "https://s", "nonce123");
-  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
+  for (const id of ["claude-code", "codex", "gemini-cli", "cursor", "windsurf", "aider", "amazon-q", "display-labels", "display-frontier", "display-chart", "display-quadrant", "display-scale", "display-sort", "free-only", "free-bar", "free-bar-title", "free-bar-empty", "free-bar-list", "custom-card", "custom-title", "custom-clear", "custom-chart", "custom-empty", "custom-rows", "custom-cost-heading", "sensitivity-card", "sensitivity-title", "sensitivity-note", "sensitivity-rows", "chart-hint", "chart-desc", "chart-status", "comparison-status", "snapshot-banner", "snapshot-title", "snapshot-detail", "snapshot-basis", "snapshot-limits", "snapshot-back", "header-actions", "import-snapshot", "watchlist-alerts", "checklist", "export-csv", "export-snapshot", "export-badge", "export-png", "spotlight-result", "byok-card", "byok-save", "byok-clear", "byok-table", "usage-card", "usage-scan", "usage-pause", "usage-clear", "usage-watching", "usage-summary", "usage-models", "usage-days", "usage-workspaces", "usage-unknown", "usage-full-paths", "scenario-card", "scenario-plan", "scenario-requests-low", "scenario-requests-high", "scenario-prefill", "scenario-prefill-note", "scenario-custom", "scenario-custom-fee", "scenario-custom-allowance", "scenario-custom-overage", "scenario-plan-note", "scenario-result", "scenario-notes"]) {
     if (!out.includes(id)) throw new Error("missing "+id);
   }
   if (!out.includes("nonce-nonce123")) throw new Error("missing nonce");
@@ -2036,4 +2589,157 @@ test("a benchmark override on an unpriced model never establishes a price", () =
   assert.equal(overridden.cost, null);
   assert.equal(overridden.mappingStatus, "user");
   assert.deepEqual(overridden.pricing, automatic.pricing);
+});
+
+test("non-record lines and non-record appends count as malformed, not as data", () => {
+  const result = JSON.stringify({
+    kind: 1,
+    k: ["requests", 0, "result"],
+    v: {
+      metadata: {
+        modelId: "copilot/gpt-5-mini",
+        promptTokens: 10,
+        outputTokens: 5,
+      },
+    },
+  });
+  // A line that parses but is not an object, and an append array holding one.
+  const parsed = parseUsageJsonl(
+    [
+      "42",
+      JSON.stringify({ kind: 2, k: ["requests"], v: ["nope", { modelId: "copilot/gpt-5-mini" }] }),
+      result,
+    ].join("\n"),
+    "ws",
+    "session",
+  );
+  assert.equal(parsed.diagnostics.malformed, 2);
+  // A recognized result still makes the file supported, not unsupported.
+  assert.equal(parsed.diagnostics.unsupported, 0);
+  assert.equal(parsed.requests.length, 1);
+  assert.equal(parsed.requests[0].modelId, "copilot/gpt-5-mini");
+  assert.equal(parsed.requests[0].promptTokens, 10);
+  assert.equal(parsed.requests[0].outputTokens, 5);
+});
+
+test("the chart palette is colour-blind safe, stable, and never shares a colour in a view", () => {
+  // Invariant behind the palette: any two entries are separable without colour
+  // vision — 8+ lightness points, 40+ degrees of hue, or a large saturation gap
+  // (a neutral grey is the standard "other" slot, separable by chroma alone).
+  for (let i = 0; i < cvdSafePalette.length; i++)
+    for (let j = i + 1; j < cvdSafePalette.length; j++) {
+      const a = cvdSafePalette[i];
+      const b = cvdSafePalette[j];
+      const lightness = Math.abs(a.l - b.l);
+      const hue = Math.abs(a.h - b.h);
+      const saturation = Math.abs(
+        parseInt(a.s, 10) - parseInt(b.s, 10),
+      );
+      assert.ok(
+        lightness >= 8 || hue >= 40 || saturation >= 40,
+        `${a.name} and ${b.name} are too close to tell apart`,
+      );
+    }
+  const ids = ["gpt-5.4", "claude-haiku", "gemini-3.8", "kimi-k2"];
+  const palette = assignPointColors(ids, "dark");
+  assert.equal(palette.size, ids.length);
+  // Two models in one view never share an exact colour.
+  assert.equal(new Set(palette.values()).size, ids.length);
+  // Stable across calls and independent of the order they arrive in.
+  assert.deepEqual(
+    [...assignPointColors(ids, "dark")],
+    [...assignPointColors([...ids].reverse(), "dark")],
+  );
+  // The two themes differ in lightness, so the same hue stays legible on both.
+  const light = assignPointColors(ids, "light");
+  for (const id of ids)
+    assert.notEqual(light.get(id), palette.get(id), id);
+  // A view larger than the palette falls back to a deterministic hashed hue
+  // rather than pretending to be unique.
+  const many = Array.from({ length: cvdSafePalette.length + 3 }, (_, i) => `m${i}`);
+  const wide = assignPointColors(many, "dark");
+  assert.equal(wide.size, many.length);
+  for (const id of many) assert.match(wide.get(id)!, /^hsl\(/);
+  assert.deepEqual([...wide], [...assignPointColors(many, "dark")]);
+  // Duplicate ids collapse to one entry.
+  assert.equal(assignPointColors(["a", "a", "b"], "dark").size, 2);
+  // The hashed fallback is documented and deterministic per theme.
+  assert.match(hashedColor("m0", "dark"), /^hsl\(\d+ 62% 68%\)$/);
+  assert.match(hashedColor("m0", "light"), /^hsl\(\d+ 62% 38%\)$/);
+  assert.equal(hashedColor("m0", "dark"), hashedColor("m0", "dark"));
+});
+
+test("point markers and the quadrant rule never rely on colour alone", () => {
+  assert.equal(pointMarker({ frontier: true, recommended: false }), "circle");
+  assert.equal(pointMarker({ frontier: false, recommended: true }), "star");
+  assert.equal(hasFrontierRing({ frontier: true }), true);
+  assert.equal(hasFrontierRing({ frontier: false }), false);
+  // Radius is a second, non-colour channel and is strictly ordered.
+  const plain = pointRadius({ frontier: false });
+  const used = pointRadius({ frontier: false, used: true });
+  const frontier = pointRadius({ frontier: true });
+  const recommended = pointRadius({ frontier: true, recommended: true });
+  assert.ok(plain < used && used < frontier && frontier < recommended);
+  // The quadrant is only claimed while the region is actually drawn.
+  const medians = { cost: 2, score: 40 };
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: 50 }, medians), true);
+  // Boundaries are inclusive, matching the drawn region.
+  assert.equal(inAttractiveQuadrant({ cost: 2, score: 40 }, medians), true);
+  assert.equal(inAttractiveQuadrant({ cost: 2.1, score: 40 }, medians), false);
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: 39 }, medians), false);
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: 50 }, undefined), false);
+  assert.equal(inAttractiveQuadrant({ cost: null, score: 50 }, medians), false);
+  assert.equal(inAttractiveQuadrant({ cost: 1, score: null }, medians), false);
+});
+
+test("one summary sentence carries every fact the chart draws", () => {
+  const base = {
+    index: 2,
+    total: 9,
+    name: "GPT-5.4",
+    score: 48,
+    cost: 1.75,
+    unit: "AI credits per task",
+    frontier: true,
+    recommended: true,
+  };
+  const full = chartPointSummary({
+    ...base,
+    dominatedBy: [],
+    medians: { cost: 2, score: 40 },
+  });
+  assert.match(full, /GPT-5\.4/);
+  assert.match(full, /48 index points/);
+  assert.match(full, /1\.75 AI credits per task/);
+  assert.match(full, /On the Pareto frontier/);
+  assert.match(full, /Recommended/);
+  assert.match(full, /most attractive quadrant/);
+  // Only the facts that hold are stated.
+  const plain = chartPointSummary({ ...base, frontier: false, recommended: false });
+  assert.doesNotMatch(plain, /Pareto frontier|Recommended|attractive/);
+  const dominated = chartPointSummary({
+    ...base,
+    frontier: false,
+    recommended: false,
+    dominatedBy: ["GPT-5 mini", "Gemini 3.8 Flash"],
+  });
+  assert.match(dominated, /Dominated by GPT-5 mini, Gemini 3\.8 Flash/);
+  // A row the chart plots without a cost or a score says so instead of
+  // implying a zero.
+  assert.match(
+    chartPointSummary({ ...base, cost: null }),
+    /No cost estimate for this row/,
+  );
+  assert.match(
+    chartPointSummary({ ...base, score: null }),
+    /No score for this row/,
+  );
+  // A whole-chart description, including the empty case.
+  const described = chartDescription("Quality versus cost.", [full, plain]);
+  assert.match(described, /2 plotted models/);
+  assert.match(described, /GPT-5\.4/);
+  assert.match(
+    chartDescription("Quality versus cost.", []),
+    /No comparable models to plot/,
+  );
 });

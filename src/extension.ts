@@ -50,31 +50,50 @@ import {
 import {
   aggregateUsage,
   blankUsageIndex,
+  consentedUsageRoots,
+  detectUsageRoots,
   discoverUsageFiles,
+  editorForPath,
+  legacyUsageRootIds,
   normalizeUsageModelId,
   parseUsageJsonl,
   parseUsageLegacyJson,
   parseUsageRetentionDays,
   purgeUsageRetention,
   selectChangedFiles,
-  storageCandidates,
   suggestBudget,
+  usageRoots,
   validUsageFile,
   usageParserVersion,
   emptyUsageDiagnostics,
   type StoredUsageFile,
+  type UsageRoot,
 } from "./usage";
 import { readFile as readLocalFile } from "node:fs/promises";
 import { basename, extname, sep } from "node:path";
+import {
+  allowedWhileImported,
+  importedFileName,
+  importedViewState,
+  parseImportedSnapshot,
+  type ImportedView,
+} from "./snapshotImport";
 import type {
   AvailableModel,
   ByokStore,
+  HostMessage,
   Snapshot,
   Source,
+  UsageSourceView,
   UsageSummary,
   ViewState,
 } from "./types";
+import { costUnit } from "./types";
+import { summarizeWatchChanges, watchlistChanges } from "./watchlist";
 const secretName = "artificialAnalysis.apiKey";
+/** Refuse to read an implausibly large "snapshot" before loading it into
+ * memory; real ones are a few hundred KB of rows. */
+const maxSnapshotBytes = 20_000_000;
 export function activate(context: vscode.ExtensionContext) {
   const cacheUri = vscode.Uri.joinPath(
     context.globalStorageUri,
@@ -158,6 +177,56 @@ export function activate(context: vscode.ExtensionContext) {
   let usageStatusItem: vscode.StatusBarItem | undefined;
   const isUsagePaused = () =>
     context.globalState.get("usagePaused", false);
+  /**
+   * Roots the user has opted into. Reads migrate the pre-registry
+   * `usageConsent` flag to exactly the two VS Code roots it used to cover, so
+   * upgrading never adds a data source on the user's behalf, and the legacy
+   * flag is cleared once the list exists.
+   */
+  const hasUsageConsent = (): boolean => consented().length > 0;
+  let consentMigrated = false;
+  const consented = (): UsageRoot[] => {
+    const roots = consentedUsageRoots({
+      usageRoots: context.globalState.get("usageRoots"),
+      usageConsent: context.globalState.get("usageConsent"),
+    });
+    if (!consentMigrated && roots.length) {
+      consentMigrated = true;
+      void context.globalState.update("usageConsent", undefined);
+      void context.globalState.update(
+        "usageRoots",
+        roots.map((root) => root.id),
+      );
+    }
+    return roots;
+  };
+  const setConsented = async (ids: string[]) => {
+    await context.globalState.update("usageRoots", ids);
+    await context.globalState.update("usageConsent", undefined);
+  };
+  /** Every known root as the Usage tab presents it: existence is detected
+   * without reading inside a root, so an un-included editor is only named. */
+  let detectedRootIds = new Set<string>();
+  const refreshDetectedRoots = async () => {
+    detectedRootIds = new Set(
+      (await detectUsageRoots(usageRoots())).map((root) => root.id),
+    );
+  };
+  const usageSourceViews = (): UsageSourceView[] => {
+    const included = new Set(consented().map((root) => root.id));
+    const byRoot = new Map((usage?.editors ?? []).map((e) => [e.rootId, e]));
+    return usageRoots().map((root) => {
+      const stat = byRoot.get(root.id);
+      return {
+        id: root.id,
+        label: root.label,
+        purpose: root.purpose,
+        detected: detectedRootIds.has(root.id),
+        included: included.has(root.id),
+        ...(stat ? { fileCount: stat.fileCount, requests: stat.requests } : {}),
+      };
+    });
+  };
   /** Read `paretoGhc.*` settings; unconfigured values leave stored state in
    * charge, so existing users keep their behavior until they touch a setting.
    * Falls back to all-unconfigured when the host offers no configuration API
@@ -225,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
   const updateUsageStatus = () => {
     if (!usageStatusItem) return;
-    if (!context.globalState.get("usageConsent", false)) {
+    if (!hasUsageConsent()) {
       usageStatusItem.hide();
       return;
     }
@@ -273,15 +342,17 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
   const setupUsageWatchers = () => {
+    const roots = consented();
     if (
-      !context.globalState.get("usageConsent", false) ||
+      !roots.length ||
       isUsagePaused() ||
       usageWatchers.length ||
       typeof vscode.workspace.createFileSystemWatcher !== "function" ||
       typeof vscode.RelativePattern !== "function"
     )
       return;
-    for (const root of storageCandidates()) {
+    // Only roots the user included are ever watched.
+    for (const { path: root } of roots) {
       for (const pattern of [
         "**/chatSessions/*.jsonl",
         "**/chatSessions/*.json",
@@ -306,7 +377,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
   const ensureUsageConsent = async (): Promise<boolean> => {
-    if (context.globalState.get("usageConsent", false)) return true;
+    if (hasUsageConsent()) return true;
     const generation = usageGeneration;
     const choice = await vscode.window.showInformationMessage(
       "Scan local Copilot chat sessions for usage totals? Files stay on this machine; nothing is uploaded.",
@@ -316,16 +387,24 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (choice !== "Scan locally" || generation !== usageGeneration)
       return false;
-    await context.globalState.update("usageConsent", true);
+    // The first consent covers the two VS Code roots, which is exactly what it
+    // covered before other editors could be included.
+    await setConsented([...legacyUsageRootIds]);
     return true;
   };
   const runUsageScan = async () => {
-    if (usageScanning || !context.globalState.get("usageConsent", false))
+    if (usageScanning || !hasUsageConsent())
       return;
     const generation = usageGeneration;
+    // Read exactly the roots consented at this moment, and abort if that set
+    // changes mid-scan: a root removed while scanning is never read further.
+    const roots = consented();
+    const rootIds = roots.map((root) => root.id).join(",");
     const current = () =>
       generation === usageGeneration &&
-      context.globalState.get("usageConsent", false);
+      consented()
+        .map((root) => root.id)
+        .join(",") === rootIds;
     usagePending = scan();
     await usagePending;
     async function scan() {
@@ -334,7 +413,7 @@ export function activate(context: vscode.ExtensionContext) {
       render();
       try {
         const unreadable: string[] = [];
-        const candidates = await discoverUsageFiles(undefined, unreadable);
+        const candidates = await discoverUsageFiles(roots, unreadable);
         if (!current()) return;
         const stored = await readStoredUsage();
         if (!current()) return;
@@ -447,7 +526,14 @@ export function activate(context: vscode.ExtensionContext) {
           purgedRequests = purged.purgedRequests;
           purgedFiles = purged.purgedFiles;
         }
-        usage = aggregateUsage(Object.values(storedFiles), scannedAt);
+        // File paths carry the root they were read from, so each editor's share
+        // is attributed from the registry rather than guessed.
+        usage = aggregateUsage(
+          Object.entries(storedFiles).map(([path, file]) => ({ path, ...file })),
+          scannedAt,
+          undefined,
+          usageRoots(),
+        );
         await writeSnapshotFile(usageSummaryUri, {
           version: 2,
           scannedAt,
@@ -474,7 +560,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const loadUsage = async () => {
     const generation = usageGeneration;
-    if (!context.globalState.get("usageConsent", false)) return;
+    if (!hasUsageConsent()) return;
     const stored = await readStoredUsage();
     if (
       stored &&
@@ -488,11 +574,11 @@ export function activate(context: vscode.ExtensionContext) {
     if (
       stored &&
       generation === usageGeneration &&
-      context.globalState.get("usageConsent", false)
+      hasUsageConsent()
     ) {
       usage = aggregateUsage(Object.values(stored.files), stored.scannedAt);
       if (
-        context.globalState.get("usageConsent", false) &&
+        hasUsageConsent() &&
         shouldAutoWatch()
       )
         setupUsageWatchers();
@@ -528,6 +614,16 @@ export function activate(context: vscode.ExtensionContext) {
     message = "",
     exportNote = "",
     hasKey = false;
+  let watchlistAlerts = Boolean(
+    context.globalState.get("watchlistAlerts", false),
+  );
+  /**
+   * A previously exported snapshot reopened read-only. Only the parsed file and
+   * view-only drafts live here: the file's path is what gets persisted
+   * (`importedSnapshot`), so a reopened panel can reload it, and nothing in
+   * this view ever reaches options, pins, mappings, exclusions, or profiles.
+   */
+  let imported: (ImportedView & { path: string }) | undefined;
   let profileStore = loadProfiles(context.globalState.get("profiles"));
   let optionsRevision = 0;
   let comparison = loadComparison(context.globalState.get("comparison"));
@@ -584,7 +680,21 @@ export function activate(context: vscode.ExtensionContext) {
     }
     return usedCounts;
   };
+  /** The historical view, or a no-op when the live comparison is showing. */
+  const renderImported = () => {
+    if (!imported) return;
+    const state: ViewState = importedViewState(imported, {
+      options,
+      hasKey,
+      watchlistAlerts,
+      fileName: importedFileName(imported.path),
+    });
+    state.message = message;
+    void panel?.webview.postMessage({ type: "state", state });
+    updateUsageStatus();
+  };
   const render = () => {
+    if (imported) return renderImported();
     const available = availableBySource[options.source];
     const benchmarks = snapshot?.models ?? [];
     const usedCounts = usedCountsFor();
@@ -667,6 +777,7 @@ export function activate(context: vscode.ExtensionContext) {
       usage,
       usageWatching: usageWatchers.length > 0,
       usagePaused: isUsagePaused(),
+      usageSources: usageSourceViews(),
       usageRetentionDays: retentionDays(),
       budgetSuggestion: suggestBudget(usage, options.billing),
       loading,
@@ -683,6 +794,7 @@ export function activate(context: vscode.ExtensionContext) {
       groups,
       freeSpotlight: freeSpotlightState,
       freeBar: bar,
+      watchlistAlerts,
       exportNote: exportNote || undefined,
     };
     if (comparison?.enabled) {
@@ -795,6 +907,9 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const refresh = async (force = false) => {
     if (loading) return;
+    // The pre-load snapshot is the "before" for watchlist change alerts;
+    // service.cached() below overwrites it, so capture it first.
+    const previous = snapshot;
     loading = true;
     message = "Loading comparison data…";
     render();
@@ -810,6 +925,58 @@ export function activate(context: vscode.ExtensionContext) {
         Date.now() - snapshot.fetchedAt >= cacheTtl
           ? "Using a cached snapshot older than 24 hours. Refresh data to update."
           : "Benchmark data ready.";
+      // Opt-in watchlist alerts: compare pinned rows between the previous
+      // and the new snapshot (same availability and options), then notify
+      // once. First loads, unchanged snapshots, failures, and a panel showing
+      // an imported snapshot (where "Open comparison" would reveal historical
+      // data) stay silent.
+      if (
+        watchlistAlerts &&
+        !imported &&
+        previous &&
+        snapshot.fetchedAt !== previous.fetchedAt
+      ) {
+        const listed = availableBySource[options.source];
+        const usedCounts = usedCountsFor();
+        const watchExtra = {
+          pins,
+          excluded: excludedFor(options.source),
+          byok,
+          usedCounts,
+        };
+        const prevRows = compare(
+          listed,
+          previous.models,
+          options,
+          overrides,
+          undefined,
+          watchExtra,
+        );
+        const currRows = compare(
+          listed,
+          snapshot.models,
+          options,
+          overrides,
+          undefined,
+          watchExtra,
+        );
+        const changes = watchlistChanges({
+          pins,
+          prevRows,
+          currRows,
+          availableIds: listed.map((m) => m.id),
+          excludedIds: excludedFor(options.source),
+          source: options.source,
+          unit: costUnit(options.billing),
+        });
+        if (changes.length) {
+          const action = await vscode.window.showInformationMessage(
+            summarizeWatchChanges(changes, previous, snapshot),
+            "Open comparison",
+          );
+          if (action === "Open comparison") panel?.reveal();
+        }
+      }
     } catch (error) {
       message =
         error instanceof ApiError
@@ -846,7 +1013,8 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(usageStatusItem);
   }
-  if (context.globalState.get("usageConsent", false)) setupUsageWatchers();
+  if (hasUsageConsent()) setupUsageWatchers();
+  void refreshDetectedRoots().then(render);
   updateUsageStatus();
   const clearUsageData = async () => {
     usageGeneration++;
@@ -854,7 +1022,7 @@ export function activate(context: vscode.ExtensionContext) {
     for (const watcher of usageWatchers) watcher.dispose();
     usageWatchers = [];
     usage = null;
-    await context.globalState.update("usageConsent", false);
+    await setConsented([]);
     await context.globalState.update("usagePaused", false);
     await usagePending;
     try {
@@ -881,7 +1049,7 @@ export function activate(context: vscode.ExtensionContext) {
     usageWatchers = [];
   };
   const pauseUsageWatching = async () => {
-    if (!context.globalState.get("usageConsent", false)) {
+    if (!hasUsageConsent()) {
       render();
       return;
     }
@@ -891,13 +1059,120 @@ export function activate(context: vscode.ExtensionContext) {
     render();
   };
   const resumeUsageWatching = async () => {
-    if (!context.globalState.get("usageConsent", false)) {
+    if (!hasUsageConsent()) {
       render();
       return;
     }
     await context.globalState.update("usagePaused", false);
     setupUsageWatchers();
     message = "Watching for new sessions.";
+    render();
+  };
+  /**
+   * Includes one storage root after its own confirmation, then rescans. The
+   * id is resolved against the registry here, never taken from the message as
+   * a path, and a root that does not exist is refused rather than created.
+   */
+  const addUsageRoot = async (id: string) => {
+    const root = usageRoots().find((r) => r.id === id);
+    if (!root) {
+      message = "That is not a known Copilot chat-session source.";
+      render();
+      return;
+    }
+    if (consented().some((r) => r.id === id)) {
+      message = `${root.label} is already included.`;
+      render();
+      return;
+    }
+    await refreshDetectedRoots();
+    if (!detectedRootIds.has(id)) {
+      message = `No ${root.editor} storage directory found on this machine, so nothing would be read.`;
+      render();
+      return;
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `${root.purpose}`,
+      { modal: true },
+      "Include this editor",
+      "Not now",
+    );
+    if (choice !== "Include this editor") {
+      message = `${root.label} not included.`;
+      render();
+      return;
+    }
+    await setConsented([...consented().map((r) => r.id), id]);
+    stopUsageWatchers();
+    setupUsageWatchers();
+    message = `Included ${root.label}. Rescanning local usage…`;
+    render();
+    await runUsageScan();
+  };
+  /**
+   * Drops one root's consent, stored files, and watchers, leaving every other
+   * source untouched — the per-source counterpart to the global erase.
+   */
+  const removeUsageRoot = async (id: string) => {
+    const root = usageRoots().find((r) => r.id === id);
+    if (!root) {
+      message = "That is not a known Copilot chat-session source.";
+      render();
+      return;
+    }
+    if (!consented().some((r) => r.id === id)) {
+      message = `${root.label} is not included.`;
+      render();
+      return;
+    }
+    const choice = await vscode.window.showInformationMessage(
+      `Stop reading ${root.label} and delete its stored usage data? Other included editors keep their data.`,
+      { modal: true },
+      "Stop and remove",
+      "Keep it",
+    );
+    if (choice !== "Stop and remove") {
+      message = `${root.label} unchanged.`;
+      render();
+      return;
+    }
+    const ids = consented()
+      .map((r) => r.id)
+      .filter((r) => r !== id);
+    await setConsented(ids);
+    stopUsageWatchers();
+    const stored = await readStoredUsage();
+    if (stored) {
+      const files: StoredUsageFile["files"] = {};
+      const index = blankUsageIndex();
+      let removedFiles = 0;
+      for (const [path, file] of Object.entries(stored.files)) {
+        if (editorForPath(path, usageRoots())?.id === id) {
+          removedFiles++;
+          continue;
+        }
+        files[path] = file;
+      }
+      for (const [path, entry] of Object.entries(stored.index.files)) {
+        if (files[path]) index.files[path] = entry;
+      }
+      await writeSnapshotFile(usageSummaryUri, {
+        ...stored,
+        files,
+        index,
+      });
+      usage = aggregateUsage(
+        Object.entries(files).map(([path, file]) => ({ path, ...file })),
+        stored.scannedAt,
+        undefined,
+        usageRoots(),
+      );
+      message =
+        removedFiles > 0
+          ? `Stopped reading ${root.label} and deleted ${removedFiles} stored file${removedFiles === 1 ? "" : "s"}.`
+          : `Stopped reading ${root.label}.`;
+    } else message = `Stopped reading ${root.label}.`;
+    if (ids.length) setupUsageWatchers();
     render();
   };
   const showStoredUsageData = async () => {
@@ -916,6 +1191,93 @@ export function activate(context: vscode.ExtensionContext) {
     if (panel) panel.reveal();
     else void vscode.commands.executeCommand("paretoGhc.open");
   };
+  /** Reads, validates, and shows one snapshot file. Never throws: a rejected
+   * file leaves whatever was on screen untouched and explains why. */
+  const loadImported = async (
+    uri: vscode.Uri,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    let raw: string;
+    try {
+      // Bounded read: a snapshot is a few hundred KB of rows, so an enormous
+      // file is not one, and refusing early keeps a stray pick from
+      // exhausting the host.
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (stat.size > maxSnapshotBytes)
+        return {
+          ok: false,
+          message: `That file is ${Math.round(stat.size / 1e6)} MB, too large to be a comparison snapshot.`,
+        };
+      raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString();
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Could not read that file. Choose a snapshot JSON exported by this extension.",
+      };
+    }
+    const parsed = parseImportedSnapshot(raw);
+    if (!parsed.ok) return { ok: false, message: parsed.failure.message };
+    const path = uri.toString();
+    imported = {
+      path,
+      snapshot: parsed.snapshot,
+      selected: {},
+      filter: "",
+      display: options.display,
+    };
+    await context.globalState.update("importedSnapshot", path);
+    const kind =
+      parsed.snapshot.kind === "comparison"
+        ? "Two-option snapshot"
+        : "Single-option snapshot";
+    message = `Showing ${importedFileName(uri.path)} (read-only): ${kind} exported ${parsed.snapshot.exportedAt}. Historical data, not live results.`;
+    render();
+    return { ok: true };
+  };
+  const openSnapshotImport = async () => {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: "Import snapshot",
+      filters: { "Snapshot JSON": ["json"] },
+    });
+    // `canSelectMany: false` yields a single-item array; older hosts and
+    // mocks may hand back the Uri itself.
+    const uri = Array.isArray(picked) ? picked[0] : picked;
+    if (!uri) {
+      message = "Snapshot import cancelled.";
+      render();
+      return;
+    }
+    const result = await loadImported(uri);
+    if (!result.ok) message = result.message;
+    render();
+  };
+  const exitImported = async () => {
+    if (!imported) return;
+    imported = undefined;
+    await context.globalState.update("importedSnapshot", undefined);
+    message = "Back to the live comparison.";
+    render();
+  };
+  /** Reopens the stored snapshot whenever a panel is created, so the
+   * historical view survives closing the panel. A file that moved, changed, or
+   * stopped being a readable snapshot falls back to live data, with the
+   * reason shown and the stale path forgotten. */
+  const reopenStoredSnapshot = async () => {
+    const stored = context.globalState.get<string>("importedSnapshot");
+    if (typeof stored !== "string" || !stored) return;
+    const result = await loadImported(vscode.Uri.parse(stored));
+    if (result.ok) return;
+    imported = undefined;
+    await context.globalState.update("importedSnapshot", undefined);
+    const note = `Imported snapshot not reopened: ${result.message} Showing the live comparison.`;
+    message = note;
+    // Also a host notification: the refresh that follows opening a panel
+    // replaces the panel status line, and the file may be gone while the
+    // panel was closed.
+    if (typeof vscode.window.showWarningMessage === "function")
+      void vscode.window.showWarningMessage(note);
+  };
   // Last settings-derived values applied, so configuration events — including
   // the echo of our own retention mirror above — never rescan, restop, or
   // re-apply an unchanged value. Panel chart edits are preserved until the
@@ -932,7 +1294,7 @@ export function activate(context: vscode.ExtensionContext) {
       : retentionDays();
     if (effectiveRetention !== lastAppliedRetention) {
       lastAppliedRetention = effectiveRetention;
-      if (context.globalState.get("usageConsent", false)) {
+      if (hasUsageConsent()) {
         await runUsageScan();
         scanned = true;
       }
@@ -946,7 +1308,7 @@ export function activate(context: vscode.ExtensionContext) {
     } else if (
       shouldAutoWatch() &&
       !usageWatchers.length &&
-      context.globalState.get("usageConsent", false)
+      hasUsageConsent()
     ) {
       setupUsageWatchers();
       if (usageWatchers.length) message = "Watching for new sessions.";
@@ -984,6 +1346,10 @@ export function activate(context: vscode.ExtensionContext) {
       }),
     );
   context.subscriptions.push(
+    vscode.commands.registerCommand("paretoGhc.importSnapshot", async () => {
+      openPanel();
+      await openSnapshotImport();
+    }),
     vscode.commands.registerCommand("paretoGhc.setApiKey", setKey),
     vscode.commands.registerCommand("paretoGhc.clearApiKey", async () => {
       await context.secrets.delete(secretName);
@@ -1011,7 +1377,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("paretoGhc.showUsageData", async () => {
       await showStoredUsageData();
     }),
-    vscode.commands.registerCommand("paretoGhc.open", () => {
+    vscode.commands.registerCommand("paretoGhc.manageUsageSources", async () => {
+      openPanel();
+      await refreshDetectedRoots();
+      render();
+    }),
+    vscode.commands.registerCommand("paretoGhc.open", async () => {
       if (panel) {
         panel.reveal();
         return;
@@ -1047,6 +1418,58 @@ export function activate(context: vscode.ExtensionContext) {
         messageQueue = messageQueue.then(async () => {
           try {
             let m = parseMessage(raw);
+            // An imported snapshot is read-only. Only navigation, leaving the
+            // view, and the display-only drafts that redraw the same
+            // historical rows are honoured; every other message would change
+            // live state behind a historical view, so it is refused with an
+            // explanation instead of being silently dropped.
+            if (imported && !allowedWhileImported(m)) {
+              message =
+                "An imported snapshot is read-only. Choose “Back to live comparison” to change the live view.";
+              render();
+              return;
+            }
+            if (imported && m.type === "importExit") {
+              await exitImported();
+              return;
+            }
+            if (imported && m.type === "importSnapshot") {
+              await openSnapshotImport();
+              return;
+            }
+            if (imported && m.type === "options") {
+              // View-only draft: the text filter and chart display toggles
+              // redraw the exported rows. The cost basis stays the file's, and
+              // nothing here is written to saved options.
+              imported = {
+                ...imported,
+                filter: m.options.filter,
+                display: m.options.display,
+              };
+              render();
+              return;
+            }
+            if (imported && m.type === "select" && typeof m.id === "string") {
+              imported = {
+                ...imported,
+                selected: { ...imported.selected, A: m.id },
+              };
+              render();
+              return;
+            }
+            if (
+              imported &&
+              m.type === "target" &&
+              m.action.type === "select" &&
+              typeof m.action.id === "string"
+            ) {
+              imported = {
+                ...imported,
+                selected: { ...imported.selected, [m.side]: m.action.id },
+              };
+              render();
+              return;
+            }
             if (m.type === "comparison") {
               captureActive();
               if (m.enabled === true && !comparison?.enabled) {
@@ -1100,6 +1523,10 @@ export function activate(context: vscode.ExtensionContext) {
               else render();
             } else if (m.type === "clearUsage") {
               await clearUsageData();
+            } else if (m.type === "usageAddRoot") {
+              await addUsageRoot(m.id);
+            } else if (m.type === "usageRemoveRoot") {
+              await removeUsageRoot(m.id);
             } else if (m.type === "pauseUsage") {
               await pauseUsageWatching();
             } else if (m.type === "resumeUsage") {
@@ -1121,7 +1548,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               }
               lastAppliedRetention = days;
-              if (context.globalState.get("usageConsent", false))
+              if (hasUsageConsent())
                 await runUsageScan();
               else render();
             } else if (m.type === "showUsageData") {
@@ -1283,6 +1710,15 @@ export function activate(context: vscode.ExtensionContext) {
                 if (selected === `${modelId}::${bench}`) selected = modelId;
                 render();
               }
+            } else if (m.type === "watchlistAlerts") {
+              // Global opt-in for pinned-model refresh notifications; never
+              // per-option, so it bypasses the comparison store entirely.
+              watchlistAlerts = m.enabled;
+              await context.globalState.update(
+                "watchlistAlerts",
+                watchlistAlerts,
+              );
+              render();
             } else if (m.type === "byok") {
               // Manual whole-store save from the BYOK form; the message is
               // already validated to manual-only provenance (parseByokFormStore).
@@ -1562,6 +1998,13 @@ export function activate(context: vscode.ExtensionContext) {
         undefined,
         context.subscriptions,
       );
+      // Re-detect which known roots exist now (a panel opened later may follow
+      // an editor install), then reopen the stored snapshot for this panel: a
+      // panel opened again shows the same historical view until the user
+      // returns to live data.
+      await refreshDetectedRoots();
+      render();
+      await reopenStoredSnapshot();
     }),
     vscode.lm.onDidChangeChatModels(() => {
       if (

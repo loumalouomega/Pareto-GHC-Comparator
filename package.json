@@ -58,6 +58,10 @@
         "title": "🔑 Pareto GHC: Set Artificial Analysis API Key"
       },
       {
+        "command": "paretoGhc.importSnapshot",
+        "title": "🧾 Pareto GHC: Import Snapshot JSON (Read-Only)"
+      },
+      {
         "command": "paretoGhc.clearApiKey",
         "title": "🗑️ Pareto GHC: Remove Artificial Analysis API Key"
       },
@@ -76,6 +80,10 @@
       {
         "command": "paretoGhc.resumeUsage",
         "title": "▶️ Pareto GHC: Resume Copilot Usage Watching"
+      },
+      {
+        "command": "paretoGhc.manageUsageSources",
+        "title": "🗂️ Pareto GHC: Manage Copilot Usage Sources"
       },
       {
         "command": "paretoGhc.showUsageData",

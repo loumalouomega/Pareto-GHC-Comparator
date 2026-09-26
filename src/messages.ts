@@ -53,6 +53,10 @@ export function parseMessage(raw: unknown): HostMessage {
     typeof v === "string" && v.length <= 1000;
   if (m.type === "ready" || m.type === "refresh" || m.type === "key")
     return { type: m.type };
+  // Snapshot import carries no payload: the host opens the file dialog, so
+  // the webview can never name a path or supply file contents.
+  if (m.type === "importSnapshot" || m.type === "importExit")
+    return { type: m.type };
   if (m.type === "exportCsv") return { type: "exportCsv" };
   if (m.type === "exportSnapshot") return { type: "exportSnapshot" };
   if (m.type === "exportBadge") return { type: "exportBadge" };
@@ -73,6 +77,12 @@ export function parseMessage(raw: unknown): HostMessage {
   }
   if (m.type === "scanUsage") return { type: "scanUsage" };
   if (m.type === "clearUsage") return { type: "clearUsage" };
+  // Only a root id crosses the boundary: the host resolves it against its own
+  // registry, so a webview can never name a path to read or delete.
+  if (m.type === "usageAddRoot" && string(m.id))
+    return { type: "usageAddRoot", id: m.id };
+  if (m.type === "usageRemoveRoot" && string(m.id))
+    return { type: "usageRemoveRoot", id: m.id };
   if (m.type === "pauseUsage") return { type: "pauseUsage" };
   if (m.type === "resumeUsage") return { type: "resumeUsage" };
   if (m.type === "showUsageData") return { type: "showUsageData" };
@@ -111,6 +121,8 @@ export function parseMessage(raw: unknown): HostMessage {
     return { type: "pin", id: m.id, benchmarkId: m.benchmarkId };
   if (m.type === "unpin" && string(m.id) && string(m.benchmarkId))
     return { type: "unpin", id: m.id, benchmarkId: m.benchmarkId };
+  if (m.type === "watchlistAlerts" && typeof m.enabled === "boolean")
+    return { type: "watchlistAlerts", enabled: m.enabled };
   if (m.type === "exclude" && string(m.id) && typeof m.excluded === "boolean")
     return { type: "exclude", id: m.id, excluded: m.excluded };
   if (

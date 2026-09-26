@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { usageMultiplier } from "./usageMultipliers";
 import { estimate } from "./compare";
 import { catalog } from "./catalog";
@@ -10,6 +10,7 @@ import {
   type BudgetSuggestion,
   type CatalogEntry,
   type UsageDayStat,
+  type UsageEditorStat,
   type UsageModelStat,
   type UsageRequest,
   type UsageSchemaFingerprint,
@@ -34,20 +35,135 @@ export interface UsageCandidate {
   mtime: number;
   legacy: boolean;
 }
-export function storageCandidates(
+/**
+ * One readable location of Copilot chat sessions, with the editor it belongs
+ * to and the stated purpose shown before the user opts into it. Detection is
+ * existence-only (see `detectUsageRoots`): nothing inside a root the user has
+ * not included is ever opened.
+ */
+export interface UsageRoot {
+  /** Stable id persisted in `usageRoots`; never derived from a path. */
+  id: string;
+  /** Editor this root's sessions belong to, e.g. "Cursor". */
+  editor: string;
+  label: string;
+  path: string;
+  /** Stated before consent, per the consent requirement. */
+  purpose: string;
+}
+
+/** The two VS Code roots every existing consent already covered. */
+export const legacyUsageRootIds = ["code", "code-insiders"] as const;
+
+const desktopRoots: { dir: string; id: string; editor: string }[] = [
+  { dir: "Code", id: "code", editor: "VS Code" },
+  { dir: "Code - Insiders", id: "code-insiders", editor: "VS Code Insiders" },
+  // VS Code forks keep the same User/workspaceStorage layout. Each one is
+  // offered only when its directory exists, so the extension never claims a
+  // fork supports Copilot: the user sees their own session totals or nothing.
+  { dir: "VSCodium", id: "vscodium", editor: "VSCodium" },
+  { dir: "Cursor", id: "cursor", editor: "Cursor" },
+  { dir: "Windsurf", id: "windsurf", editor: "Windsurf" },
+  { dir: "Code - OSS", id: "code-oss", editor: "Code - OSS" },
+  { dir: "Trae", id: "trae", editor: "Trae" },
+];
+
+/**
+ * Every known chat-session root on this machine, most-established first.
+ * Remote-SSH, WSL, and dev container sessions are included because the
+ * extension host itself runs on the remote side, where VS Code Server keeps
+ * user data under `~/.vscode-server/data/User` and its Insiders equivalent
+ * (see docs/integrations.md).
+ */
+export function usageRoots(
   platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
-): string[] {
+  home = homedir(),
+): UsageRoot[] {
   let base: string;
   if (platform === "win32")
-    base = env.APPDATA || join(homedir(), "AppData", "Roaming");
+    base = env.APPDATA || join(home, "AppData", "Roaming");
   else if (platform === "darwin")
-    base = join(homedir(), "Library", "Application Support");
-  else base = env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  return [
-    join(base, "Code", "User", "workspaceStorage"),
-    join(base, "Code - Insiders", "User", "workspaceStorage"),
-  ];
+    base = join(home, "Library", "Application Support");
+  else base = env.XDG_CONFIG_HOME || join(home, ".config");
+  const roots = desktopRoots.map(({ dir, id, editor }) => ({
+    id,
+    editor,
+    label: `GitHub Copilot in ${editor}`,
+    path: join(base, dir, "User", "workspaceStorage"),
+    purpose: `Reads Copilot chat sessions ${editor} stored on this machine, to report your own request and token totals. Files stay here; nothing is uploaded.`,
+  }));
+  if (platform !== "win32")
+    for (const [dir, id, editor] of [
+      [".vscode-server", "vscode-server", "a Remote-SSH, WSL, or dev container host"],
+      [
+        ".vscode-server-insiders",
+        "vscode-server-insiders",
+        "a remote host using VS Code Insiders",
+      ],
+    ] as const)
+      roots.push({
+        id,
+        editor,
+        label: `GitHub Copilot in ${editor}`,
+        path: join(home, dir, "data", "User", "workspaceStorage"),
+        purpose: `Reads Copilot chat sessions stored by VS Code Server for ${editor}, on this machine. Files stay here; nothing is uploaded.`,
+      });
+  return uniqueRoots(roots);
+}
+
+/**
+ * One entry per distinct path, first occurrence winning. A root listed twice
+ * would have its files counted and attributed twice, so the list is normalized
+ * before anything reads or attributes it.
+ */
+export function uniqueRoots(roots: UsageRoot[]): UsageRoot[] {
+  const seen = new Set<string>();
+  return roots.filter((root) => {
+    if (seen.has(root.path)) return false;
+    seen.add(root.path);
+    return true;
+  });
+}
+
+/**
+ * Which known root a stored session file came from, by longest path prefix on
+ * a separator boundary. `undefined` means the file predates this registry or
+ * its editor was renamed, and it is reported as an unknown editor rather than
+ * attributed to a guess.
+ */
+export function editorForPath(
+  filePath: string,
+  roots: UsageRoot[],
+): UsageRoot | undefined {
+  let best: UsageRoot | undefined;
+  for (const root of roots) {
+    if (filePath !== root.path && !filePath.startsWith(root.path + sep))
+      continue;
+    if (!best || root.path.length > best.path.length) best = root;
+  }
+  return best;
+}
+
+/**
+ * Roots the user has opted into. A stored `usageRoots` list wins; otherwise
+ * the pre-registry `usageConsent` flag maps to exactly the two VS Code roots it
+ * used to cover, so upgrading never grants a new data source silently.
+ */
+export function consentedUsageRoots(
+  stored: { usageRoots?: unknown; usageConsent?: unknown },
+  known: UsageRoot[] = usageRoots(),
+): UsageRoot[] {
+  const ids = new Set(known.map((r) => r.id));
+  if (Array.isArray(stored.usageRoots)) {
+    const picked = stored.usageRoots.filter(
+      (id): id is string => typeof id === "string" && ids.has(id),
+    );
+    return known.filter((root) => picked.includes(root.id));
+  }
+  if (stored.usageConsent === true)
+    return known.filter((root) => legacyUsageRootIds.includes(root.id as never));
+  return [];
 }
 export function uriToPath(uri: string, storageRoot: string): string {
   if (uri.startsWith("file://")) {
@@ -115,13 +231,33 @@ export async function resolveWorkspace(
   }
   return { id, path: resolved };
 }
+/**
+ * Which known roots exist on this machine. Existence only: a `stat` on the
+ * well-known directory, never a listing inside it, so offering an editor in the
+ * Usage card does not read a root the user has not included. Whether it holds
+ * Copilot chat sessions is only known after an explicit opt-in and a scan.
+ */
+export async function detectUsageRoots(
+  roots: UsageRoot[] = usageRoots(),
+): Promise<UsageRoot[]> {
+  const found: UsageRoot[] = [];
+  for (const root of roots) {
+    try {
+      if ((await stat(root.path)).isDirectory()) found.push(root);
+    } catch {
+      // Absent or unreadable: not offered, and nothing was read.
+    }
+  }
+  return found;
+}
+
 export async function discoverUsageFiles(
-  roots: string[] = storageCandidates(),
+  roots: UsageRoot[] = usageRoots(),
   unreadable: string[] = [],
 ): Promise<UsageCandidate[]> {
   const out: UsageCandidate[] = [];
   const seen = new Set<string>();
-  for (const root of roots) {
+  for (const { path: root } of roots) {
     let dirs: string[];
     try {
       dirs = await readdir(root);
@@ -767,16 +903,27 @@ function stripCopilotPrefix(modelId: string | null): string | null {
 export function normalizeUsageModelId(modelId: string | null): string | null {
   return stripCopilotPrefix(modelId);
 }
+/** One stored file's contribution, with the absolute path it was read from so
+ * its source editor can be attributed (see `editorForPath`). */
+export interface UsageFileInput {
+  /** Absent for callers that only have aggregated inputs; attributed as
+   * unknown rather than guessed. */
+  path?: string;
+  workspaceId: string;
+  workspacePath: string;
+  requests: UsageRequest[];
+  diagnostics?: UsageDiagnostics;
+  fingerprint?: UsageSchemaFingerprint;
+}
+
+/** Label for a stored file whose editor the registry can no longer identify. */
+export const unknownEditorLabel = "Unknown editor";
+
 export function aggregateUsage(
-  files: {
-    workspaceId: string;
-    workspacePath: string;
-    requests: UsageRequest[];
-    diagnostics?: UsageDiagnostics;
-    fingerprint?: UsageSchemaFingerprint;
-  }[],
+  files: UsageFileInput[],
   scannedAt = Date.now(),
   entries: CatalogEntry[] = catalog,
+  roots: UsageRoot[] = usageRoots(),
 ): UsageSummary {
   const diagnostics = emptyUsageDiagnostics();
   for (const file of files)
@@ -796,7 +943,11 @@ export function aggregateUsage(
   }
   const models = new Map<string, UsageModelStat & { key: string }>();
   const days = new Map<string, UsageDayStat>();
+  // Keyed by editor + storage id: the same workspace id can legitimately exist
+  // in two editors, and merging them would label one workspace with the other
+  // editor's path.
   const workspaces = new Map<string, UsageWorkspaceStat>();
+  const editors = new Map<string, UsageEditorStat>();
   const unknown = new Set<string>();
   const emptyCompleteness = () => ({
     observedPairs: 0,
@@ -865,17 +1016,32 @@ export function aggregateUsage(
   };
   const totalFiles = files.length;
   for (const file of files) {
-    let ws = workspaces.get(file.workspaceId);
+    const root = file.path ? editorForPath(file.path, roots) : undefined;
+    const editorLabel = root?.editor ?? unknownEditorLabel;
+    const editor = editors.get(editorLabel) ?? {
+      editor: editorLabel,
+      rootId: root?.id ?? null,
+      requests: 0,
+      promptTokens: 0,
+      outputTokens: 0,
+      premiumEstimate: 0,
+      fileCount: 0,
+    };
+    editor.fileCount++;
+    editors.set(editorLabel, editor);
+    const wsKey = `${root?.id ?? "?"}\u0000${file.workspaceId}`;
+    let ws = workspaces.get(wsKey);
     if (!ws) {
       ws = {
         id: file.workspaceId,
         path: file.workspacePath,
+        ...(root ? { editor: root.editor } : {}),
         requests: 0,
         promptTokens: 0,
         outputTokens: 0,
         premiumEstimate: 0,
       };
-      workspaces.set(file.workspaceId, ws);
+      workspaces.set(wsKey, ws);
     }
     for (const r of file.requests) {
       requestCount++;
@@ -925,6 +1091,10 @@ export function aggregateUsage(
       ws.promptTokens += r.promptTokens;
       ws.outputTokens += r.outputTokens;
       ws.premiumEstimate += premium.value;
+      editor.requests++;
+      editor.promptTokens += r.promptTokens;
+      editor.outputTokens += r.outputTokens;
+      editor.premiumEstimate += premium.value;
     }
   }
   const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -994,7 +1164,18 @@ export function aggregateUsage(
       .sort((a, b) => (a.date < b.date ? -1 : 1)),
     workspaces: [...workspaces.values()]
       .map((w) => ({ ...w, premiumEstimate: round2(w.premiumEstimate) }))
-      .sort((a, b) => b.requests - a.requests || a.id.localeCompare(b.id)),
+      .sort(
+        (a, b) =>
+          b.requests - a.requests ||
+          (a.editor ?? "").localeCompare(b.editor ?? "") ||
+          a.id.localeCompare(b.id),
+      ),
+    editors: [...editors.values()]
+      .map((e) => ({ ...e, premiumEstimate: round2(e.premiumEstimate) }))
+      .sort(
+        (a, b) =>
+          b.requests - a.requests || a.editor.localeCompare(b.editor),
+      ),
   };
 }
 export function suggestBudget(
