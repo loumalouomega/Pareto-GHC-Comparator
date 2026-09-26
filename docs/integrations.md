@@ -30,6 +30,13 @@ the Usage card (`webview/main.ts`), with previously stored requests retained
 as stale contributions. Fingerprints record only known-field presence and
 bounded shape counters — never values, chat text, identifiers, or paths.
 
+**No CI job can exercise a real Copilot chat session.** There is no Copilot
+CLI, no server, and no documented export; session files exist only on a
+signed-in machine. That user-reported fingerprint notice is therefore the whole
+of the Copilot-side drift signal, and a scheduled check against the latest
+`@types/vscode` would cover extension-API drift rather than this session shape.
+Verdict and cadence: `docs/schema-drift-investigation.md`.
+
 ### Session storage roots
 
 `usageRoots()` in `src/usage.ts` enumerates where those sessions can live. Only
@@ -61,12 +68,21 @@ unexplained count. Parse failures carry a content-free fingerprint
 (`blocks`, `jsonFailures`, `missingId/Provider/Name`, `invalidProvider`) plus
 "please file an issue with the fingerprint and your OpenCode CLI version".
 
+**OpenCode 2.x is not supported by this boundary.** v2.0.16 rejects the
+`--verbose` flag outright, so discovery fails with a `command` error rather
+than reaching `parseModels` at all; the v2 replacement surface is not yet
+established. Tracked as a Tier 1 task in `docs/roadmap.md`, with the evidence in
+`docs/schema-drift-investigation.md`. The failure is invisible to CI today: the
+`opencode-smoke` npm lane pins 1.18.30, the `script` lane installs latest under
+`continue-on-error: true`, and the workflow has no `schedule:` trigger.
+
 | Client version | OS | Install method | Verified scope | Date | Evidence | Fixture |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1.18.30 | Linux | install script (`~/.opencode/bin`) | Home fallback, path with spaces; 17 free-tier rows / 13 variants; priced `opencode-go` (65) + unpriced `openai` (81) with a real signed-in account (163 rows total) | 2026-09-10 / 2026-09-14 | `docs/opencode-integration.md`, `docs/testing.md` | `test/fixtures/opencode/verbose-1.18.30.txt` (synthetic representative of the observed shape, not a raw capture) |
 | 1.18.30 | Linux | npm global | PATH, path with spaces; 17 free-tier rows | 2026-09-14 | CI run 34817372006 (`OpenCode smoke (ubuntu-latest, npm)`), `docs/testing.md` | Same representative fixture |
 | 1.18.30 | macOS | install script + npm global | PATH, path with spaces; 17 free-tier rows | 2026-09-14 | CI run 34817372006 (both macOS smoke jobs), `docs/testing.md` | Same representative fixture |
 | 1.18.30 | Windows | npm global | npm-layout candidate (`node_modules\opencode-ai\bin\opencode.exe`), path with spaces; 17 free-tier rows | 2026-09-14 | CI runs 34817141985 (gap) → 34817372006 (fixed), `docs/testing.md` | Same representative fixture |
+| 2.0.16 | Linux | install script (`~/.opencode/bin`) | **Boundary broken.** `models --verbose` exits 1 with `Unrecognized flag: --verbose`; `--help` lists neither `--verbose` nor `--refresh`. Bare `models` succeeds (exit 0) but prints one `provider/model` id per line — no cost, no variant, not JSON. `stats --cost` works but is human-formatted with no format flag; `session list --format json` returned no rows; `db`/`db path` are not commands | 2026-09-26 | `docs/schema-drift-investigation.md` | None — no known-good v2 shape exists yet, so no fixture can be pinned |
 
 Drift case: `test/fixtures/opencode/drifted.txt` is a hypothetical future
 shape (a single top-level JSON document with no `provider/model` header
@@ -77,4 +93,7 @@ regression test.
 
 **Unverified:** provider-billed pricing and native resolution with a real
 signed-in account on macOS and Windows (CI is credential-free by design);
-install-script layout on Windows (POSIX-shell target, not exercised).
+install-script layout on Windows (POSIX-shell target, not exercised); any
+OpenCode 2.x listing surface on any platform (only Linux 2.0.16 was inspected,
+and its `--verbose` boundary is broken there), and whether the `--verbose`
+removal also holds on macOS and Windows.
