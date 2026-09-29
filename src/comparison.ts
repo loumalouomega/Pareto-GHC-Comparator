@@ -1,4 +1,9 @@
-import { compare, parseOptions, sortRowsByEfficiency } from "./compare";
+import {
+  compare,
+  parseOptions,
+  sortRowsByEfficiency,
+  withoutViewFilters,
+} from "./compare";
 import { buildGroups } from "./groups";
 import { recommend } from "./recommend";
 import { catalogDate } from "./catalog";
@@ -121,7 +126,7 @@ export function optionResult(
   const structure = compare(
     available,
     benchmarks,
-    { ...options, filter: "", onlyMine: false, freeOnly: false },
+    { ...withoutViewFilters(options), filter: "" },
     mappings,
     undefined,
     { pins },
@@ -160,6 +165,9 @@ export function optionResult(
     recommendation,
     selected,
     groups: buildGroups(available, excluded, rows, structure),
+    makers: [...new Set(structure.map((r) => r.provider))].sort((a, b) =>
+      a.localeCompare(b),
+    ),
     structureIds: [
       ...available.map((a) => a.id),
       ...structure.map((r) => r.id),

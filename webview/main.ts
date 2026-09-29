@@ -3060,6 +3060,9 @@ const importedTab = (kind: "single" | "comparison"): SectionTab =>
   kind === "comparison" ? "tools" : "compare";
 const liveOnlyControls = [
   "source",
+  "display-maker",
+  "display-min-score",
+  "display-collapse",
   "preset",
   "billing",
   "plan",
@@ -3080,6 +3083,27 @@ const liveOnlyControls = [
   "export-png",
   "import-snapshot",
 ];
+/** Maker select, score floor and collapse toggle from the host's options.
+ * The maker list comes from every discovered model (ignoring these filters);
+ * a saved maker that is no longer offered stays selectable and is labelled,
+ * never silently dropped, so the empty view it produces can be explained. */
+function syncViewFilterControls() {
+  if (!state) return;
+  const display = state.options.display;
+  const select = el<HTMLSelectElement>("display-maker");
+  const makers = state.makers ?? [];
+  const wanted = display.maker;
+  select.replaceChildren(new Option("All makers", ""));
+  for (const maker of makers) select.append(new Option(maker, maker));
+  if (wanted && !makers.includes(wanted))
+    select.append(new Option(`${wanted} (not in this source)`, wanted));
+  select.value = wanted;
+  const range = el<HTMLInputElement>("display-min-score");
+  range.value = String(Math.min(display.minScore, Number(range.max)));
+  el("display-min-score-value").textContent =
+    display.minScore > 0 ? String(display.minScore) : "Off";
+  el<HTMLInputElement>("display-collapse").checked = display.collapse;
+}
 function renderImportedChrome(imported: ImportedMeta | undefined) {
   el("snapshot-banner").hidden = !imported;
   el("header-actions").hidden = !!imported;
@@ -3271,6 +3295,7 @@ function render(next: ViewState) {
   (el("display-sort") as HTMLSelectElement).value = state.options.display.sort;
   (el("display-quadrant") as HTMLInputElement).checked =
     state.options.display.quadrant;
+  syncViewFilterControls();
   (el("free-only-label") as HTMLElement).hidden =
     state.options.source !== "opencode";
   (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
@@ -3523,6 +3548,9 @@ function sendOptions(): boolean {
       quadrant: (el("display-quadrant") as HTMLInputElement).checked,
       sort: (el("display-sort") as HTMLSelectElement)
         .value as Options["display"]["sort"],
+      minScore: Number(el<HTMLInputElement>("display-min-score").value) || 0,
+      collapse: el<HTMLInputElement>("display-collapse").checked,
+      maker: el<HTMLSelectElement>("display-maker").value,
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
     onlyMine: (el("only-mine") as HTMLInputElement).checked,
@@ -3605,6 +3633,9 @@ for (const id of [
   "display-quadrant",
   "display-scale",
   "display-sort",
+  "display-maker",
+  "display-min-score",
+  "display-collapse",
   "free-only",
   "only-mine",
   "scenario-plan",
@@ -3615,6 +3646,10 @@ for (const id of [
   "scenario-custom-overage",
 ]) {
   el(id).addEventListener("input", () => {
+    if (id === "display-min-score") {
+      const floor = Number(el<HTMLInputElement>(id).value);
+      el("display-min-score-value").textContent = floor > 0 ? String(floor) : "Off";
+    }
     if (id === "billing") {
       const current = el<HTMLInputElement>("budget");
       if (current.value && current.validity.valid)

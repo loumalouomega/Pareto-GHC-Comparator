@@ -272,10 +272,10 @@ test("checklist exclusions hide models before frontier calculation", () => {
 
 test("display settings default, persist, and migrate", () => {
   const parsed = parseOptions({ ...defaults });
-  assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" });
+  assert.deepEqual(parsed.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default", minScore: 0, collapse: false, maker: "" });
   assert.equal(parsed.freeOnly, false);
   const migrated = savedOptions({ source: "copilot", preset: "coding", billing: "credits", plan: "pro", filter: "", tokens: defaults.tokens, recommendation: defaults.recommendation });
-  assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default" });
+  assert.deepEqual(migrated.display, { labels: true, frontier: true, scale: "auto", chart: "task", quadrant: true, sort: "default", minScore: 0, collapse: false, maker: "" });
   const legacy = migrateOptions({ source: "codex", billing: "credits" }) as Record<string, unknown>;
   assert.equal(legacy.billing, "usd");
 });
@@ -446,7 +446,7 @@ test("free-only filtering and spotlight use latest discovery", () => {
 });
 
 test("workload excludes display settings but keeps source and freeOnly", () => {
-  const w = workload({ ...defaults, display: { labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false, sort: "efficiency" }, freeOnly: true });
+  const w = workload({ ...defaults, display: { ...defaults.display, labels: false, frontier: false, scale: "linear", chart: "workload", quadrant: false, sort: "efficiency" }, freeOnly: true });
   assert.ok(!("display" in w));
   assert.equal(w.source, "copilot");
   assert.equal(w.freeOnly, true);

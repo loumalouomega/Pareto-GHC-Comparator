@@ -7,6 +7,7 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 ### Added
 
 - Budget ladder on the Plan & budget tab: the Pareto frontier as a lookup table. Each row is a budget band with the highest-scoring displayed model you can afford, and the runner-up that also fits. It uses the current cost basis and unit, and its picks match the budget recommendation at each band's lower bound. Inspired by [bestvaluemodel](https://github.com/terryds/bestvaluemodel).
+- View filters on the Settings tab: a **Minimum score** slider, **One row per model (best variant)**, and a **Maker** select. They apply before the Pareto frontier is calculated, so the line and recommendations reflect what is shown. Rows whose score is unknown stay visible with their reasons instead of being hidden by the score floor. All three are off by default and are ignored by the checklist and the free-tier baselines, so hidden variants stay selectable. Saved settings and old snapshots pick up the defaults automatically.
 - Raw capability bar under the Pareto chart: the displayed models ranked by benchmark score alone, ignoring cost, for every source. A ★ marks frontier models so the marker never depends on colour; it shows the top 15 with a Show all toggle.
 
 ## 1.5.0

@@ -12,6 +12,7 @@ import {
   type ByokStore,
   type CatalogEntry,
   type CostBreakdown,
+  type DisplaySettings,
   type FreeBarEntry,
   type MappingIssue,
   type Options,
@@ -96,6 +97,18 @@ export function parseOptions(value: unknown): Options {
       : displayRecord.quadrant === true;
   const sort =
     displayRecord.sort === "efficiency" ? "efficiency" : "default";
+  const minScore =
+    typeof displayRecord.minScore === "number" &&
+    Number.isFinite(displayRecord.minScore) &&
+    displayRecord.minScore >= 0 &&
+    displayRecord.minScore <= 1000
+      ? displayRecord.minScore
+      : 0;
+  const collapse = displayRecord.collapse === true;
+  const maker =
+    typeof displayRecord.maker === "string" && displayRecord.maker.length <= 200
+      ? displayRecord.maker
+      : "";
   if (!allowedBilling(v.source).includes(v.billing))
     throw new Error("That billing mode is not available for this source.");
   return {
@@ -113,7 +126,17 @@ export function parseOptions(value: unknown): Options {
       },
       scoreGap: recommendation.scoreGap,
     },
-    display: { labels, frontier, scale, chart, quadrant, sort },
+    display: {
+      labels,
+      frontier,
+      scale,
+      chart,
+      quadrant,
+      sort,
+      minScore,
+      collapse,
+      maker,
+    },
     freeOnly: v.freeOnly === true,
     onlyMine: v.onlyMine === true,
     tokens: {
@@ -800,7 +823,58 @@ export function compare(
     // Variant-level exclusions (modelId::benchmarkId) hide one expanded or
     // pinned row; whole-model exclusions were already applied above.
     .filter((r) => !excluded.has(r.id));
-  return markFrontier(rows);
+  return markFrontier(applyDisplayFilters(rows, options.display));
+}
+
+/**
+ * The view filters a baseline ignores so it stays complete: `freeOnly` and
+ * `onlyMine` plus the display filters (`minScore`, `collapse`, `maker`).
+ * Used by the checklist structure comparison (hidden variants must stay
+ * selectable and valid for bulk exclusion) and the free-tier baselines.
+ */
+export function withoutViewFilters(options: Options): Options {
+  return {
+    ...options,
+    freeOnly: false,
+    onlyMine: false,
+    display: { ...options.display, minScore: 0, collapse: false, maker: "" },
+  };
+}
+
+const collapseOrder = (a: Row, b: Row) =>
+  b.score! - a.score! ||
+  (a.cost ?? Number.POSITIVE_INFINITY) - (b.cost ?? Number.POSITIVE_INFINITY) ||
+  a.id.localeCompare(b.id);
+
+/**
+ * Display filters applied to already-built rows, before the frontier is
+ * marked so dominance reflects what is shown (the same rule as the text
+ * filter). Order: maker, minimum score, one row per model. Rows with an
+ * unknown score are never hidden by the score floor — their reasons must
+ * stay visible — and collapse drops them only when a scored variant of the
+ * same base model exists. Ties on score go to the cheaper row.
+ */
+export function applyDisplayFilters(
+  rows: Row[],
+  display: DisplaySettings,
+): Row[] {
+  let out = display.maker ? rows.filter((r) => r.provider === display.maker) : rows;
+  if (display.minScore > 0)
+    out = out.filter((r) => r.score === null || r.score >= display.minScore);
+  if (display.collapse) {
+    const best = new Map<string, Row>();
+    for (const r of out) {
+      if (r.score === null) continue;
+      const current = best.get(r.baseModelId);
+      if (!current || collapseOrder(r, current) < 0) best.set(r.baseModelId, r);
+    }
+    out = out.filter((r) =>
+      r.score === null
+        ? !best.has(r.baseModelId)
+        : best.get(r.baseModelId) === r,
+    );
+  }
+  return out;
 }
 
 export function freeSpotlight(  available: AvailableModel[],
@@ -821,7 +895,7 @@ export function freeSpotlight(  available: AvailableModel[],
   cheapestToBest?: { id: string; name: string; cost: number };
 } {
   if (options.source !== "opencode" || options.billing !== "usd") return {};
-  const baseline = { ...options, freeOnly: false, onlyMine: false };
+  const baseline = withoutViewFilters(options);
   const all = compare(available, benchmarks, baseline, overrides, entries, {
     ...extra,
     // Baseline uses checklist/filter but ignores the free-only restriction.
@@ -879,7 +953,7 @@ export function freeBar(
   } = {},
 ): FreeBarEntry[] {
   if (options.source !== "opencode") return [];
-  const baseline = { ...options, freeOnly: false, onlyMine: false };
+  const baseline = withoutViewFilters(options);
   const free = compare(available, benchmarks, baseline, overrides, entries, {
     ...extra,
   }).filter(

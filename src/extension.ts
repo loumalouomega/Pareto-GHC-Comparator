@@ -1042,6 +1042,7 @@ export function activate(context: vscode.ExtensionContext) {
       scenarioPrefill: historyScenarioPrefill(usage),
       checklist,
       groups,
+      makers: result.makers,
       freeSpotlight: freeSpotlightState,
       freeBar: bar,
       watchlistAlerts,

@@ -27,6 +27,12 @@ export interface DisplaySettings {
   chart: ChartType;
   quadrant: boolean;
   sort: TableSort;
+  /** Hide rows whose known score is below this index value; 0 means off. Unknown scores stay visible with their reasons. */
+  minScore: number;
+  /** Keep only the best-scoring row per base model (thinking/effort variants collapse to one). */
+  collapse: boolean;
+  /** Show only rows whose benchmark maker equals this name; empty means all. Applied before the frontier, like the text filter. */
+  maker: string;
 }
 export interface Tokens {
   input: number;
@@ -156,6 +162,9 @@ export const defaults: Options = {
     chart: "task",
     quadrant: true,
     sort: "default",
+    minScore: 0,
+    collapse: false,
+    maker: "",
   },
   freeOnly: false,
   onlyMine: false,
@@ -851,6 +860,8 @@ export interface ViewState {
   freeSpotlight: FreeSpotlight;
   /** Free-tier models with scores for the intelligence bar, sorted by score descending. Empty for non-OpenCode sources. */
   freeBar: FreeBarEntry[];
+  /** Distinct benchmark makers of every discovered model, ignoring display filters, for the Maker select. */
+  makers?: string[];
   /** Opt-in refresh notifications for pinned-model changes. Off by default. */
   watchlistAlerts: boolean;
   /** Models that newly appeared on Copilot/OpenCode since the last time they were seen, until dismissed. */

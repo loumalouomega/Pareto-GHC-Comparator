@@ -7,7 +7,12 @@ import {
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
-import { compare, freeBar, registryRateFor } from "../src/compare";
+import {
+  compare,
+  freeBar,
+  registryRateFor,
+  withoutViewFilters,
+} from "../src/compare";
 import {
   exportPairSnapshot,
   exportSnapshot,
@@ -675,9 +680,10 @@ for (const theme of ["light", "dark", "high-contrast"])
       const structure = compare(
         listed,
         state.models,
-        { ...state.options, filter: "", onlyMine: false, freeOnly: false },
+        { ...withoutViewFilters(state.options), filter: "" },
         mappings,
       );
+      state.makers = [...new Set(structure.map((r) => r.provider))].sort();
       state.groups = buildGroups(
         listed as never,
         [...excluded],
@@ -1734,6 +1740,43 @@ for (const theme of ["light", "dark", "high-contrast"])
     await openTab("Plan & budget");
     await expect(page.locator("#ladder-rows tr")).not.toHaveCount(0);
     await openTab("Tool analysis");
+    // View filters (Settings tab): maker, score floor and one-row-per-model
+    // narrow the rows before the frontier, and clear back to the full view.
+    const rowCount = await page.locator("#rows tr").count();
+    expect(rowCount).toBeGreaterThan(2);
+    await openTab("Settings");
+    await expect(page.locator("#display-maker option")).not.toHaveCount(1);
+    const makerNames = await page
+      .locator("#display-maker option")
+      .allTextContents();
+    expect(makerNames[0]).toBe("All makers");
+    await page.locator("#display-maker").selectOption(makerNames[1]);
+    await openTab("Tool analysis");
+    await expect
+      .poll(async () => page.locator("#rows tr").count())
+      .toBeLessThan(rowCount);
+    await openTab("Settings");
+    await page.locator("#display-maker").selectOption("");
+    await page.locator("#display-min-score").fill("60");
+    await expect(page.locator("#display-min-score-value")).toHaveText("60");
+    await openTab("Tool analysis");
+    // Only rows with an unknown score survive a floor above every score:
+    // they stay visible with their reasons rather than vanishing.
+    await expect
+      .poll(async () => page.locator("#rows tr").count())
+      .toBeLessThan(rowCount);
+    await openTab("Settings");
+    await page.locator("#display-min-score").fill("0");
+    await expect(page.locator("#display-min-score-value")).toHaveText("Off");
+    await page.locator("#display-collapse").check();
+    await openTab("Tool analysis");
+    await expect
+      .poll(async () => page.locator("#rows tr").count())
+      .toBeLessThanOrEqual(rowCount);
+    await openTab("Settings");
+    await page.locator("#display-collapse").uncheck();
+    await openTab("Tool analysis");
+    await expect(page.locator("#rows tr")).toHaveCount(rowCount);
     // Watchlist opt-in: the Settings checkbox posts the toggle the host
     // validates (never wrapped to a comparison side — see send()).
     await openTab("Settings");
@@ -1934,6 +1977,10 @@ test("an imported snapshot renders read-only with its own provenance", async ({
   await expect(page.locator("#output")).toBeDisabled();
   await expect(page.locator("#display-scale")).toBeEnabled();
   await expect(page.locator("#display-sort")).toBeEnabled();
+  // The view filters would change which recorded rows count as the frontier,
+  // which a snapshot cannot recompute, so they are locked while it shows.
+  for (const id of ["display-maker", "display-min-score", "display-collapse"])
+    await expect(page.locator(`#${id}`)).toBeDisabled();
   await expect(page.locator("#filter")).toHaveValue("", { timeout: 5000 });
   // The exported rows, dates, and version replace the live ones.
   await expect(page.locator("#count")).toContainText("plotted");

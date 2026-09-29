@@ -408,6 +408,9 @@ const defaultDisplay = (): DisplaySettings => ({
   chart: "task",
   quadrant: true,
   sort: "default",
+  minScore: 0,
+  collapse: false,
+  maker: "",
 });
 
 /** Legacy billing has no token-workload view, so it renders as "task". */
@@ -659,6 +662,7 @@ function optionResultOf(side: ImportedSide): OptionResult {
     // A historical snapshot carries no live checklist structure, and its
     // scenario is shown exactly as recorded rather than re-projected.
     groups: [],
+    makers: [],
     structureIds: [],
     scenario: side.scenario,
     ...(side.discoveryError ? { discoveryError: side.discoveryError } : {}),
@@ -926,6 +930,7 @@ function sideResult(
     recommendation: recommendationOf(imported.recommended),
     selected,
     groups: [],
+    makers: [],
     structureIds: [],
     scenario: imported.scenario,
     ...(imported.discoveryError

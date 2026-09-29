@@ -135,6 +135,9 @@ export function html(
   <label class="checkbox-label"><input id="display-quadrant" type="checkbox" checked>Most attractive quadrant</label>
   <label>Cost scale<select id="display-scale"><option value="auto">Auto</option><option value="log">Logarithmic</option><option value="linear">Linear</option></select></label>
   <label>Table sort<select id="display-sort"><option value="default">Discovery order</option><option value="efficiency">Cost per quality</option></select></label>
+  <label>Maker<select id="display-maker"><option value="">All makers</option></select></label>
+  <label>Minimum score <input id="display-min-score" type="range" min="0" max="60" step="5" value="0" aria-describedby="display-min-score-value"> <span id="display-min-score-value">Off</span></label>
+  <label class="checkbox-label"><input id="display-collapse" type="checkbox">One row per model (best variant)</label>
   <label class="checkbox-label" id="free-only-label" hidden><input id="free-only" type="checkbox">Free tier only</label>
   </div>
   </section>
