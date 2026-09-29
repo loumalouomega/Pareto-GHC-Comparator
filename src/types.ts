@@ -494,6 +494,34 @@ export interface ByokEntry {
   source?: ByokProvenance;
 }
 export type ByokStore = Record<string, ByokEntry>;
+/** One newly discovered model, compared with the models already known on its source. */
+export interface NewModelEntry {
+  /** Base model id (variants collapsed). */
+  id: string;
+  /** The discovered id of the best-scoring variant. */
+  modelId: string;
+  name: string;
+  /** Any source; static sources report additions to their known-model registry. */
+  source: Source;
+  /** OpenCode Zen free tier. Always false elsewhere. */
+  free: boolean;
+  score: number | null;
+  cost: number | null;
+  unit: CostUnit;
+  /** 1-based rank by score among scored models of this source; null when unscored. */
+  rank: number | null;
+  scored: number;
+  /** Score minus the best / median preexisting score; null when either is unknown. */
+  deltaBest: number | null;
+  deltaMedian: number | null;
+  frontier: boolean;
+}
+export interface NewModelsReport {
+  detectedAt: number;
+  /** Benchmark snapshot version used for the comparison, null when none was cached. */
+  benchmarkVersion: string | null;
+  entries: NewModelEntry[];
+}
 export interface Snapshot {
   version: string;
   fetchedAt: number;
@@ -701,6 +729,7 @@ export type HostMessage =
   | { type: "pin"; id: string; benchmarkId: string }
   | { type: "unpin"; id: string; benchmarkId: string }
   | { type: "watchlistAlerts"; enabled: boolean }
+  | { type: "dismissNewModels" }
   | { type: "exclude"; id: string; excluded: boolean }
   | { type: "excludeMany"; ids: string[]; excluded: boolean }
   | { type: "excludeAll"; excluded: boolean }
@@ -824,6 +853,8 @@ export interface ViewState {
   freeBar: FreeBarEntry[];
   /** Opt-in refresh notifications for pinned-model changes. Off by default. */
   watchlistAlerts: boolean;
+  /** Models that newly appeared on Copilot/OpenCode since the last time they were seen, until dismissed. */
+  newModels?: NewModelsReport;
   /**
    * Present only while a previously exported snapshot is reopened read-only
    * (`src/snapshotImport.ts`). Its presence is what tells the webview the

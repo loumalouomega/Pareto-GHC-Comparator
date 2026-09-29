@@ -17,7 +17,9 @@
     "Machine Learning"
   ],
   "main": "./dist/extension.cjs",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "extensionKind": [
     "workspace"
   ],
@@ -36,6 +38,11 @@
           "minimum": 0,
           "maximum": 3650,
           "description": "Keep local Copilot usage history for this many days (0 means unlimited, the default). Takes effect on the next consented scan and overrides the stored value from the Usage tab input. Clearing the setting restores the stored value."
+        },
+        "paretoGhc.newModels.notify": {
+          "type": "boolean",
+          "default": true,
+          "description": "When VS Code starts (and when Copilot's model list changes), check GitHub Copilot and OpenCode for models that were not there before and show a notification with their benchmark performance compared to the models already known; new free OpenCode models are highlighted. Uses only the cached benchmark data and sends nothing anywhere. The first check only records the current models."
         },
         "paretoGhc.chart.defaultView": {
           "type": "string",

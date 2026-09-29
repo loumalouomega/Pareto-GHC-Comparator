@@ -4,6 +4,10 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+### Added
+
+- New-model announcements at startup. When VS Code starts (and when Copilot's model list changes while it is open), the extension checks GitHub Copilot and OpenCode for models it has not seen before and shows one notification with each new model's benchmark index and how it compares with the models already known on the same source (difference from the best and median existing score, rank, and whether it lands on the Pareto frontier). New free OpenCode models are listed first and marked FREE. The same list stays as a banner at the top of the panel until you dismiss it. The first check only records what is currently available, so you are never told that everything is new; a failed or empty discovery never counts as models disappearing. Only the cached benchmark data is used (nothing is downloaded at startup), a model without a benchmark score is listed as such rather than guessed, and Copilot credits and OpenCode USD are never compared with each other. The same applies to the known-model registries for Claude Code, Codex, Gemini CLI, Cursor, Windsurf, Aider, and Amazon Q: when an extension update adds a model to one of them, it is announced and labelled as a known-model registry addition, not as something your account can use. Turn it off with the `paretoGhc.newModels.notify` setting.
+
 ## 1.4.0
 
 ### Added

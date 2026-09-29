@@ -418,6 +418,50 @@ test("extension discovers Copilot models, serves cached data, validates messages
   await receiver({ type: "watchlistAlerts", enabled: true });
   await receiver({ type: "refresh" });
   assert.equal(watchInfos().length, 1);
+  // New-model announcements: the startup pass only seeded the baseline, so
+  // nothing was announced; a model appearing later is announced once with a
+  // banner in the view state until dismissed.
+  for (let i = 0; i < 100 && !state.get("seenModels"); i++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok((state.get("seenModels") as any).copilot.includes("gpt-5-mini"));
+  // Static registries seed too, silently, and are tracked per source.
+  assert.ok((state.get("seenModels") as any).codex.length > 0);
+  assert.equal(
+    infos.filter((a) => String(a[0]).includes("New models available")).length,
+    0,
+  );
+  const originalSelect = mock.lm.selectChatModels;
+  (mock.lm as any).selectChatModels = async () => [
+    ...(await originalSelect({ vendor: "copilot" })),
+    {
+      id: "brand-new-model",
+      name: "Brand New Model",
+      family: "brand-new-model",
+      maxInputTokens: 1000,
+    },
+  ];
+  discoveryChanged();
+  for (let i = 0; i < 100 && !last().newModels; i++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(
+    last().newModels.entries.map((e: any) => e.name),
+    ["Brand New Model"],
+  );
+  assert.ok(
+    infos.some(
+      (a) =>
+        String(a[0]).includes("New models available") &&
+        String(a[0]).includes("Brand New Model") &&
+        !String(a[0]).includes("GPT-5 mini"),
+    ),
+  );
+  await receiver({ type: "dismissNewModels" });
+  assert.equal(last().newModels, undefined);
+  assert.equal(state.get("newModelsPending"), undefined);
+  (mock.lm as any).selectChatModels = originalSelect;
+  // Rediscover so later assertions see the original single-model listing.
+  discoveryChanged();
+  await new Promise((resolve) => setTimeout(resolve, 100));
   globalThis.fetch = realFetch;
   mock.window.showInformationMessage = infoMessage;
   const leaves = () =>

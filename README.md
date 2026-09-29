@@ -82,11 +82,12 @@ The optional **Monthly spending scenario** card projects plan fee plus expected 
 <details>
 <summary><b>Extension settings</b></summary>
 
-Three `paretoGhc.*` settings mirror stored preferences without reload:
+Four `paretoGhc.*` settings apply without reload (three mirror stored preferences):
 
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `usage.retentionDays` | unlimited (0) | Overrides the Usage tab retention window |
+| `newModels.notify` | on | Announce newly available Copilot/OpenCode models (and models newly added to the other tools' known-model registries) at startup, with their benchmark performance versus existing models (new free OpenCode models highlighted) |
 | `usage.watchOnScan` | on | Whether consented scans start the file watcher |
 | `chart.defaultView` | `task` | Chart basis for views without a saved choice |
 

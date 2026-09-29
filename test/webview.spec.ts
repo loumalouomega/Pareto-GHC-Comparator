@@ -578,6 +578,26 @@ for (const theme of ["light", "dark", "high-contrast"])
         };
       }
       if (m.type === "watchlistAlerts") state.watchlistAlerts = m.enabled;
+      // Test-only branch: install a pending new-models report; the real
+      // dismiss message clears it like the host does.
+      if (m.type === "__newModels")
+        state.newModels = {
+          detectedAt: Date.parse("2026-09-29T08:00:00Z"),
+          benchmarkVersion: "4.4",
+          entries: [
+            {
+              id: "opencode:zen/free-x", modelId: "opencode:zen/free-x", name: "Free X",
+              source: "opencode", free: true, score: 55.5, cost: 0, unit: "USD",
+              rank: 1, scored: 5, deltaBest: 4.5, deltaMedian: 12, frontier: true,
+            },
+            {
+              id: "opencode:p/unscored", modelId: "opencode:p/unscored", name: "Unscored Y",
+              source: "opencode", free: false, score: null, cost: null, unit: "USD",
+              rank: null, scored: 5, deltaBest: null, deltaMedian: null, frontier: false,
+            },
+          ],
+        };
+      if (m.type === "dismissNewModels") state.newModels = undefined;
       if (m.type === "byok") {
         state.byok = mergeByokForm(state.byok, parseByokFormStore(m.rates));
       }
@@ -1685,7 +1705,27 @@ for (const theme of ["light", "dark", "high-contrast"])
         ),
       )
       .toBeTruthy();
+    // New-models banner: free OpenCode models are highlighted with their
+    // comparison, unscored ones say so, and Dismiss posts the host message.
     await openTab("Tool analysis");
+    await expect(page.locator("#new-models-banner")).toBeHidden();
+    await page.evaluate(() => (window as any).hostMessage({ type: "__newModels" }));
+    await expect(page.locator("#new-models-banner")).toBeVisible();
+    await expect(page.locator("#new-models-list li.new-model-free")).toContainText([
+      "Free X",
+    ]);
+    await expect(page.locator("#new-models-list li").first()).toContainText("FREE");
+    await expect(page.locator("#new-models-list li").first()).toContainText(
+      "+4.5 vs best existing",
+    );
+    await expect(page.locator("#new-models-list li").nth(1)).toContainText(
+      "no benchmark score yet",
+    );
+    await page.locator("#new-models-dismiss").click();
+    await expect
+      .poll(() => messages.some((m) => m.type === "dismissNewModels"))
+      .toBeTruthy();
+    await expect(page.locator("#new-models-banner")).toBeHidden();
     expect(errors).toEqual([]);
   });
 
