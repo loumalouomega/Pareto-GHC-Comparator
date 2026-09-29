@@ -365,6 +365,19 @@ a {
 .snapshot-banner {
   border-left: 4px solid var(--vscode-editorWarning-foreground, #e2b93b);
 }
+.new-models-banner {
+  border-left: 4px solid var(--vscode-charts-green, #3fb950);
+}
+.new-models-banner h2 {
+  margin-top: 0;
+}
+.new-models-banner ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+.new-model-free {
+  font-weight: 600;
+}
 .snapshot-banner h2 {
   margin-top: 0;
 }
@@ -555,4 +568,11 @@ ul.usage-sources li {
 }
 .comparison-overlay-notice {
   margin: 4px 0;
+}
+.new-model-free .badge {
+  background: var(--vscode-charts-green, #3fb950);
+  color: var(--vscode-editor-background, #000);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 0.85em;
 }

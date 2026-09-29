@@ -92,6 +92,8 @@ import type {
   AvailableModel,
   ByokStore,
   HostMessage,
+  NewModelEntry,
+  Options,
   Snapshot,
   Source,
   UsageSourceView,
@@ -99,7 +101,15 @@ import type {
   UsageSummary,
   ViewState,
 } from "./types";
-import { costUnit } from "./types";
+import { costUnit, defaults } from "./types";
+import {
+  diffSeen,
+  loadNewModelsReport,
+  loadSeenModels,
+  mergeReports,
+  newModelEntries,
+  summarizeNewModels,
+} from "./newModels";
 import { summarizeWatchChanges, watchlistChanges } from "./watchlist";
 const secretName = "artificialAnalysis.apiKey";
 /** Refuse to read an implausibly large "snapshot" before loading it into
@@ -271,6 +281,7 @@ export function activate(context: vscode.ExtensionContext) {
       watchOnScan: { configured: false, value: true },
       retentionDays: { configured: false, value: undefined },
       chartView: { configured: false, value: "task" },
+      newModelsNotify: { configured: false, value: true },
     };
     try {
       const api = vscode.workspace as unknown as {
@@ -849,6 +860,12 @@ export function activate(context: vscode.ExtensionContext) {
   let watchlistAlerts = Boolean(
     context.globalState.get("watchlistAlerts", false),
   );
+  // Per-source ids ever discovered (the "seen" baseline) and the newly
+  // detected models still awaiting dismissal.
+  let seenModels = loadSeenModels(context.globalState.get("seenModels"));
+  let pendingNewModels = loadNewModelsReport(
+    context.globalState.get("newModelsPending"),
+  );
   /**
    * A previously exported snapshot reopened read-only. Only the parsed file and
    * view-only drafts live here: the file's path is what gets persisted
@@ -1028,6 +1045,7 @@ export function activate(context: vscode.ExtensionContext) {
       freeSpotlight: freeSpotlightState,
       freeBar: bar,
       watchlistAlerts,
+      newModels: pendingNewModels,
       exportNote: exportNote || undefined,
     };
     if (comparison?.enabled) {
@@ -1141,6 +1159,83 @@ export function activate(context: vscode.ExtensionContext) {
       [...new Set(needed)].map((source) => discoverSource(source)),
     );
     render();
+  };
+  /**
+   * Diff a source's discovered models against its seen set and, for anything
+   * new, compare it with the models already known (cached benchmarks only, a
+   * fixed general/1,000+1,000 basis so the result never depends on panel
+   * edits). Serialized so a startup pass and a model-change event cannot race
+   * on the seen set. The first sighting of a source only seeds it.
+   */
+  let newModelsQueue: Promise<void> = Promise.resolve();
+  const checkNewModels = (checked: ("copilot" | "opencode")[]): Promise<void> => {
+    newModelsQueue = newModelsQueue
+      .then(async () => {
+        const fresh: NewModelEntry[] = [];
+        let benchmarks = snapshot;
+        if (!benchmarks) {
+          try {
+            benchmarks = await service.cached();
+          } catch {
+            benchmarks = undefined;
+          }
+        }
+        for (const source of checked) {
+          const list = availableBySource[source];
+          const diff = diffSeen(
+            seenModels[source],
+            list.map((m) => m.id),
+          );
+          if (!list.length) continue;
+          seenModels = { ...seenModels, [source]: diff.next };
+          if (!diff.newIds.length) continue;
+          const billing =
+            source === "opencode"
+              ? "usd"
+              : options.billing === "legacy"
+                ? "legacy"
+                : "credits";
+          const basis = {
+            ...defaults,
+            source,
+            billing,
+            plan: options.plan,
+          } as Options;
+          const rows = compare(list, benchmarks?.models ?? [], basis, overrides, undefined, {
+            byok,
+          });
+          fresh.push(
+            ...newModelEntries(source, rows, list, diff.newIds, costUnit(billing)),
+          );
+        }
+        await context.globalState.update("seenModels", seenModels);
+        if (!fresh.length) return;
+        const report = mergeReports(pendingNewModels, {
+          detectedAt: Date.now(),
+          benchmarkVersion: benchmarks?.version ?? null,
+          entries: fresh,
+        });
+        pendingNewModels = report;
+        await context.globalState.update("newModelsPending", report);
+        render();
+        // A panel showing a historical snapshot must not be steered to live data.
+        if (imported) return;
+        void Promise.resolve(
+          vscode.window.showInformationMessage(
+            summarizeNewModels({ ...report, entries: fresh }),
+            "Open comparison",
+          ),
+        ).then((action) => {
+          if (action === "Open comparison")
+            void vscode.commands.executeCommand("paretoGhc.open");
+        });
+      })
+      .catch(() => undefined);
+    return newModelsQueue;
+  };
+  const startupNewModelsCheck = async () => {
+    await Promise.all([discoverSource("copilot"), discoverSource("opencode")]);
+    await checkNewModels(["copilot", "opencode"]);
   };
   const refresh = async (force = false) => {
     if (loading) return;
@@ -1986,6 +2081,10 @@ export function activate(context: vscode.ExtensionContext) {
                 watchlistAlerts,
               );
               render();
+            } else if (m.type === "dismissNewModels") {
+              pendingNewModels = undefined;
+              await context.globalState.update("newModelsPending", undefined);
+              render();
             } else if (m.type === "byok") {
               // Manual whole-store save from the BYOK form; the message is
               // already validated to manual-only provenance (parseByokFormStore).
@@ -2274,16 +2373,21 @@ export function activate(context: vscode.ExtensionContext) {
       await reopenStoredSnapshot();
     }),
     vscode.lm.onDidChangeChatModels(() => {
-      if (
+      const panelNeeds =
         panel &&
         (options.source === "copilot" ||
           (comparison?.enabled &&
             Object.values(comparison.sides).some(
               (s) => s.options.source === "copilot",
-            )))
-      )
-        void discoverSource("copilot", true);
+            )));
+      const notify = readSettings().newModelsNotify.value;
+      if (panelNeeds || notify)
+        void discoverSource("copilot", true).then(() =>
+          notify ? checkNewModels(["copilot"]) : undefined,
+        );
     }),
   );
+  // Startup pass: announce models that appeared since the last session.
+  if (readSettings().newModelsNotify.value) void startupNewModelsCheck();
 }
 export function deactivate() {}

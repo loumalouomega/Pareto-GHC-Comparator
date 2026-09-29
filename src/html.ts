@@ -11,6 +11,12 @@ export function html(
   <nav class="tabs" role="tablist" aria-label="Sections"><button id="tab-compare" class="tab" role="tab" aria-selected="true" aria-controls="panel-compare"><span class="emoji" aria-hidden="true">📊</span>Tool analysis</button><button id="tab-tools" class="tab" role="tab" aria-selected="false" aria-controls="panel-tools" tabindex="-1"><span class="emoji" aria-hidden="true">⚖️</span>Compare tools</button><button id="tab-plan" class="tab" role="tab" aria-selected="false" aria-controls="panel-plan" tabindex="-1"><span class="emoji" aria-hidden="true">💰</span>Plan &amp; budget</button><button id="tab-usage" class="tab" role="tab" aria-selected="false" aria-controls="panel-usage" tabindex="-1"><span class="emoji" aria-hidden="true">📈</span>Usage</button><button id="tab-settings" class="tab" role="tab" aria-selected="false" aria-controls="panel-settings" tabindex="-1"><span class="emoji" aria-hidden="true">⚙️</span>Settings</button></nav></header>
  <main>
   <p id="status" role="status" aria-live="polite"></p>
+ <section id="new-models-banner" class="card new-models-banner" aria-labelledby="new-models-title" role="status" hidden>
+  <h2 id="new-models-title"><span class="emoji" aria-hidden="true">🆕</span> New models available</h2>
+  <p id="new-models-detail" class="hint"></p>
+  <ul id="new-models-list"></ul>
+  <div class="controls"><button id="new-models-dismiss" class="secondary">Dismiss</button></div>
+ </section>
  <section id="snapshot-banner" class="card snapshot-banner" aria-labelledby="snapshot-title" role="status" hidden>
   <h2 id="snapshot-title"><span class="emoji" aria-hidden="true">🧾</span> Historical snapshot — read-only</h2>
   <p id="snapshot-detail"></p>

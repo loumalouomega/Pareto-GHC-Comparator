@@ -4,6 +4,7 @@ import type {
   Billing,
   ChecklistFamily,
   ImportedMeta,
+  NewModelsReport,
   Options,
   Row,
   ScenarioHistory,
@@ -57,6 +58,7 @@ const send = (type: HostMessage["type"], extra: Record<string, unknown> = {}) =>
       "comparison",
       "target",
       "watchlistAlerts",
+      "dismissNewModels",
       // Leaving or replacing a historical snapshot is a view-level action,
       // never an edit to one side of a comparison.
       "importSnapshot",
@@ -3097,6 +3099,7 @@ function render(next: ViewState) {
   (el("only-mine") as HTMLInputElement).checked = state.options.onlyMine;
   (el("watchlist-alerts") as HTMLInputElement).checked =
     state.watchlistAlerts;
+  renderNewModels(state.imported ? undefined : state.newModels);
   const usageSummary = state.usage;
   const prefill = el("usage-prefill") as HTMLButtonElement;
   prefill.disabled = !usageSummary || usageSummary.medianSample === 0;
@@ -3632,6 +3635,45 @@ el("custom-clear").onclick = () => {
   renderDetails();
   renderCustom();
 };
+el("new-models-dismiss").onclick = () => send("dismissNewModels");
+/** Banner for models that appeared since they were last seen. Rows come from
+ * the host's report; scores are shown only when known, never invented. */
+function renderNewModels(report: NewModelsReport | undefined) {
+  el("new-models-banner").hidden = !report;
+  const list = el("new-models-list");
+  list.replaceChildren();
+  if (!report) return;
+  const freeCount = report.entries.filter((e) => e.free).length;
+  el("new-models-detail").textContent =
+    `Detected ${new Date(report.detectedAt).toLocaleString()}. ` +
+    (report.benchmarkVersion
+      ? `Compared with models already known on the same source using benchmark data ${report.benchmarkVersion} (general preset, 1,000 in + 1,000 out tokens). `
+      : "No cached benchmark data, so no scores are available yet. ") +
+    (freeCount
+      ? `${freeCount} new free OpenCode model${freeCount === 1 ? "" : "s"} highlighted.`
+      : "");
+  for (const e of report.entries) {
+    const item = document.createElement("li");
+    if (e.free) item.className = "new-model-free";
+    item.append(text("strong", e.name));
+    if (e.free) item.append(" ", text("span", "FREE", "badge"));
+    const parts: string[] = [e.source === "opencode" ? "OpenCode" : "Copilot"];
+    if (e.score === null) parts.push("no benchmark score yet");
+    else {
+      parts.push(`index ${e.score.toFixed(1)}`);
+      if (e.rank !== null) parts.push(`rank ${e.rank} of ${e.scored}`);
+      if (e.deltaBest !== null)
+        parts.push(`${e.deltaBest >= 0 ? "+" : "−"}${Math.abs(e.deltaBest).toFixed(1)} vs best existing`);
+      if (e.deltaMedian !== null)
+        parts.push(`${e.deltaMedian >= 0 ? "+" : "−"}${Math.abs(e.deltaMedian).toFixed(1)} vs median existing`);
+    }
+    if (e.free) parts.push("cost 0");
+    else if (e.cost !== null) parts.push(`${e.cost.toLocaleString(undefined, { maximumSignificantDigits: 4 })} ${e.unit}`);
+    if (e.frontier) parts.push("on the Pareto frontier");
+    item.append(` — ${parts.join(" · ")}`);
+    list.append(item);
+  }
+}
 // Global opt-in, sent immediately (not through the debounced options flow)
 // and never wrapped to a comparison side (see send above).
 el("watchlist-alerts").addEventListener("change", () => {

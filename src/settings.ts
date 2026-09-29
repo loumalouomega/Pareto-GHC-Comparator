@@ -19,6 +19,8 @@ export interface ResolvedSettings {
   retentionDays: SettingValue<number | undefined>;
   /** Default chart cost basis for views without a saved chart choice. */
   chartView: SettingValue<ChartType>;
+  /** Announce newly available Copilot/OpenCode models at startup. Default on. */
+  newModelsNotify: SettingValue<boolean>;
 }
 export interface ConfigurationFacade {
   get(key: string): unknown;
@@ -97,7 +99,14 @@ export function resolveSettings(
   const chartExplicit =
     isConfigured(facade, "chart.defaultView") &&
     (chartRaw === "task" || chartRaw === "workload");
+  const notifyRaw = facade.get("newModels.notify");
+  const notifyExplicit =
+    isConfigured(facade, "newModels.notify") && typeof notifyRaw === "boolean";
   return {
+    newModelsNotify: {
+      configured: notifyExplicit,
+      value: notifyExplicit ? (notifyRaw as boolean) : true,
+    },
     watchOnScan: {
       configured: watchExplicit,
       value: watchExplicit ? (watchRaw as boolean) : true,

@@ -21,6 +21,7 @@ const facade = (
 test("unconfigured settings leave every stored value in charge", () => {
   const resolved = resolveSettings(facade({}));
   assert.deepEqual(resolved, {
+    newModelsNotify: { configured: false, value: true },
     watchOnScan: { configured: false, value: true },
     retentionDays: { configured: false, value: undefined },
     chartView: { configured: false, value: "task" },
@@ -87,5 +88,20 @@ test("stored chart detection only trusts explicit task/workload choices", () => 
   assert.equal(
     storedChartView({ display: { chart: "workload" } }),
     "workload",
+  );
+});
+
+test("new-model notification defaults on and honours an explicit boolean only", () => {
+  assert.deepEqual(resolveSettings(facade({})).newModelsNotify, {
+    configured: false,
+    value: true,
+  });
+  assert.deepEqual(
+    resolveSettings(facade({ "newModels.notify": false })).newModelsNotify,
+    { configured: true, value: false },
+  );
+  assert.deepEqual(
+    resolveSettings(facade({ "newModels.notify": "no" })).newModelsNotify,
+    { configured: false, value: true },
   );
 });
