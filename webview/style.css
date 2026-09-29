@@ -186,6 +186,37 @@ aside {
   position: relative;
   height: 200px;
 }
+#raw-bar-chart-wrap {
+  position: relative;
+  height: 200px;
+}
+#raw-bar-wrap {
+  margin-top: 18px;
+}
+#changelog-card {
+  margin-top: 18px;
+}
+#changelog-list {
+  padding-left: 18px;
+}
+.changelog-inview {
+  color: var(--vscode-textLink-foreground, #80b6ff);
+  font-weight: 600;
+}
+#ladder-card {
+  margin-bottom: 18px;
+}
+.ladder-pick {
+  background: none;
+  color: var(--vscode-textLink-foreground, #80b6ff);
+  padding: 0;
+  text-align: left;
+  min-height: 26px;
+}
+.ladder-pick:hover {
+  background: none;
+  text-decoration: underline;
+}
 #custom-card {
   margin-top: 18px;
 }

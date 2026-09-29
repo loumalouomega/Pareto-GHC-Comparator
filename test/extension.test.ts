@@ -418,6 +418,21 @@ test("extension discovers Copilot models, serves cached data, validates messages
   await receiver({ type: "watchlistAlerts", enabled: true });
   await receiver({ type: "refresh" });
   assert.equal(watchInfos().length, 1);
+  // Benchmark changelog: each real download that transitions from a valid
+  // previous snapshot appends one entry (newest first); a download whose
+  // scores did not move appends nothing. The stubbed fetch above is the
+  // download path, so this exercises the same writer failures never reach.
+  const log = () => last().changelog as any[];
+  assert.equal(log().length, 2);
+  assert.equal(log()[0].version, "4.4");
+  assert.deepEqual(
+    log()[0].changed.map((c: any) => [c.id, c.fields[0].field, c.fields[0].from, c.fields[0].to]),
+    [["aa", "general", 32, 33]],
+  );
+  assert.equal(log()[1].rebased, true);
+  assert.ok(writes.includes("/cache/benchmarks.changelog.json") || storageFiles.has("/cache/benchmarks.changelog.json"));
+  await receiver({ type: "refresh" });
+  assert.equal(log().length, 2);
   // New-model announcements: the startup pass only seeded the baseline, so
   // nothing was announced; a model appearing later is announced once with a
   // banner in the view state until dismissed.

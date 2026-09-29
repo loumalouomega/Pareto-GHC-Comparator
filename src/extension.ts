@@ -11,6 +11,12 @@ import {
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { BenchmarkService, ApiError, cacheTtl, validSnapshot } from "./api";
+import {
+  appendChangelog,
+  changelogViewCap,
+  diffSnapshots,
+  loadChangelog,
+} from "./changelog";
 import { driftOf, selectPrevSnapshot } from "./drift";
 import { catalogDate } from "./catalog";
 import { invocableRef } from "./invocable";
@@ -94,6 +100,7 @@ import type {
   HostMessage,
   NewModelEntry,
   Options,
+  ChangelogEntry,
   Snapshot,
   Source,
   UsageSourceView,
@@ -123,6 +130,10 @@ export function activate(context: vscode.ExtensionContext) {
   const prevCacheUri = vscode.Uri.joinPath(
     context.globalStorageUri,
     "benchmarks.prev.json",
+  );
+  const changelogUri = vscode.Uri.joinPath(
+    context.globalStorageUri,
+    "benchmarks.changelog.json",
   );
   const writeSnapshotFile = async (
     uri: ReturnType<typeof vscode.Uri.joinPath>,
@@ -155,23 +166,52 @@ export function activate(context: vscode.ExtensionContext) {
     write: async (value) => {
       // Rotate only on validated download success: the previous cache becomes
       // the drift baseline. Failures never reach this writer.
+      let replaced: Snapshot | undefined;
       try {
         const raw = JSON.parse(
           Buffer.from(await vscode.workspace.fs.readFile(cacheUri)).toString(),
         );
-        if (validSnapshot(raw) && raw.fetchedAt !== value.fetchedAt)
+        if (validSnapshot(raw) && raw.fetchedAt !== value.fetchedAt) {
           await writeSnapshotFile(prevCacheUri, raw);
+          replaced = raw;
+        }
       } catch {
         // No previous cache yet; nothing to retain.
       }
       await writeSnapshotFile(cacheUri, value);
+      // Best-effort benchmark changelog, only for a real transition from a
+      // validated previous snapshot. It can never fail or undo the refresh.
+      if (replaced) {
+        try {
+          const entry = diffSnapshots(replaced, value);
+          const existing = await readChangelog();
+          const next = appendChangelog(existing, entry);
+          if (next !== existing) await writeSnapshotFile(changelogUri, next);
+        } catch {
+          // A missing or unwritable log leaves the snapshot refresh intact.
+        }
+      }
     },
   });
   service.retryAt = context.globalState.get<number>("retryAt", 0);
   let panel: vscode.WebviewPanel | undefined,
     snapshot: Snapshot | undefined,
     prevSnapshot: Snapshot | undefined,
+    changelog: ChangelogEntry[] = [],
     options = savedOptions(context.globalState.get("options"));
+  const readChangelog = async () => {
+    try {
+      return loadChangelog(
+        JSON.parse(
+          Buffer.from(
+            await vscode.workspace.fs.readFile(changelogUri),
+          ).toString(),
+        ),
+      );
+    } catch {
+      return [];
+    }
+  };
   const readPrevSnapshot = async (): Promise<Snapshot | undefined> => {
     if (!snapshot) return undefined;
     try {
@@ -1022,6 +1062,7 @@ export function activate(context: vscode.ExtensionContext) {
       prevVersion: prevSnapshot?.version,
       prevFetchedAt: prevSnapshot?.fetchedAt,
       drift: driftOf(prevSnapshot, snapshot?.models ?? [], options.preset),
+      changelog: changelog.slice(0, changelogViewCap),
       byok,
       usage,
       claudeUsage,
@@ -1042,6 +1083,7 @@ export function activate(context: vscode.ExtensionContext) {
       scenarioPrefill: historyScenarioPrefill(usage),
       checklist,
       groups,
+      makers: result.makers,
       freeSpotlight: freeSpotlightState,
       freeBar: bar,
       watchlistAlerts,
@@ -1255,6 +1297,7 @@ export function activate(context: vscode.ExtensionContext) {
       hasKey = !!key;
       snapshot = await service.load(key, force);
       prevSnapshot = await readPrevSnapshot();
+      changelog = await readChangelog();
       message =
         Date.now() - snapshot.fetchedAt >= cacheTtl
           ? "Using a cached snapshot older than 24 hours. Refresh data to update."

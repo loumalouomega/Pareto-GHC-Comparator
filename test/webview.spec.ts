@@ -7,7 +7,12 @@ import {
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { html } from "../src/html";
-import { compare, freeBar, registryRateFor } from "../src/compare";
+import {
+  compare,
+  freeBar,
+  registryRateFor,
+  withoutViewFilters,
+} from "../src/compare";
 import {
   exportPairSnapshot,
   exportSnapshot,
@@ -577,6 +582,32 @@ for (const theme of ["light", "dark", "high-contrast"])
           mini: { prevScore: 20, delta: 10, noisy: false },
         };
       }
+      // Test-only branch for the optional AA measurements and the benchmark
+      // changelog: give two benchmarks speed/cost data and install a log
+      // with one entry touching a benchmark that is in view.
+      if (m.type === "__aaExtras") {
+        state.models = state.models.map((b) =>
+          b.id === "gpt"
+            ? { ...b, tokensPerSecond: 88.5, ttftSeconds: 0.42, costPerTask: 1.25 }
+            : b.id === "mini"
+              ? { ...b, tokensPerSecond: 120 }
+              : b,
+        );
+        state.changelog = [
+          {
+            at: Date.parse("2026-09-20T00:00:00Z"),
+            version: "4.4",
+            prevVersion: "4.3",
+            rebased: false,
+            added: [{ id: "new-1", name: "Brand New AA Model", provider: "X", general: 61 }],
+            removed: [],
+            changed: [
+              { id: "gpt", name: "GPT-5.4 (xhigh)", provider: "OpenAI", fields: [{ field: "general", from: 44, to: 48 }] },
+            ],
+            omitted: { added: 0, removed: 0, changed: 0 },
+          },
+        ];
+      }
       if (m.type === "watchlistAlerts") state.watchlistAlerts = m.enabled;
       // Test-only branch: install a pending new-models report; the real
       // dismiss message clears it like the host does.
@@ -675,9 +706,10 @@ for (const theme of ["light", "dark", "high-contrast"])
       const structure = compare(
         listed,
         state.models,
-        { ...state.options, filter: "", onlyMine: false, freeOnly: false },
+        { ...withoutViewFilters(state.options), filter: "" },
         mappings,
       );
+      state.makers = [...new Set(structure.map((r) => r.provider))].sort();
       state.groups = buildGroups(
         listed as never,
         [...excluded],
@@ -1674,6 +1706,37 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#details")).toContainText(
       "no per-model confidence interval",
     );
+    // AA measurements: without any speed data the columns stay hidden and the
+    // changelog says nothing has been recorded; with it, the columns show
+    // per-row values (a dash where a row has none), details cite AA's own
+    // cost per task as not used here, and the log marks entries in view.
+    await expect(page.locator("#tps-heading")).toBeHidden();
+    await expect(page.locator("#changelog-empty")).toContainText(
+      "No changes recorded yet",
+    );
+    await page.evaluate(() => (window as any).hostMessage({ type: "__aaExtras" }));
+    await expect(page.locator("#tps-heading")).toBeVisible();
+    await expect(page.locator("#ttft-heading")).toBeVisible();
+    await expect(page.locator("#rows")).toContainText("88.5");
+    await expect(page.locator("#rows")).toContainText("0.42");
+    await expect(page.locator("#rows")).toContainText("120");
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await expect(page.locator("#details")).toContainText(
+      "Speed (Artificial Analysis median): 88.5 tokens/s · 0.42 s to first token",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "cost per Intelligence Index task: $1.25",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "not used for any cost shown here",
+    );
+    await page.locator("#changelog-details summary").click();
+    await expect(page.locator("#changelog-list > li")).toHaveCount(1);
+    await expect(page.locator("#changelog-list")).toContainText("v4.3 → v4.4");
+    await expect(page.locator("#changelog-list")).toContainText("1 added, 0 removed, 1 re-scored");
+    await expect(page.locator("#changelog-list")).toContainText("General 44 → 48 · in your view");
+    await expect(page.locator("#changelog-list")).toContainText("+ Brand New AA Model (general 61)");
+    await expect(page.locator(".changelog-inview")).toContainText("1 in your current view");
     // Workload sensitivity: breakpoint ranges recomputed from the current
     // tokens, labelled as a what-if sweep — never measured history.
     await page.locator("#input").fill("1000");
@@ -1693,6 +1756,84 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#filter").fill("");
     await expect(page.locator("#sensitivity-rows tr")).not.toHaveCount(0);
+    // Raw capability bar: every source, score-only ranking of the displayed
+    // rows with a frontier marker that does not depend on colour; hidden
+    // with fewer than two scored rows.
+    await expect(page.locator("#raw-bar-wrap")).toBeVisible();
+    await expect(page.locator("#raw-bar-title")).toHaveText(
+      "Raw capability · General index",
+    );
+    const rawItems = await page.locator("#raw-bar-list li").allTextContents();
+    expect(rawItems.length).toBeGreaterThanOrEqual(2);
+    for (const item of rawItems) expect(item).toMatch(/: [\d.]+ points/);
+    expect(rawItems.some((item) => item.endsWith("· Pareto frontier"))).toBe(
+      true,
+    );
+    await expect(page.locator("#raw-bar")).toHaveAttribute(
+      "aria-label",
+      /displayed models ranked by general score, ignoring cost/,
+    );
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await expect(page.locator("#raw-bar-wrap")).toBeHidden();
+    await page.locator("#filter").fill("");
+    await expect(page.locator("#raw-bar-wrap")).toBeVisible();
+    // Budget ladder: the frontier as a lookup table on the Plan & budget
+    // tab; picking a name selects that row, and an empty view says why.
+    await openTab("Plan & budget");
+    await expect(page.locator("#ladder-rows tr")).not.toHaveCount(0);
+    await expect(page.locator("#ladder-note")).toContainText("budget band");
+    await expect(page.locator("#ladder-budget-heading")).toContainText(
+      "Budget (",
+    );
+    await openTab("Tool analysis");
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await openTab("Plan & budget");
+    await expect(page.locator("#ladder-rows tr")).toHaveCount(0);
+    await expect(page.locator("#ladder-note")).toContainText(
+      "No comparable models",
+    );
+    await openTab("Tool analysis");
+    await page.locator("#filter").fill("");
+    await openTab("Plan & budget");
+    await expect(page.locator("#ladder-rows tr")).not.toHaveCount(0);
+    await openTab("Tool analysis");
+    // View filters (Settings tab): maker, score floor and one-row-per-model
+    // narrow the rows before the frontier, and clear back to the full view.
+    const rowCount = await page.locator("#rows tr").count();
+    expect(rowCount).toBeGreaterThan(2);
+    await openTab("Settings");
+    await expect(page.locator("#display-maker option")).not.toHaveCount(1);
+    const makerNames = await page
+      .locator("#display-maker option")
+      .allTextContents();
+    expect(makerNames[0]).toBe("All makers");
+    await page.locator("#display-maker").selectOption(makerNames[1]);
+    await openTab("Tool analysis");
+    await expect
+      .poll(async () => page.locator("#rows tr").count())
+      .toBeLessThan(rowCount);
+    await openTab("Settings");
+    await page.locator("#display-maker").selectOption("");
+    await page.locator("#display-min-score").fill("60");
+    await expect(page.locator("#display-min-score-value")).toHaveText("60");
+    await openTab("Tool analysis");
+    // Only rows with an unknown score survive a floor above every score:
+    // they stay visible with their reasons rather than vanishing.
+    await expect
+      .poll(async () => page.locator("#rows tr").count())
+      .toBeLessThan(rowCount);
+    await openTab("Settings");
+    await page.locator("#display-min-score").fill("0");
+    await expect(page.locator("#display-min-score-value")).toHaveText("Off");
+    await page.locator("#display-collapse").check();
+    await openTab("Tool analysis");
+    await expect
+      .poll(async () => page.locator("#rows tr").count())
+      .toBeLessThanOrEqual(rowCount);
+    await openTab("Settings");
+    await page.locator("#display-collapse").uncheck();
+    await openTab("Tool analysis");
+    await expect(page.locator("#rows tr")).toHaveCount(rowCount);
     // Watchlist opt-in: the Settings checkbox posts the toggle the host
     // validates (never wrapped to a comparison side — see send()).
     await openTab("Settings");
@@ -1893,6 +2034,10 @@ test("an imported snapshot renders read-only with its own provenance", async ({
   await expect(page.locator("#output")).toBeDisabled();
   await expect(page.locator("#display-scale")).toBeEnabled();
   await expect(page.locator("#display-sort")).toBeEnabled();
+  // The view filters would change which recorded rows count as the frontier,
+  // which a snapshot cannot recompute, so they are locked while it shows.
+  for (const id of ["display-maker", "display-min-score", "display-collapse"])
+    await expect(page.locator(`#${id}`)).toBeDisabled();
   await expect(page.locator("#filter")).toHaveValue("", { timeout: 5000 });
   // The exported rows, dates, and version replace the live ones.
   await expect(page.locator("#count")).toContainText("plotted");
@@ -1900,6 +2045,9 @@ test("an imported snapshot renders read-only with its own provenance", async ({
     "Catalog dated 2026-01-05",
   );
   await expect(page.locator("#provenance")).toContainText("Index v4.0");
+  // A snapshot never shows the live benchmark changelog or speed columns.
+  await expect(page.locator("#changelog-card")).toBeHidden();
+  await expect(page.locator("#tps-heading")).toBeHidden();
   // The sensitivity card explains itself instead of sweeping a snapshot.
   await expect(page.locator("#sensitivity-note")).toContainText(
     "Unavailable for an imported snapshot",

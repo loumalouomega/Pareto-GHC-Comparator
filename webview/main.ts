@@ -17,6 +17,8 @@ import type { Side, OverlayResult, OverlayRow } from "../src/comparison";
 import { sources } from "../src/sources";
 import { costUnit, formatClaudeSchemaFingerprint, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
+import { budgetLadder, rawCapability } from "../src/value";
+import { affectedIds } from "../src/changelog";
 import {
   compressBreakpoints,
   sensitivityFallbackTotal,
@@ -125,9 +127,13 @@ const color = (provider: string): string => {
 let state: ViewState | undefined,
   chart: Chart<"scatter"> | undefined,
   freeBarChart: Chart<"bar"> | undefined,
+  rawBarChart: Chart<"bar"> | undefined,
   customChart: Chart<"bar"> | undefined,
   initialized = false;
 let appliedRevision = -1;
+/** Raw-capability bar: collapsed to the top entries until the user asks for all. */
+const rawBarDefaultLimit = 15;
+let rawBarShowAll = false;
 let budgetDraft: Record<Billing, number> = { credits: 1, legacy: 1, usd: 1 };
 let displayedBilling: Billing = "credits";
 const unitNoun = (billing: Billing) =>
@@ -796,6 +802,252 @@ function drawFreeBar() {
     },
   });
 }
+/** Raw-capability bar below the Pareto chart: the displayed models ranked by
+ * score alone, ignoring cost, for every source. Derived client-side from the
+ * rows on screen (`rawCapability`), so an imported snapshot gets it too. A ★
+ * marks the Pareto frontier so it never depends on colour. */
+function drawRawBar() {
+  if (!state) return;
+  const ranking = rawCapability(
+    state.rows,
+    rawBarShowAll ? undefined : rawBarDefaultLimit,
+  );
+  const entries = ranking.entries;
+  const show = ranking.total >= 2;
+  el("raw-bar-wrap").hidden = !show;
+  const list = el("raw-bar-list");
+  list.replaceChildren();
+  rawBarChart?.destroy();
+  rawBarChart = undefined;
+  const more = el<HTMLButtonElement>("raw-bar-more");
+  more.hidden = !show || ranking.total <= rawBarDefaultLimit;
+  more.textContent = rawBarShowAll
+    ? "Show fewer"
+    : `Show all ${ranking.total}`;
+  more.onclick = () => {
+    rawBarShowAll = !rawBarShowAll;
+    drawRawBar();
+  };
+  if (!show) return;
+  const presetName =
+    state.options.preset[0].toUpperCase() + state.options.preset.slice(1);
+  el("raw-bar-title").textContent = `Raw capability · ${presetName} index`;
+  el("raw-bar").setAttribute(
+    "aria-label",
+    `${entries.length} of ${ranking.total} displayed models ranked by ${state.options.preset} score, ignoring cost. The list below provides all values and model selection.`,
+  );
+  const byId = new Map(state.rows.map((r) => [r.id, r]));
+  const label = (e: (typeof entries)[number]) =>
+    `${e.frontier ? "★ " : ""}${e.name}`;
+  for (const e of entries) {
+    const li = document.createElement("li");
+    li.textContent = `${e.name}: ${format(e.score)} points${e.frontier ? " · Pareto frontier" : ""}`;
+    list.append(li);
+  }
+  el("raw-bar-chart-wrap").style.height = `${Math.max(120, entries.length * 30 + 48)}px`;
+  const foreground = getComputedStyle(document.body).color;
+  const grid =
+    getComputedStyle(document.body)
+      .getPropertyValue("--vscode-panel-border")
+      .trim() || "#88888833";
+  const fill = (id: string) => {
+    const row = byId.get(id);
+    return row ? colorForRow(row) : color("Unknown");
+  };
+  rawBarChart = new Chart(el<HTMLCanvasElement>("raw-bar"), {
+    type: "bar",
+    data: {
+      labels: entries.map(label),
+      datasets: [
+        {
+          label: "Score",
+          data: entries.map((e) => e.score),
+          backgroundColor: entries.map((e) => fill(e.id)),
+          borderWidth: entries.map((e) => (e.id === state!.selected ? 3 : 1)),
+          borderColor: entries.map((e) =>
+            e.id === state!.selected ? foreground : fill(e.id),
+          ),
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const e = entries[item.dataIndex];
+              return `${e.name}: ${format(e.score)} points${e.frontier ? " · Pareto frontier" : ""}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: `${presetName} index · higher is better`,
+            color: foreground,
+          },
+          ticks: { color: foreground },
+          grid: { color: grid },
+        },
+        y: {
+          ticks: { color: foreground, autoSkip: false },
+          grid: { display: false },
+        },
+      },
+      onClick: (_, elements) => {
+        const hit = elements[0];
+        if (hit) send("select", { id: entries[hit.index].id });
+      },
+    },
+  });
+}
+/** Budget ladder: the Pareto frontier as a lookup table, one band per
+ * frontier point. Derived client-side from the displayed rows in their own
+ * native cost unit (`budgetLadder`); its picks match the budget-mode
+ * recommendation at each band's lower bound. */
+function renderChangelog() {
+  if (!state) return;
+  const card = el("changelog-card");
+  const entries = state.imported ? [] : (state.changelog ?? []);
+  card.hidden = !!state.imported;
+  const list = el("changelog-list");
+  list.replaceChildren();
+  el("changelog-empty").textContent = entries.length
+    ? ""
+    : "No changes recorded yet. Entries appear after a refresh downloads a snapshot that differs from the previous one.";
+  const inView = new Set(
+    state.rows.flatMap((r) => (r.benchmark ? [r.benchmark.id] : [])),
+  );
+  const fieldLabel: Record<string, string> = {
+    general: "General",
+    coding: "Coding",
+    agentic: "Agentic",
+    costPerTask: "AA cost per task",
+  };
+  const lineCap = 8;
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    const touched = affectedIds(entry, inView);
+    li.append(
+      text(
+        "strong",
+        `${new Date(entry.at).toLocaleDateString()} · v${entry.prevVersion}${entry.version === entry.prevVersion ? "" : ` → v${entry.version}`}`,
+      ),
+      document.createTextNode(
+        ` · ${entry.added.length} added, ${entry.removed.length} removed, ${entry.changed.length} re-scored`,
+      ),
+    );
+    if (touched.length)
+      li.append(
+        text(
+          "span",
+          ` · ${touched.length} in your current view`,
+          "changelog-inview",
+        ),
+      );
+    if (entry.rebased)
+      li.append(
+        text(
+          "p",
+          "The Intelligence Index version changed, so scores are on a different scale and score changes are not listed.",
+          "hint",
+        ),
+      );
+    const lines: string[] = [];
+    const mark = (id: string) => (inView.has(id) ? " · in your view" : "");
+    for (const c of entry.changed)
+      lines.push(
+        `${c.name}: ${c.fields.map((f) => `${fieldLabel[f.field]} ${format(f.from)} → ${format(f.to)}`).join(", ")}${mark(c.id)}`,
+      );
+    for (const m of entry.added)
+      lines.push(`+ ${m.name}${m.general !== null ? ` (general ${format(m.general)})` : ""}${mark(m.id)}`);
+    for (const m of entry.removed) lines.push(`− ${m.name}${mark(m.id)}`);
+    if (lines.length) {
+      const inner = document.createElement("ul");
+      for (const line of lines.slice(0, lineCap))
+        inner.append(text("li", line));
+      const hidden =
+        Math.max(0, lines.length - lineCap) +
+        entry.omitted.added +
+        entry.omitted.removed +
+        entry.omitted.changed;
+      if (hidden > 0)
+        inner.append(text("li", `…and ${hidden} more`, "hint"));
+      li.append(inner);
+    }
+    list.append(li);
+  }
+}
+function renderLadder() {
+  if (!state) return;
+  const body = el("ladder-rows");
+  const note = el("ladder-note");
+  body.replaceChildren();
+  const unit = costUnit(state.options.billing);
+  const costLabel =
+    unit === "premium requests"
+      ? "Requests"
+      : state.options.display.chart === "task"
+        ? `${unit} / task`
+        : unit;
+  el("ladder-budget-heading").textContent = `Budget (${costLabel})`;
+  el("ladder-cost-heading").textContent = costLabel;
+  const tiers = budgetLadder(state.rows);
+  if (!tiers.length) {
+    note.textContent =
+      "No comparable models in the current view. Resolve missing benchmarks or prices to build the ladder.";
+    return;
+  }
+  note.textContent = `${tiers.length} budget band${tiers.length === 1 ? "" : "s"} along the frontier. Ranges are in ${costLabel}; estimates, not bills.`;
+  const pickButton = (m: { id: string; name: string }) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ladder-pick";
+    button.textContent = m.name;
+    button.onclick = () => send("select", { id: m.id });
+    return button;
+  };
+  for (const tier of tiers) {
+    const tr = document.createElement("tr");
+    const pick = document.createElement("td");
+    pick.append(pickButton(tier.pick));
+    if (tier.tied.length)
+      pick.append(
+        document.createTextNode(
+          ` (tied: ${tier.tied.map((t) => t.name).join(", ")})`,
+        ),
+      );
+    const runner = document.createElement("td");
+    if (tier.runnerUp) {
+      runner.append(
+        pickButton(tier.runnerUp),
+        document.createTextNode(
+          ` · ${format(tier.runnerUp.score)} pts at ${format(tier.runnerUp.cost)}`,
+        ),
+      );
+    } else runner.textContent = "—";
+    tr.append(
+      text(
+        "td",
+        tier.to === null
+          ? `${format(tier.from)} and up`
+          : `${format(tier.from)} to under ${format(tier.to)}`,
+      ),
+      pick,
+      text("td", format(tier.pick.score)),
+      text("td", format(tier.pick.cost)),
+      runner,
+    );
+    body.append(tr);
+  }
+}
 function toggleCustomPick(id: string, on: boolean) {
   const next = new Set(customPicks);
   if (on) {
@@ -1120,6 +1372,26 @@ function renderDetails() {
         text(
           "p",
           `${row.requests} local requests in the scanned history.`,
+          "hint",
+        ),
+      );
+    const measured = row.benchmark;
+    if (
+      measured.tokensPerSecond !== undefined ||
+      measured.ttftSeconds !== undefined
+    )
+      more.append(
+        text(
+          "p",
+          `Speed (Artificial Analysis median): ${measured.tokensPerSecond !== undefined ? `${format(measured.tokensPerSecond)} tokens/s` : "tokens/s unknown"} · ${measured.ttftSeconds !== undefined ? `${format(measured.ttftSeconds)} s to first token` : "time to first token unknown"}.`,
+          "hint",
+        ),
+      );
+    if (measured.costPerTask !== undefined)
+      more.append(
+        text(
+          "p",
+          `Artificial Analysis cost per Intelligence Index task: $${format(measured.costPerTask)} — measured on AA's own benchmark workload, not your usage, and not used for any cost shown here.`,
           "hint",
         ),
       );
@@ -2882,6 +3154,9 @@ const importedTab = (kind: "single" | "comparison"): SectionTab =>
   kind === "comparison" ? "tools" : "compare";
 const liveOnlyControls = [
   "source",
+  "display-maker",
+  "display-min-score",
+  "display-collapse",
   "preset",
   "billing",
   "plan",
@@ -2902,6 +3177,27 @@ const liveOnlyControls = [
   "export-png",
   "import-snapshot",
 ];
+/** Maker select, score floor and collapse toggle from the host's options.
+ * The maker list comes from every discovered model (ignoring these filters);
+ * a saved maker that is no longer offered stays selectable and is labelled,
+ * never silently dropped, so the empty view it produces can be explained. */
+function syncViewFilterControls() {
+  if (!state) return;
+  const display = state.options.display;
+  const select = el<HTMLSelectElement>("display-maker");
+  const makers = state.makers ?? [];
+  const wanted = display.maker;
+  select.replaceChildren(new Option("All makers", ""));
+  for (const maker of makers) select.append(new Option(maker, maker));
+  if (wanted && !makers.includes(wanted))
+    select.append(new Option(`${wanted} (not in this source)`, wanted));
+  select.value = wanted;
+  const range = el<HTMLInputElement>("display-min-score");
+  range.value = String(Math.min(display.minScore, Number(range.max)));
+  el("display-min-score-value").textContent =
+    display.minScore > 0 ? String(display.minScore) : "Off";
+  el<HTMLInputElement>("display-collapse").checked = display.collapse;
+}
 function renderImportedChrome(imported: ImportedMeta | undefined) {
   el("snapshot-banner").hidden = !imported;
   el("header-actions").hidden = !!imported;
@@ -3093,6 +3389,7 @@ function render(next: ViewState) {
   (el("display-sort") as HTMLSelectElement).value = state.options.display.sort;
   (el("display-quadrant") as HTMLInputElement).checked =
     state.options.display.quadrant;
+  syncViewFilterControls();
   (el("free-only-label") as HTMLElement).hidden =
     state.options.source !== "opencode";
   (el("free-only") as HTMLInputElement).checked = state.options.freeOnly;
@@ -3160,6 +3457,13 @@ function render(next: ViewState) {
       : state.options.display.chart === "task"
         ? `${unit} / task`
         : unit;
+  // Speed columns appear only when the loaded snapshot carries any speed
+  // measurement; a row without its own stays a dash, never an invented value.
+  const hasSpeed = state.models.some(
+    (m) => m.tokensPerSecond !== undefined || m.ttftSeconds !== undefined,
+  );
+  el("tps-heading").hidden = !hasSpeed;
+  el("ttft-heading").hidden = !hasSpeed;
   const body = el("rows");
   body.replaceChildren();
   for (const row of state.rows) {
@@ -3190,6 +3494,12 @@ function render(next: ViewState) {
       text("td", scoreText),
       text("td", format(row.cost)),
       text("td", format(efficiencyOf(row))),
+      ...(hasSpeed
+        ? [
+            text("td", format(row.benchmark?.tokensPerSecond ?? null)),
+            text("td", format(row.benchmark?.ttftSeconds ?? null)),
+          ]
+        : []),
       text(
         "td",
         comparisonCell(row, tableMedians),
@@ -3211,8 +3521,11 @@ function render(next: ViewState) {
   renderDetails();
   renderCustom();
   renderSensitivity();
+  renderLadder();
+  renderChangelog();
   drawChart();
   drawFreeBar();
+  drawRawBar();
   // Last, so it wins over the enabled state the renderers above set.
   renderImportedChrome(state.imported);
   if (focusedModel) {
@@ -3343,6 +3656,9 @@ function sendOptions(): boolean {
       quadrant: (el("display-quadrant") as HTMLInputElement).checked,
       sort: (el("display-sort") as HTMLSelectElement)
         .value as Options["display"]["sort"],
+      minScore: Number(el<HTMLInputElement>("display-min-score").value) || 0,
+      collapse: el<HTMLInputElement>("display-collapse").checked,
+      maker: el<HTMLSelectElement>("display-maker").value,
     },
     freeOnly: (el("free-only") as HTMLInputElement).checked,
     onlyMine: (el("only-mine") as HTMLInputElement).checked,
@@ -3425,6 +3741,9 @@ for (const id of [
   "display-quadrant",
   "display-scale",
   "display-sort",
+  "display-maker",
+  "display-min-score",
+  "display-collapse",
   "free-only",
   "only-mine",
   "scenario-plan",
@@ -3435,6 +3754,10 @@ for (const id of [
   "scenario-custom-overage",
 ]) {
   el(id).addEventListener("input", () => {
+    if (id === "display-min-score") {
+      const floor = Number(el<HTMLInputElement>(id).value);
+      el("display-min-score-value").textContent = floor > 0 ? String(floor) : "Off";
+    }
     if (id === "billing") {
       const current = el<HTMLInputElement>("budget");
       if (current.value && current.validity.valid)
@@ -3695,6 +4018,7 @@ el("export-png").onclick = () => {
     else {
       drawChart();
       drawFreeBar();
+      drawRawBar();
     }
   }
   try {
@@ -3764,6 +4088,7 @@ window.addEventListener("message", (event) => {
 new MutationObserver(() => {
   drawChart();
   drawFreeBar();
+  drawRawBar();
   renderComparison();
   renderCustom();
 }).observe(document.body, {
@@ -3788,6 +4113,7 @@ function showTab(tab: SectionTab, focus = false) {
   if (tab === "compare" && state) {
     drawChart();
     drawFreeBar();
+    drawRawBar();
     renderCustom();
   }
   if (tab === "tools" && state) renderComparison();

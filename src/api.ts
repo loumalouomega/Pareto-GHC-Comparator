@@ -11,6 +11,13 @@ const score = (v: unknown): v is number | null =>
 const validVersion = (v: unknown): boolean =>
   (typeof v === "number" || typeof v === "string") &&
   /^\d+(\.\d+)*$/.test(String(v));
+/**
+ * An optional AA measurement: a positive finite number, otherwise absent.
+ * Never throws — these fields are extras, and AA reports 0 (or omits the
+ * field) when a measurement has not run, which means unknown, not zero.
+ */
+const measurement = (v: unknown): number | undefined =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
 export function parsePage(value: unknown, expectedPage: number) {
   if (
     !object(value) ||
@@ -39,6 +46,14 @@ export function parsePage(value: unknown, expectedPage: number) {
       agentic = e.artificial_analysis_agentic_index ?? null;
     if (![general, coding, agentic].every(score))
       throw new Error("Invalid benchmark score.");
+    const costPerTask = measurement(
+      (
+        (raw.artificial_analysis_intelligence_index_cost as Record<string, unknown> | undefined)
+          ?.cost_per_task as Record<string, unknown> | undefined
+      )?.total_cost,
+    );
+    const tokensPerSecond = measurement(raw.median_output_tokens_per_second);
+    const ttftSeconds = measurement(raw.median_time_to_first_token_seconds);
     return {
       id: raw.id,
       slug: raw.slug,
@@ -49,6 +64,9 @@ export function parsePage(value: unknown, expectedPage: number) {
         coding: coding as number | null,
         agentic: agentic as number | null,
       },
+      ...(costPerTask !== undefined ? { costPerTask } : {}),
+      ...(tokensPerSecond !== undefined ? { tokensPerSecond } : {}),
+      ...(ttftSeconds !== undefined ? { ttftSeconds } : {}),
     };
   });
   return { version, models, hasMore: value.pagination.has_more };
@@ -72,7 +90,11 @@ export function validSnapshot(v: unknown): v is Snapshot {
         object(m.scores) &&
         ["general", "coding", "agentic"].every((k) =>
           score((m.scores as Record<string, unknown>)[k]),
-        ),
+        ) &&
+        ["costPerTask", "tokensPerSecond", "ttftSeconds"].every((k) => {
+          const v = (m as Record<string, unknown>)[k];
+          return v === undefined || v === null || (typeof v === "number" && Number.isFinite(v) && v >= 0);
+        }),
     ) &&
     new Set(v.models.map((m) => m.id)).size === v.models.length
   );

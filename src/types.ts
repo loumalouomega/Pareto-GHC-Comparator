@@ -27,6 +27,12 @@ export interface DisplaySettings {
   chart: ChartType;
   quadrant: boolean;
   sort: TableSort;
+  /** Hide rows whose known score is below this index value; 0 means off. Unknown scores stay visible with their reasons. */
+  minScore: number;
+  /** Keep only the best-scoring row per base model (thinking/effort variants collapse to one). */
+  collapse: boolean;
+  /** Show only rows whose benchmark maker equals this name; empty means all. Applied before the frontier, like the text filter. */
+  maker: string;
 }
 export interface Tokens {
   input: number;
@@ -156,6 +162,9 @@ export const defaults: Options = {
     chart: "task",
     quadrant: true,
     sort: "default",
+    minScore: 0,
+    collapse: false,
+    maker: "",
   },
   freeOnly: false,
   onlyMine: false,
@@ -174,6 +183,47 @@ export interface Benchmark {
   name: string;
   provider: string;
   scores: Record<Preset, number | null>;
+  /**
+   * Optional Artificial Analysis measurements, present only when the API
+   * returned a positive finite number: absent means unknown, never zero.
+   * `costPerTask` is AA's own weighted USD cost of one Intelligence Index
+   * task (their workload, not yours, and not a price this extension applies).
+   */
+  costPerTask?: number;
+  tokensPerSecond?: number;
+  ttftSeconds?: number;
+}
+
+/** A benchmark model as listed in a changelog entry. */
+export interface ChangelogModel {
+  id: string;
+  name: string;
+  provider: string;
+  general: number | null;
+}
+export type ChangelogField = Preset | "costPerTask";
+export interface ChangelogChange {
+  id: string;
+  name: string;
+  provider: string;
+  fields: { field: ChangelogField; from: number; to: number }[];
+}
+/**
+ * One refresh's difference between two benchmark snapshots. When the
+ * Intelligence Index version changed, scores are not comparable, so only
+ * membership changes are recorded (`rebased`).
+ */
+export interface ChangelogEntry {
+  /** Retrieval time of the newer snapshot; also the entry's identity. */
+  at: number;
+  version: string;
+  prevVersion: string;
+  rebased: boolean;
+  added: ChangelogModel[];
+  removed: ChangelogModel[];
+  changed: ChangelogChange[];
+  /** Entries dropped from each list by the per-list cap. */
+  omitted: { added: number; removed: number; changed: number };
 }
 export interface ScoreDrift {
   prevScore: number | null;
@@ -851,6 +901,10 @@ export interface ViewState {
   freeSpotlight: FreeSpotlight;
   /** Free-tier models with scores for the intelligence bar, sorted by score descending. Empty for non-OpenCode sources. */
   freeBar: FreeBarEntry[];
+  /** Newest-first benchmark changelog (capped); absent while a snapshot is imported. */
+  changelog?: ChangelogEntry[];
+  /** Distinct benchmark makers of every discovered model, ignoring display filters, for the Maker select. */
+  makers?: string[];
   /** Opt-in refresh notifications for pinned-model changes. Off by default. */
   watchlistAlerts: boolean;
   /** Models that newly appeared on Copilot/OpenCode since the last time they were seen, until dismissed. */
