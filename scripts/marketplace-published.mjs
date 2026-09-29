@@ -30,7 +30,11 @@ const ENDPOINT =
 export function queryBody(extensionId) {
   return {
     filters: [{ criteria: [{ filterType: 7, value: extensionId }] }],
-    flags: 914,
+    // 1 = IncludeVersions. The listing must return *every* version, not just
+    // the newest: with IncludeLatestVersionOnly (0x200, the bit 914 used to
+    // set) the response holds a single version, so re-checking any older
+    // release after a newer one shipped would report it as missing.
+    flags: 1,
   };
 }
 

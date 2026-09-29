@@ -42,6 +42,15 @@ test("gallery query body targets the extension id", () => {
   assert.equal(typeof body.flags, "number");
 });
 
+test("query asks for every version, not only the newest", () => {
+  // IncludeVersions is required: with IncludeLatestVersionOnly (0x200) the
+  // response carries a single version, so an older release would read as
+  // missing once a newer one shipped.
+  const { flags } = queryBody("pub.name");
+  assert.equal(flags & 1, 1, "IncludeVersions must be set");
+  assert.equal(flags & 0x200, 0, "IncludeLatestVersionOnly must not be set");
+});
+
 test("versions are read defensively from a listing response", () => {
   assert.deepEqual(versionsIn(listing("1.5.0", "1.6.0")), ["1.5.0", "1.6.0"]);
   for (const bad of [
@@ -143,6 +152,21 @@ test("a network error or bad status retries instead of throwing", async () => {
   });
   assert.equal(result.ok, false);
   assert.equal(calls, 3);
+});
+
+test("an older version is still found once a newer one is listed", async () => {
+  // IncludeVersions-only: the response carries every version, so re-checking
+  // a superseded release still reports it as live.
+  const result = await confirmPublished({
+    extensionId: "pub.name",
+    version: "1.5.0",
+    attempts: 1,
+    intervalMs: 0,
+    fetchImpl: async () => okResponse(listing("1.6.0", "1.5.0")),
+    sleepImpl: async () => {},
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.versions, ["1.6.0", "1.5.0"]);
 });
 
 test("unparseable JSON is treated as not published, never a crash", async () => {
