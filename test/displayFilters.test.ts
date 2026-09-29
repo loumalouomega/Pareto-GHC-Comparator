@@ -131,6 +131,25 @@ test("the checklist structure and free-tier baselines ignore the view filters", 
   assert.equal(result.rows.length, 0);
   assert.equal(result.structureIds.filter((id) => id.includes("::")).length, 2);
   assert.deepEqual(result.makers, ["OpenAI"]);
+  // Makers cover every discovered model, sorted, whatever the filters hide.
+  const haiku: AvailableModel = {
+    id: "claude-haiku-4.5",
+    name: "Claude Haiku 4.5",
+    family: "claude-haiku-4.5",
+    maxInputTokens: 200000,
+    source: "copilot",
+  };
+  const both = optionResult(
+    option,
+    [model, haiku],
+    [
+      ...benchmarks,
+      { id: "h", slug: "h", name: "Claude Haiku 4.5", provider: "Anthropic", scores: { general: 35, coding: 44, agentic: 25 } },
+    ],
+    {},
+    new Map(),
+  );
+  assert.deepEqual(both.makers, ["Anthropic", "OpenAI"]);
 });
 
 test("display filter settings migrate to safe defaults and reject junk", () => {

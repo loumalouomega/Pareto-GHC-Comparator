@@ -582,6 +582,32 @@ for (const theme of ["light", "dark", "high-contrast"])
           mini: { prevScore: 20, delta: 10, noisy: false },
         };
       }
+      // Test-only branch for the optional AA measurements and the benchmark
+      // changelog: give two benchmarks speed/cost data and install a log
+      // with one entry touching a benchmark that is in view.
+      if (m.type === "__aaExtras") {
+        state.models = state.models.map((b) =>
+          b.id === "gpt"
+            ? { ...b, tokensPerSecond: 88.5, ttftSeconds: 0.42, costPerTask: 1.25 }
+            : b.id === "mini"
+              ? { ...b, tokensPerSecond: 120 }
+              : b,
+        );
+        state.changelog = [
+          {
+            at: Date.parse("2026-09-20T00:00:00Z"),
+            version: "4.4",
+            prevVersion: "4.3",
+            rebased: false,
+            added: [{ id: "new-1", name: "Brand New AA Model", provider: "X", general: 61 }],
+            removed: [],
+            changed: [
+              { id: "gpt", name: "GPT-5.4 (xhigh)", provider: "OpenAI", fields: [{ field: "general", from: 44, to: 48 }] },
+            ],
+            omitted: { added: 0, removed: 0, changed: 0 },
+          },
+        ];
+      }
       if (m.type === "watchlistAlerts") state.watchlistAlerts = m.enabled;
       // Test-only branch: install a pending new-models report; the real
       // dismiss message clears it like the host does.
@@ -1680,6 +1706,37 @@ for (const theme of ["light", "dark", "high-contrast"])
     await expect(page.locator("#details")).toContainText(
       "no per-model confidence interval",
     );
+    // AA measurements: without any speed data the columns stay hidden and the
+    // changelog says nothing has been recorded; with it, the columns show
+    // per-row values (a dash where a row has none), details cite AA's own
+    // cost per task as not used here, and the log marks entries in view.
+    await expect(page.locator("#tps-heading")).toBeHidden();
+    await expect(page.locator("#changelog-empty")).toContainText(
+      "No changes recorded yet",
+    );
+    await page.evaluate(() => (window as any).hostMessage({ type: "__aaExtras" }));
+    await expect(page.locator("#tps-heading")).toBeVisible();
+    await expect(page.locator("#ttft-heading")).toBeVisible();
+    await expect(page.locator("#rows")).toContainText("88.5");
+    await expect(page.locator("#rows")).toContainText("0.42");
+    await expect(page.locator("#rows")).toContainText("120");
+    await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+    await expect(page.locator("#details")).toContainText(
+      "Speed (Artificial Analysis median): 88.5 tokens/s · 0.42 s to first token",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "cost per Intelligence Index task: $1.25",
+    );
+    await expect(page.locator("#details")).toContainText(
+      "not used for any cost shown here",
+    );
+    await page.locator("#changelog-details summary").click();
+    await expect(page.locator("#changelog-list > li")).toHaveCount(1);
+    await expect(page.locator("#changelog-list")).toContainText("v4.3 → v4.4");
+    await expect(page.locator("#changelog-list")).toContainText("1 added, 0 removed, 1 re-scored");
+    await expect(page.locator("#changelog-list")).toContainText("General 44 → 48 · in your view");
+    await expect(page.locator("#changelog-list")).toContainText("+ Brand New AA Model (general 61)");
+    await expect(page.locator(".changelog-inview")).toContainText("1 in your current view");
     // Workload sensitivity: breakpoint ranges recomputed from the current
     // tokens, labelled as a what-if sweep — never measured history.
     await page.locator("#input").fill("1000");
@@ -1988,6 +2045,9 @@ test("an imported snapshot renders read-only with its own provenance", async ({
     "Catalog dated 2026-01-05",
   );
   await expect(page.locator("#provenance")).toContainText("Index v4.0");
+  // A snapshot never shows the live benchmark changelog or speed columns.
+  await expect(page.locator("#changelog-card")).toBeHidden();
+  await expect(page.locator("#tps-heading")).toBeHidden();
   // The sensitivity card explains itself instead of sweeping a snapshot.
   await expect(page.locator("#sensitivity-note")).toContainText(
     "Unavailable for an imported snapshot",

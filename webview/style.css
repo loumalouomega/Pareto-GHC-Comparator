@@ -193,6 +193,16 @@ aside {
 #raw-bar-wrap {
   margin-top: 18px;
 }
+#changelog-card {
+  margin-top: 18px;
+}
+#changelog-list {
+  padding-left: 18px;
+}
+.changelog-inview {
+  color: var(--vscode-textLink-foreground, #80b6ff);
+  font-weight: 600;
+}
 #ladder-card {
   margin-bottom: 18px;
 }

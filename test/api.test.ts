@@ -147,3 +147,41 @@ test("concurrent calls share a download", async () => {
   await Promise.all([s.service.load("key"), s.service.load("key")]);
   assert.equal(s.calls(), 1);
 });
+test("optional AA measurements parse tolerantly and stay absent when unusable", () => {
+  const withExtras = (extras: Record<string, unknown>) => {
+    const p = page();
+    Object.assign(p.data[0], extras);
+    return parsePage(p, 1).models[0];
+  };
+  const full = withExtras({
+    artificial_analysis_intelligence_index_cost: { cost_per_task: { total_cost: 1.25 } },
+    median_output_tokens_per_second: 88.5,
+    median_time_to_first_token_seconds: 0.42,
+  });
+  assert.equal(full.costPerTask, 1.25);
+  assert.equal(full.tokensPerSecond, 88.5);
+  assert.equal(full.ttftSeconds, 0.42);
+  // Zero means "benchmark not run", and junk never throws: all read as absent.
+  for (const bad of [0, -1, "fast", null, Number.NaN, {}]) {
+    const m = withExtras({
+      artificial_analysis_intelligence_index_cost: bad,
+      median_output_tokens_per_second: bad,
+      median_time_to_first_token_seconds: bad,
+    });
+    assert.ok(!("costPerTask" in m));
+    assert.ok(!("tokensPerSecond" in m));
+    assert.ok(!("ttftSeconds" in m));
+  }
+  assert.ok(!("costPerTask" in parsePage(page(), 1).models[0]));
+});
+
+test("snapshots validate with the optional fields absent, null, or finite, but not junk", () => {
+  const model = { id: "a", slug: "a", name: "A", provider: "P", scores: { general: 1, coding: null, agentic: null } };
+  const snap = (extra: Record<string, unknown>) => ({ ...old, models: [{ ...model, ...extra }] });
+  assert.equal(validSnapshot(snap({})), true);
+  assert.equal(validSnapshot(snap({ costPerTask: 2, tokensPerSecond: 50, ttftSeconds: 0.3 })), true);
+  assert.equal(validSnapshot(snap({ costPerTask: null })), true);
+  assert.equal(validSnapshot(snap({ costPerTask: "1" })), false);
+  assert.equal(validSnapshot(snap({ tokensPerSecond: -1 })), false);
+  assert.equal(validSnapshot(snap({ ttftSeconds: Number.POSITIVE_INFINITY })), false);
+});

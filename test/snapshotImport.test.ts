@@ -248,6 +248,9 @@ test("the imported view is read-only state with the file's own dates", () => {
     exportSnapshot([row()], defaults, new Set(["m1"]), meta()),
   ) as ImportedSingle;
   const state = importedViewState(view(snapshot), context());
+  // Live-only fields never leak into the historical view.
+  assert.equal(state.changelog, undefined);
+  assert.equal(state.makers === undefined || state.makers.length === 0, true);
   assert.equal(state.rows.length, 1);
   assert.equal(state.recommendation.modelIds[0], "m1");
   assert.ok(state.recommendation.explanation.includes("Not recomputed"));

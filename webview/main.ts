@@ -18,6 +18,7 @@ import { sources } from "../src/sources";
 import { costUnit, formatClaudeSchemaFingerprint, formatSchemaFingerprint } from "../src/types";
 import { efficiencyOf } from "../src/efficiency";
 import { budgetLadder, rawCapability } from "../src/value";
+import { affectedIds } from "../src/changelog";
 import {
   compressBreakpoints,
   sensitivityFallbackTotal,
@@ -911,6 +912,79 @@ function drawRawBar() {
  * frontier point. Derived client-side from the displayed rows in their own
  * native cost unit (`budgetLadder`); its picks match the budget-mode
  * recommendation at each band's lower bound. */
+function renderChangelog() {
+  if (!state) return;
+  const card = el("changelog-card");
+  const entries = state.imported ? [] : (state.changelog ?? []);
+  card.hidden = !!state.imported;
+  const list = el("changelog-list");
+  list.replaceChildren();
+  el("changelog-empty").textContent = entries.length
+    ? ""
+    : "No changes recorded yet. Entries appear after a refresh downloads a snapshot that differs from the previous one.";
+  const inView = new Set(
+    state.rows.flatMap((r) => (r.benchmark ? [r.benchmark.id] : [])),
+  );
+  const fieldLabel: Record<string, string> = {
+    general: "General",
+    coding: "Coding",
+    agentic: "Agentic",
+    costPerTask: "AA cost per task",
+  };
+  const lineCap = 8;
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    const touched = affectedIds(entry, inView);
+    li.append(
+      text(
+        "strong",
+        `${new Date(entry.at).toLocaleDateString()} · v${entry.prevVersion}${entry.version === entry.prevVersion ? "" : ` → v${entry.version}`}`,
+      ),
+      document.createTextNode(
+        ` · ${entry.added.length} added, ${entry.removed.length} removed, ${entry.changed.length} re-scored`,
+      ),
+    );
+    if (touched.length)
+      li.append(
+        text(
+          "span",
+          ` · ${touched.length} in your current view`,
+          "changelog-inview",
+        ),
+      );
+    if (entry.rebased)
+      li.append(
+        text(
+          "p",
+          "The Intelligence Index version changed, so scores are on a different scale and score changes are not listed.",
+          "hint",
+        ),
+      );
+    const lines: string[] = [];
+    const mark = (id: string) => (inView.has(id) ? " · in your view" : "");
+    for (const c of entry.changed)
+      lines.push(
+        `${c.name}: ${c.fields.map((f) => `${fieldLabel[f.field]} ${format(f.from)} → ${format(f.to)}`).join(", ")}${mark(c.id)}`,
+      );
+    for (const m of entry.added)
+      lines.push(`+ ${m.name}${m.general !== null ? ` (general ${format(m.general)})` : ""}${mark(m.id)}`);
+    for (const m of entry.removed) lines.push(`− ${m.name}${mark(m.id)}`);
+    if (lines.length) {
+      const inner = document.createElement("ul");
+      for (const line of lines.slice(0, lineCap))
+        inner.append(text("li", line));
+      const hidden =
+        Math.max(0, lines.length - lineCap) +
+        entry.omitted.added +
+        entry.omitted.removed +
+        entry.omitted.changed;
+      if (hidden > 0)
+        inner.append(text("li", `…and ${hidden} more`, "hint"));
+      li.append(inner);
+    }
+    list.append(li);
+  }
+}
 function renderLadder() {
   if (!state) return;
   const body = el("ladder-rows");
@@ -1298,6 +1372,26 @@ function renderDetails() {
         text(
           "p",
           `${row.requests} local requests in the scanned history.`,
+          "hint",
+        ),
+      );
+    const measured = row.benchmark;
+    if (
+      measured.tokensPerSecond !== undefined ||
+      measured.ttftSeconds !== undefined
+    )
+      more.append(
+        text(
+          "p",
+          `Speed (Artificial Analysis median): ${measured.tokensPerSecond !== undefined ? `${format(measured.tokensPerSecond)} tokens/s` : "tokens/s unknown"} · ${measured.ttftSeconds !== undefined ? `${format(measured.ttftSeconds)} s to first token` : "time to first token unknown"}.`,
+          "hint",
+        ),
+      );
+    if (measured.costPerTask !== undefined)
+      more.append(
+        text(
+          "p",
+          `Artificial Analysis cost per Intelligence Index task: $${format(measured.costPerTask)} — measured on AA's own benchmark workload, not your usage, and not used for any cost shown here.`,
           "hint",
         ),
       );
@@ -3363,6 +3457,13 @@ function render(next: ViewState) {
       : state.options.display.chart === "task"
         ? `${unit} / task`
         : unit;
+  // Speed columns appear only when the loaded snapshot carries any speed
+  // measurement; a row without its own stays a dash, never an invented value.
+  const hasSpeed = state.models.some(
+    (m) => m.tokensPerSecond !== undefined || m.ttftSeconds !== undefined,
+  );
+  el("tps-heading").hidden = !hasSpeed;
+  el("ttft-heading").hidden = !hasSpeed;
   const body = el("rows");
   body.replaceChildren();
   for (const row of state.rows) {
@@ -3393,6 +3494,12 @@ function render(next: ViewState) {
       text("td", scoreText),
       text("td", format(row.cost)),
       text("td", format(efficiencyOf(row))),
+      ...(hasSpeed
+        ? [
+            text("td", format(row.benchmark?.tokensPerSecond ?? null)),
+            text("td", format(row.benchmark?.ttftSeconds ?? null)),
+          ]
+        : []),
       text(
         "td",
         comparisonCell(row, tableMedians),
@@ -3415,6 +3522,7 @@ function render(next: ViewState) {
   renderCustom();
   renderSensitivity();
   renderLadder();
+  renderChangelog();
   drawChart();
   drawFreeBar();
   drawRawBar();
