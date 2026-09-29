@@ -1693,6 +1693,47 @@ for (const theme of ["light", "dark", "high-contrast"])
     );
     await page.locator("#filter").fill("");
     await expect(page.locator("#sensitivity-rows tr")).not.toHaveCount(0);
+    // Raw capability bar: every source, score-only ranking of the displayed
+    // rows with a frontier marker that does not depend on colour; hidden
+    // with fewer than two scored rows.
+    await expect(page.locator("#raw-bar-wrap")).toBeVisible();
+    await expect(page.locator("#raw-bar-title")).toHaveText(
+      "Raw capability · General index",
+    );
+    const rawItems = await page.locator("#raw-bar-list li").allTextContents();
+    expect(rawItems.length).toBeGreaterThanOrEqual(2);
+    for (const item of rawItems) expect(item).toMatch(/: [\d.]+ points/);
+    expect(rawItems.some((item) => item.endsWith("· Pareto frontier"))).toBe(
+      true,
+    );
+    await expect(page.locator("#raw-bar")).toHaveAttribute(
+      "aria-label",
+      /displayed models ranked by general score, ignoring cost/,
+    );
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await expect(page.locator("#raw-bar-wrap")).toBeHidden();
+    await page.locator("#filter").fill("");
+    await expect(page.locator("#raw-bar-wrap")).toBeVisible();
+    // Budget ladder: the frontier as a lookup table on the Plan & budget
+    // tab; picking a name selects that row, and an empty view says why.
+    await openTab("Plan & budget");
+    await expect(page.locator("#ladder-rows tr")).not.toHaveCount(0);
+    await expect(page.locator("#ladder-note")).toContainText("budget band");
+    await expect(page.locator("#ladder-budget-heading")).toContainText(
+      "Budget (",
+    );
+    await openTab("Tool analysis");
+    await page.locator("#filter").fill("no-such-model-xyz");
+    await openTab("Plan & budget");
+    await expect(page.locator("#ladder-rows tr")).toHaveCount(0);
+    await expect(page.locator("#ladder-note")).toContainText(
+      "No comparable models",
+    );
+    await openTab("Tool analysis");
+    await page.locator("#filter").fill("");
+    await openTab("Plan & budget");
+    await expect(page.locator("#ladder-rows tr")).not.toHaveCount(0);
+    await openTab("Tool analysis");
     // Watchlist opt-in: the Settings checkbox posts the toggle the host
     // validates (never wrapped to a comparison side — see send()).
     await openTab("Settings");
