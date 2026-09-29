@@ -4,6 +4,8 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 1.6.0
+
 ### Added
 
 - Budget ladder on the Plan & budget tab: the Pareto frontier as a lookup table. Each row is a budget band with the highest-scoring displayed model you can afford, and the runner-up that also fits. It uses the current cost basis and unit, and its picks match the budget recommendation at each band's lower bound. Inspired by [bestvaluemodel](https://github.com/terryds/bestvaluemodel).
