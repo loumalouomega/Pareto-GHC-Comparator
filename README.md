@@ -32,7 +32,7 @@ The default chart mirrors Artificial Analysis: Intelligence versus cost per task
 
 Work is grouped into tabs. **Tool analysis** holds the everyday workflow, is first in the tab order, and stays open by default; **Compare tools**, **Plan & budget**, **Usage**, and **Settings** hold the rest (see [Layout](docs/user-guide.md#layout)).
 
-**Also included:** a grouped model checklist (family → model → thinking level, with search and bulk selection) · chart display settings · cost breakdowns · CSV, snapshot, badge, and PNG exports, plus read-only [snapshot import](docs/user-guide.md#reopening-an-exported-snapshot) · cost-per-quality table sort · custom model picks for head-to-head comparison · pricing-freshness alerts · benchmark score drift · optional [on-machine usage history](#local-usage-history-consent-and-retention) · and, for OpenCode, a free-tier spotlight, an intelligence bar, and explicit BYOK rates for provider-billed models.
+**Also included:** a grouped model checklist (family → model → thinking level, with search and bulk selection) · chart display settings · cost breakdowns · CSV, snapshot, badge, and PNG exports, plus read-only [snapshot import](docs/user-guide.md#reopening-an-exported-snapshot) · cost-per-quality table sort · custom model picks for head-to-head comparison · pricing-freshness alerts · benchmark score drift and a multi-refresh "what changed" log · a budget ladder (the frontier as a lookup table), a raw-capability bar, and minimum-score / one-row-per-model / maker view filters · optional [on-machine usage history](#local-usage-history-consent-and-retention) · and, for OpenCode, a free-tier spotlight, an intelligence bar, and explicit BYOK rates for provider-billed models.
 
 ## Compare two options
 
