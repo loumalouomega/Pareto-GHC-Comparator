@@ -82,7 +82,7 @@ The optional **Monthly spending scenario** card projects plan fee plus expected 
 <details>
 <summary><b>Extension settings</b></summary>
 
-Three `paretoGhc.*` settings mirror stored preferences without reload:
+Four `paretoGhc.*` settings apply without reload (three mirror stored preferences):
 
 | Setting | Default | Effect |
 | --- | --- | --- |
