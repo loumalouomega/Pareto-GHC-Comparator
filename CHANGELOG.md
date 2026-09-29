@@ -4,6 +4,12 @@ User-visible changes to Pareto GHC Comparator are recorded here. Version section
 
 ## Unreleased
 
+## 1.6.1
+
+### Fixed
+
+- A failed Marketplace upload no longer reports success. The release job read the upload's exit status in a way that always read as zero, so a `401` printed the credential checklist and then finished the step as a pass. Version 1.6.0 is the first release affected: its GitHub Release has the tested VSIX, but the extension was never uploaded to the Marketplace, while the job was reported green. The job now fails on a failed upload, and a second check asks the public Marketplace listing whether the version is actually there, so a green job means the extension is installable at that version rather than that a command returned zero. The listing check retries while the Marketplace propagates, and distinguishes a slow publish from an upload that never landed.
+
 ## 1.6.0
 
 ### Added

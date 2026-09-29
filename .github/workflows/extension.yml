@@ -222,7 +222,9 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [build, platform-discovery]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Long enough for npm ci, the upload, and the listing check to retry while
+    # Marketplace propagation catches up.
+    timeout-minutes: 25
     environment: marketplace
     permissions:
       contents: read
@@ -271,7 +273,15 @@ jobs:
           # actual upload needs write access. A 401 here with a passing
           # verify-pat almost always means the PAT scope/organization or the
           # publisher role is insufficient, not a broken pipeline.
-          if ! npx --no-install vsce publish --packagePath "$VSIX" "${AUTH_ARGS[@]}" --skip-duplicate; then
+          #
+          # NOTE: the status must be read in an `else` branch. Written as
+          # `if ! cmd; then STATUS=$?`, `$?` is the status of the negation
+          # (always 0) rather than the status of `cmd`, so a 401/403 would
+          # print this error and then exit 0, reporting success for a publish
+          # that never happened.
+          if npx --no-install vsce publish --packagePath "$VSIX" "${AUTH_ARGS[@]}" --skip-duplicate; then
+            echo "vsce publish reported success."
+          else
             STATUS=$?
             echo "::error::Marketplace publish failed for '$PUBLISHER' version '$VERSION'. verify-pat checks read access only; publish needs write access."
             {
@@ -289,3 +299,13 @@ jobs:
             } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             exit "$STATUS"
           fi
+      - name: Confirm the version is live on the Marketplace
+        # `vsce publish` returning 0 is not proof the upload landed. Ask the
+        # public listing, so a green job means the extension is actually
+        # installable at this version rather than that a command exited zero.
+        run: |
+          set -euo pipefail
+          PUBLISHER="$(node -p "require('./package.json').publisher")"
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          node scripts/marketplace-published.mjs "$PUBLISHER.$NAME" "$VERSION"
