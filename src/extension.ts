@@ -38,7 +38,7 @@ import {
 import { staticModels, staticRegistryDate } from "./staticSources";
 import { historyScenarioPrefill, planRegistryDate } from "./plans";
 import { buildGroups } from "./groups";
-import { defaultBilling, sources } from "./sources";
+import { defaultBilling, sourceOrder, sources } from "./sources";
 import {
   exportBadge,
   exportCsv,
@@ -1168,7 +1168,7 @@ export function activate(context: vscode.ExtensionContext) {
    * on the seen set. The first sighting of a source only seeds it.
    */
   let newModelsQueue: Promise<void> = Promise.resolve();
-  const checkNewModels = (checked: ("copilot" | "opencode")[]): Promise<void> => {
+  const checkNewModels = (checked: Source[]): Promise<void> => {
     newModelsQueue = newModelsQueue
       .then(async () => {
         const fresh: NewModelEntry[] = [];
@@ -1190,11 +1190,11 @@ export function activate(context: vscode.ExtensionContext) {
           seenModels = { ...seenModels, [source]: diff.next };
           if (!diff.newIds.length) continue;
           const billing =
-            source === "opencode"
-              ? "usd"
-              : options.billing === "legacy"
+            source === "copilot"
+              ? options.billing === "legacy"
                 ? "legacy"
-                : "credits";
+                : "credits"
+              : defaultBilling(source);
           const basis = {
             ...defaults,
             source,
@@ -1235,7 +1235,9 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const startupNewModelsCheck = async () => {
     await Promise.all([discoverSource("copilot"), discoverSource("opencode")]);
-    await checkNewModels(["copilot", "opencode"]);
+    // Static registries need no discovery: their "new" models are entries a
+    // newer extension release added to the known-model registry.
+    await checkNewModels(sourceOrder);
   };
   const refresh = async (force = false) => {
     if (loading) return;

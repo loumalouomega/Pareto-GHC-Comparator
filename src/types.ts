@@ -501,7 +501,8 @@ export interface NewModelEntry {
   /** The discovered id of the best-scoring variant. */
   modelId: string;
   name: string;
-  source: "copilot" | "opencode";
+  /** Any source; static sources report additions to their known-model registry. */
+  source: Source;
   /** OpenCode Zen free tier. Always false elsewhere. */
   free: boolean;
   score: number | null;

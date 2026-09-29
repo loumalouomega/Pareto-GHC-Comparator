@@ -424,6 +424,8 @@ test("extension discovers Copilot models, serves cached data, validates messages
   for (let i = 0; i < 100 && !state.get("seenModels"); i++)
     await new Promise((resolve) => setTimeout(resolve, 10));
   assert.ok((state.get("seenModels") as any).copilot.includes("gpt-5-mini"));
+  // Static registries seed too, silently, and are tracked per source.
+  assert.ok((state.get("seenModels") as any).codex.length > 0);
   assert.equal(
     infos.filter((a) => String(a[0]).includes("New models available")).length,
     0,

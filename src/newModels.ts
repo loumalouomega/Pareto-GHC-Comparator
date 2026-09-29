@@ -1,4 +1,6 @@
 import { baseModelIdOf } from "./assist";
+import { sourceOrder, sources } from "./sources";
+import { isStaticSource } from "./staticSources";
 import type { AvailableModel, CostUnit, NewModelEntry, NewModelsReport, Row, Source } from "./types";
 
 /**
@@ -43,8 +45,8 @@ export function loadSeenModels(raw: unknown): Partial<Record<Source, string[]>> 
   const out: Partial<Record<Source, string[]>> = {};
   if (!raw || typeof raw !== "object") return out;
   for (const [key, value] of Object.entries(raw as Record<string, unknown>))
-    if ((key === "copilot" || key === "opencode") && Array.isArray(value))
-      out[key] = value.filter((id): id is string => typeof id === "string").slice(0, maxSeenIds);
+    if (key in sources && Array.isArray(value))
+      out[key as Source] = value.filter((id): id is string => typeof id === "string").slice(0, maxSeenIds);
   return out;
 }
 
@@ -62,7 +64,7 @@ const median = (values: number[]): number => {
  * best-scoring row. Unscored models stay listed with a null score.
  */
 export function newModelEntries(
-  source: "copilot" | "opencode",
+  source: Source,
   rows: readonly Row[],
   available: readonly AvailableModel[],
   newIds: readonly string[],
@@ -150,7 +152,8 @@ export function loadNewModelsReport(raw: unknown): NewModelsReport | undefined {
       typeof e === "object" &&
       typeof e.id === "string" &&
       typeof e.name === "string" &&
-      (e.source === "copilot" || e.source === "opencode") &&
+      typeof e.source === "string" &&
+      e.source in sources &&
       typeof e.free === "boolean" &&
       (e.score === null || finite(e.score)) &&
       (e.cost === null || finite(e.cost)) &&
@@ -164,7 +167,10 @@ export function loadNewModelsReport(raw: unknown): NewModelsReport | undefined {
   };
 }
 
-const sourceLabel = (source: Source) => (source === "opencode" ? "OpenCode" : "Copilot");
+const sourceLabel = (source: Source) =>
+  isStaticSource(source)
+    ? `${sources[source].label} (known-model registry)`
+    : sources[source].label;
 const points = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)}`;
 
 /** One entry as text, e.g. "Foo (FREE, index 52.1, +4.0 vs best existing)". */
@@ -189,7 +195,7 @@ export function describeEntry(entry: NewModelEntry): string {
 /** One-line notification text; benchmark caveat included only when relevant. */
 export function summarizeNewModels(report: NewModelsReport): string {
   const parts: string[] = [];
-  for (const source of ["copilot", "opencode"] as const) {
+  for (const source of sourceOrder) {
     const list = report.entries.filter((e) => e.source === source);
     if (!list.length) continue;
     const shown = list.slice(0, summaryLimit).map(describeEntry).join("; ");

@@ -3647,7 +3647,7 @@ function renderNewModels(report: NewModelsReport | undefined) {
   el("new-models-detail").textContent =
     `Detected ${new Date(report.detectedAt).toLocaleString()}. ` +
     (report.benchmarkVersion
-      ? `Compared with models already known on the same source using benchmark data ${report.benchmarkVersion} (general preset, 1,000 in + 1,000 out tokens). `
+      ? `Compared with models already known on the same source (for non-live tools: entries added to the known-model registry, not account availability) using benchmark data ${report.benchmarkVersion} (general preset, 1,000 in + 1,000 out tokens). `
       : "No cached benchmark data, so no scores are available yet. ") +
     (freeCount
       ? `${freeCount} new free OpenCode model${freeCount === 1 ? "" : "s"} highlighted.`
@@ -3657,7 +3657,7 @@ function renderNewModels(report: NewModelsReport | undefined) {
     if (e.free) item.className = "new-model-free";
     item.append(text("strong", e.name));
     if (e.free) item.append(" ", text("span", "FREE", "badge"));
-    const parts: string[] = [e.source === "opencode" ? "OpenCode" : "Copilot"];
+    const parts: string[] = [sources[e.source].label + (sources[e.source].live ? "" : " (known-model registry)")];
     if (e.score === null) parts.push("no benchmark score yet");
     else {
       parts.push(`index ${e.score.toFixed(1)}`);

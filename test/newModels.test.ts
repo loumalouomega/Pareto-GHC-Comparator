@@ -112,9 +112,21 @@ test("reports merge, and tolerant loaders drop bad data", () => {
   assert.equal(loadNewModelsReport({ detectedAt: 1, entries: [{ id: 1 }] }), undefined);
   const loaded = loadNewModelsReport(merged as NewModelsReport);
   assert.equal(loaded?.entries.length, 2);
-  assert.deepEqual(loadSeenModels({ copilot: ["a", 3], codex: ["x"] }), { copilot: ["a"] });
+  assert.deepEqual(loadSeenModels({ copilot: ["a", 3], codex: ["x"], bogus: ["y"] }), {
+    copilot: ["a"],
+    codex: ["x"],
+  });
 });
 
 test("dismissNewModels validates without a payload", () => {
   assert.deepEqual(parseMessage({ type: "dismissNewModels" }), { type: "dismissNewModels" });
+});
+
+test("static registry additions are labelled as known models, not availability", () => {
+  const rows = [row("codex:old", 40), row("codex:new", 48)];
+  const entries = newModelEntries("codex", rows, [avail("codex:old"), avail("codex:new")], ["codex:new"], "USD");
+  assert.equal(entries[0].free, false);
+  assert.equal(entries[0].deltaBest, 8);
+  const text = summarizeNewModels({ detectedAt: 1, benchmarkVersion: "v", entries });
+  assert.match(text, /Codex.*\(known-model registry\): 1 new model/);
 });
